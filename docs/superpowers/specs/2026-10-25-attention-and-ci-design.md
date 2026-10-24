@@ -157,7 +157,7 @@ desktop notification, so the system's DND hid the popup but not the chime. Fix a
   enables them and tracks `terminal_focused`). Terminals turn it into an urgency hint (the window manager / bar
   highlights the workspace), tmux flags the window.
 - Claude's call: a terminal that never reported focus → no bell (better silent than ringing while you read).
-- Setting: on/off, `settings.toml` + F6 → Notifications ("Bell when not focused"). Claude's call: default on.
+- Setting: on/off, `settings.toml` + F6 → Notifications ("Bell when not focused"). The user (2026-10-25, after a live test where the bell made kitty + Hyprland's `focus_on_activate` pull the test window forward): **default off**; README and F6 help say what it does on such desktops.
 - Some terminals also beep on BEL (kitty's `enable_audio_bell` is on by default). ttyak can't turn that off; the README
   names the setting.
 
