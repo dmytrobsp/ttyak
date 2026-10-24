@@ -281,6 +281,15 @@ workspace of the profile), `◆` with something for you (a direct message, a men
 back when ttyak ends. F6 → Notifications → Mark in the tab title (`title_mark` in `settings.toml`) turns it off, and
 ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
 
+A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
+instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
+workspaces, by their next 30-second check — where the notification server allows it (Linux desktops; macOS and
+Windows still show each one). Such a notification also rings the terminal's bell while the terminal is not focused:
+most terminals then mark the window urgent (the window manager or bar highlights it) and tmux flags the window. It
+never rings while notifications are paused, nor in a terminal that does not report focus; it does ring with desktop
+notifications off. F6 → Notifications → Bell when not focused (`bell` in `settings.toml`) turns it off. Some
+terminals also beep on the bell (kitty: `enable_audio_bell no`).
+
 ## Keys
 
 Press **F1** (or `?` outside the composer) in the app for the full list, with the keys in effect.
@@ -518,7 +527,7 @@ on Windows only from an SSH session, where `gdigrab` cannot capture (no desktop)
 
 | Variable | |
 |---|---|
-| (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, the mark in the tab title, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
+| (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, the bell when not focused, the mark in the tab title, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
 | `TTYAK_LOG` | log filter, e.g. `ttyak=debug` (log file: `~/.cache/ttyak/<profile>/ttyak.log`); the websocket library's handshake and frames (`tungstenite::handshake::client`, `tungstenite::client`, `tungstenite::protocol`), which would print the token, cookie and messages, stay off unless named |
 | `TTYAK_DOWNLOAD_DIR` | where `␣s` saves attachments first, over F6 → Messages & media → Save files to (default: your downloads folder) |
 | `TTYAK_OPEN_WITH` | the program `␣o` opens links with, given the address (default: the system's opener — `xdg-open`, `open`, Windows' URL handler); only web and mail links are opened |

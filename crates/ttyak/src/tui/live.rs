@@ -32,6 +32,9 @@ pub struct Effects {
     pub dnd_invalidated: bool,
     /// An Activity item came, changed (read, a newer reply) or went, or Slack dropped them all.
     pub activity: Option<ActivityPush>,
+    /// A conversation (thread None) or one of its threads was marked read up to this message, here or on another
+    /// client: (channel, thread, ts).
+    pub read: Option<(String, Option<String>, String)>,
 }
 
 /// What an `activity` event says to the Activity view.
@@ -166,6 +169,13 @@ pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>) -> Effects {
             u.mentions = ev["num_mentions_display"].as_u64().unwrap_or(0);
             if let Some(c) = ws.conversations.get_mut(&channel) {
                 c.last_read = ev["ts"].as_str().map(String::from);
+            }
+            fx.read = ev["ts"].as_str().map(|ts| (channel.clone(), None, ts.to_string()));
+        }
+        "thread_marked" => {
+            let sub = &ev["subscription"];
+            if let (Some(channel), Some(thread), Some(ts)) = (sub["channel"].as_str(), sub["thread_ts"].as_str(), sub["last_read"].as_str()) {
+                fx.read = Some((channel.to_string(), Some(thread.to_string()), ts.to_string()));
             }
         }
         "sh_room_join" | "sh_room_leave" | "sh_room_update" => {
@@ -805,6 +815,17 @@ mod tests {
             }
             assert_eq!(w.timelines["C1"].messages[0].reply_count, 1);
         }
+    }
+
+    #[test]
+    fn read_marks_say_what_was_read() {
+        let mut w = ws();
+        // Captured from Slack (A marking a DM and a thread in it read from another client; ids replaced).
+        let fx = apply(&mut w, &json!({"channel": "D1", "dm_count": 0, "event_ts": "1792882657.003400", "mention_count_display": 0, "num_mentions_display": 0, "ts": "1792882650.243419", "type": "im_marked", "unread_count_display": 0, "vip_count": 0}), None);
+        assert_eq!(fx.read, Some(("D1".into(), None, "1792882650.243419".into())));
+        let thread = json!({"event_ts": "1792882659.003900", "subscription": {"active": true, "channel": "D1", "date_create": 1792882651, "last_read": "1792882653.824959", "thread_ts": "1792882650.243419", "type": "thread"}, "type": "thread_marked"});
+        assert_eq!(apply(&mut w, &thread, None).read, Some(("D1".into(), Some("1792882650.243419".into()), "1792882653.824959".into())));
+        assert_eq!(apply(&mut w, &json!({"type": "channel_marked", "channel": "C1"}), None).read, None, "no ts, nothing said");
     }
 
     #[test]

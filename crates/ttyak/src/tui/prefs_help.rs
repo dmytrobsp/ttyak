@@ -258,6 +258,9 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
         Field::Desktop => {
             b.text("Shows a desktop notification for a message that notifies you, as the levels below decide.");
         }
+        Field::Bell => {
+            b.text("Rings the terminal's bell with a notification while the terminal is not focused: most terminals then mark the window as urgent (the window manager or bar highlights it) and tmux flags the window. It rings even with desktop notifications off, and never while notifications are paused, nor in a terminal that never said whether it has the focus. Some terminals also beep on it (kitty: enable_audio_bell).");
+        }
         Field::TitleMark => {
             b.text("Puts a mark in front of the terminal's tab title: ○ nothing unread, ● something unread, ◆ something for you (a direct message or a mention). Your terminal's own title comes back when ttyak ends. In tmux this needs set-titles on.");
         }

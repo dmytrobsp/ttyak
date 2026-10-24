@@ -11,7 +11,9 @@ use serde_json::Value;
 use slack_core::api::Client;
 use slack_core::session::WorkspaceSession;
 
+use super::attention::{Decision, Gates, Key, Switches};
 use super::event_loop::SignedOut;
+use super::notify::Notifier;
 
 /// How often the other workspaces are asked.
 const POLL: Duration = Duration::from_secs(30);
@@ -97,10 +99,20 @@ pub fn spawn_logos(sessions: Vec<WorkspaceSession>, logos: Logos, signed_out: Si
     });
 }
 
+/// The conversations of workspace `index` a `client.counts` answer shows read: their bubbles go when they show nothing
+/// newer than that (best effort, every [`POLL`]; a thread's bubble goes with the watcher's live read events only).
+fn withdraw_read(notifier: &Notifier, index: usize, counts: &Value) {
+    for c in ["channels", "mpims", "ims"].iter().flat_map(|k| counts[*k].as_array().into_iter().flatten()) {
+        if let (Some(id), Some(last_read)) = (c["id"].as_str(), c["last_read"].as_str()) {
+            notifier.read(&Key { workspace: index, channel: id.to_string() }, None, last_read);
+        }
+    }
+}
+
 /// Ask every workspace but the shown one (`shown`, kept current by the caller) and the signed-out
 /// ones for its counts, now, every [`POLL`] and whenever `wake` is notified (a switch); nothing
-/// to do with a single workspace.
-pub fn spawn(sessions: Vec<WorkspaceSession>, shown: Arc<AtomicUsize>, badges: Badges, wake: Arc<tokio::sync::Notify>, signed_out: SignedOut) {
+/// to do with a single workspace. What they show read withdraws its bubbles from `notifier`.
+pub fn spawn(sessions: Vec<WorkspaceSession>, shown: Arc<AtomicUsize>, badges: Badges, wake: Arc<tokio::sync::Notify>, signed_out: SignedOut, notifier: Notifier) {
     if sessions.len() < 2 {
         return;
     }
@@ -112,6 +124,7 @@ pub fn spawn(sessions: Vec<WorkspaceSession>, shown: Arc<AtomicUsize>, badges: B
                 match client.counts().await {
                     Ok(v) => {
                         badges.lock().unwrap_or_else(|e| e.into_inner()).insert(i, badge(&v));
+                        withdraw_read(&notifier, i, &v);
                     }
                     Err(e) => {
                         tracing::debug!("counts of workspace {}: {e}", i + 1);
@@ -150,8 +163,8 @@ fn join_keys(keys: &super::keymap::Keymap, index: usize) -> String {
 
 /// Start a headless watcher for every workspace of a profile with several; each runs only
 /// while its workspace is not the shown one (that one notifies itself), and stops for good once
-/// its workspace is signed out.
-pub fn spawn_watchers(sessions: Vec<WorkspaceSession>, labels: Vec<String>, shown: Arc<AtomicUsize>, clicks: tokio::sync::mpsc::UnboundedSender<Click>, signed_out: SignedOut) {
+/// its workspace is signed out. They notify through `notifier`, as the shown one does.
+pub fn spawn_watchers(sessions: Vec<WorkspaceSession>, labels: Vec<String>, shown: Arc<AtomicUsize>, clicks: tokio::sync::mpsc::UnboundedSender<Click>, signed_out: SignedOut, notifier: Notifier) {
     if sessions.len() < 2 {
         return;
     }
@@ -159,9 +172,9 @@ pub fn spawn_watchers(sessions: Vec<WorkspaceSession>, labels: Vec<String>, show
         if out(&signed_out, index) {
             continue;
         }
-        let (shown, clicks, signed_out) = (shown.clone(), clicks.clone(), signed_out.clone());
+        let (shown, clicks, signed_out, notifier) = (shown.clone(), clicks.clone(), signed_out.clone(), notifier.clone());
         tokio::spawn(async move {
-            if let Err(e) = watch(index, session, label, shown, clicks, signed_out).await {
+            if let Err(e) = watch(index, session, label, shown, clicks, signed_out, notifier).await {
                 tracing::warn!("watching workspace {}: {e}", index + 1);
             }
         });
@@ -174,7 +187,7 @@ const SHOWN_CHECK: Duration = Duration::from_secs(1);
 /// Watch workspace `index` while it is not the shown one; while it is shown the app has its
 /// own connection, so the watcher holds none (no RTM, no copy of the users) and boots afresh
 /// when the user switches away.
-async fn watch(index: usize, session: WorkspaceSession, label: String, shown: Arc<AtomicUsize>, clicks: tokio::sync::mpsc::UnboundedSender<Click>, signed_out: SignedOut) -> anyhow::Result<()> {
+async fn watch(index: usize, session: WorkspaceSession, label: String, shown: Arc<AtomicUsize>, clicks: tokio::sync::mpsc::UnboundedSender<Click>, signed_out: SignedOut, notifier: Notifier) -> anyhow::Result<()> {
     let client = Client::new(session)?;
     loop {
         while shown.load(Ordering::Relaxed) == index {
@@ -185,7 +198,7 @@ async fn watch(index: usize, session: WorkspaceSession, label: String, shown: Ar
             return Ok(());
         }
         tracing::debug!("watching workspace {}", index + 1);
-        match watch_hidden(index, &client, &label, &shown, &clicks, &signed_out).await {
+        match watch_hidden(index, &client, &label, &shown, &clicks, &signed_out, &notifier).await {
             Ok(()) => tracing::debug!("workspace {} shown: its watcher pauses", index + 1),
             Err(_) if noticed(&signed_out, index, &client) => {}
             Err(e) => {
@@ -198,7 +211,7 @@ async fn watch(index: usize, session: WorkspaceSession, label: String, shown: Ar
 
 /// Boot workspace `index` into its own state and notify from its RTM events until it becomes
 /// the shown one or is signed out (then the connection and the state are dropped).
-async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &AtomicUsize, clicks: &tokio::sync::mpsc::UnboundedSender<Click>, signed_out: &SignedOut) -> anyhow::Result<()> {
+async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &AtomicUsize, clicks: &tokio::sync::mpsc::UnboundedSender<Click>, signed_out: &SignedOut, notifier: &Notifier) -> anyhow::Result<()> {
     use super::state::Workspace;
     let (boot, users) = tokio::join!(client.user_boot(), client.users_list());
     let mut ws = Workspace::default();
@@ -231,6 +244,9 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
         if shown.load(Ordering::Relaxed) == index {
             return Ok(());
         }
+        if let Some((channel, thread, up_to)) = &fx.read {
+            notifier.read(&Key { workspace: index, channel: channel.clone() }, thread.as_deref(), up_to);
+        }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         if ws.dnd.stale(now) {
             match client.call_raw("dnd.info", &[]).await {
@@ -238,26 +254,28 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
                 Err(e) => tracing::debug!("dnd.info of workspace {}: {e}", index + 1),
             }
         }
-        let note = match (&fx.incoming, &fx.huddle_started) {
-            (Some((channel, m)), _) => super::notify::notification(&ws, channel, m, false, now).map(|n| (n, super::notify::Target::message(channel, m))),
-            (None, Some((channel, user))) => super::notify::huddle_notification(&ws, channel, user, false, now, &join_keys(&super::keymap::load_user().0, index))
-                .map(|n| (n, super::notify::Target { channel: channel.clone(), ts: None, thread_ts: None })),
-            _ => None,
+        let decision = match (&fx.incoming, &fx.huddle_started) {
+            (Some((channel, m)), _) => super::attention::decide(&ws, index, channel, m),
+            (None, Some((channel, user))) => super::attention::decide_huddle(&ws, index, channel, user, false, &join_keys(&super::keymap::load_user().0, index)),
+            _ => continue,
         };
-        let Some(((title, body), target)) = note else {
+        if !matches!(decision, Decision::ForYou(_)) {
             if let Some((channel, _)) = &fx.incoming {
-                tracing::debug!(workspace = index + 1, channel, dnd = ws.dnd_active(now), "message from another workspace: no notification");
+                tracing::debug!(workspace = index + 1, channel, "message from another workspace: not for you");
             }
             continue;
-        };
-        let (settings, _) = super::settings::load();
-        tracing::debug!(workspace = index + 1, channel = target.channel, "notification from another workspace");
-        if settings.notifications.desktop {
-            let clicks = clicks.clone();
-            super::notify::show(format!("{title} · {label}"), body, &settings, Some(Box::new(move || {
-                let _ = clicks.send((index, target));
-            })));
         }
+        let (settings, _) = super::settings::load();
+        // Not on screen; the terminal's focus is the app's (the watchers run in its process, in its window).
+        let gates = Gates { paused: ws.dnd_active(now), system_dnd: false, viewing: false, focus: notifier.focus() };
+        let out = super::attention::outputs(&decision, &gates, &Switches::of(&settings.notifications));
+        let Decision::ForYou(mut note) = decision else { continue };
+        tracing::debug!(workspace = index + 1, channel = note.key.channel, ?out, ?gates, "notification from another workspace");
+        note.title = format!("{} · {label}", note.title);
+        let (clicks, target) = (clicks.clone(), note.target.clone());
+        super::notify::interrupt(notifier, note, &out, &settings, Box::new(move || {
+            let _ = clicks.send((index, target));
+        }));
     }
 }
 
@@ -295,6 +313,27 @@ mod tests {
         assert_eq!(badge(&v), Badge { attention: 7, unread: true });
         let quiet = serde_json::json!({"channels":[{"has_unreads":false}],"channel_badges":{"dms":0,"channels":0,"thread_mentions":0,"thread_unreads":0}});
         assert_eq!(badge(&quiet), Badge::default());
+    }
+
+    #[tokio::test]
+    async fn the_poll_withdraws_what_was_read_elsewhere() {
+        use crate::tui::notify::fake::Call;
+        let (notifier, server) = Notifier::fake();
+        let note = |channel: &str, ts: &str| crate::tui::attention::Note {
+            key: Key { workspace: 1, channel: channel.into() },
+            title: "Bob".into(),
+            body: "hi".into(),
+            target: crate::tui::notify::Target { channel: channel.into(), ts: Some(ts.into()), thread_ts: None },
+        };
+        notifier.show(note("D1", "1792882650.243419"), None, Box::new(|| {}));
+        notifier.show(note("D2", "1792882651.000100"), None, Box::new(|| {}));
+        // (Trimmed from a real `client.counts` answer; ids replaced.)
+        let counts = serde_json::json!({"ims": [{"id": "D1", "has_unreads": false, "last_read": "1792882650.243419"}, {"id": "D2", "has_unreads": true, "last_read": "1792882600.000000"}], "channels": [], "mpims": []});
+        withdraw_read(&notifier, 1, &counts);
+        withdraw_read(&notifier, 2, &serde_json::json!({"ims": [{"id": "D2", "last_read": "1792882699.000000"}]}));
+        notifier.settled().await;
+        assert_eq!(server.calls().last(), Some(&Call::Close(1)), "D1 read; D2 newer than its mark, and another workspace's D2 is not this one");
+        assert_eq!(server.calls().len(), 3);
     }
 
     #[test]

@@ -197,13 +197,15 @@ pub struct Notifications {
     pub desktop: bool,
     /// Sound with each notification: off, chime, ping, knock, or system (the desktop's).
     pub sound: String,
+    /// The terminal's bell with a notification while the terminal is not focused (an urgency hint).
+    pub bell: bool,
     /// The read/unread mark (○ ● ◆) in the terminal's tab title.
     pub title_mark: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { desktop: true, sound: "off".into(), title_mark: true }
+        Notifications { desktop: true, sound: "off".into(), bell: true, title_mark: true }
     }
 }
 

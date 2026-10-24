@@ -12,6 +12,7 @@ use slack_core::Client;
 use slack_core::types::{HistoryPage, User};
 use tokio::sync::mpsc;
 
+use super::attention::TermFocus;
 use super::composer::{Composer, KeyOutcome};
 use super::history::{Place, Went};
 use super::keymap::{Action, Context, Key, Keymap, LEADER, Mode, Pending, Resolved};
@@ -349,6 +350,8 @@ struct App {
     terminal_focused: bool,
     /// The terminal has reported a focus change at least once (else `terminal_focused` is only our assumption).
     focus_reported: bool,
+    /// The process's notifications and bell (shared with the other workspaces' watchers).
+    notifier: super::notify::Notifier,
     /// Open @/#/: suggestion list.
     completion: Option<super::autocomplete::Completion>,
     /// Suggestions closed with Esc for this (composer, token start) until the token changes.
@@ -546,6 +549,7 @@ impl App {
         let Some(channel) = self.current.clone() else { return };
         let Some(latest) = read_mark_target(&self.ws, &channel, &self.marked) else { return };
         self.marked.insert(channel.clone(), latest.clone());
+        self.notifier.read(&self.bubble_key(&channel), None, &latest);
         if let Some(u) = self.ws.unread.get_mut(&channel) {
             u.has_unreads = false;
             u.mentions = 0;
@@ -677,6 +681,7 @@ impl App {
             return;
         }
         self.marked.insert(key, latest.clone());
+        self.notifier.read(&self.bubble_key(&channel), Some(&parent), &latest);
         let client = self.client.clone();
         tokio::spawn(async move {
             if let Err(e) = client.mark_thread(&channel, &parent, &latest).await {
@@ -2780,6 +2785,27 @@ impl App {
         })
     }
 
+    /// Which bubble is about `channel` of this workspace.
+    fn bubble_key(&self, channel: &str) -> super::attention::Key {
+        super::attention::Key { workspace: self.workspace, channel: channel.to_string() }
+    }
+
+    /// What holds back an event here at `now`: the pause or schedule, viewing it (`in_view` in a focused terminal), and
+    /// the terminal's focus for the bell. (The system's do-not-disturb is not read yet.)
+    fn gates(&self, in_view: bool, now: f64) -> super::attention::Gates {
+        super::attention::Gates { paused: self.ws.dnd_active(now), system_dnd: false, viewing: self.terminal_focused && in_view, focus: term_focus(self.focus_reported, self.terminal_focused) }
+    }
+
+    /// Fire what `decision` is worth past `gates`: the bubble, its sound, the bell.
+    fn interrupt(&self, decision: super::attention::Decision, gates: &super::attention::Gates) {
+        let out = super::attention::outputs(&decision, gates, &super::attention::Switches::of(&self.ws.settings.notifications));
+        tracing::debug!(?out, ?gates, "attention");
+        if let super::attention::Decision::ForYou(note) = decision {
+            let click = self.on_click(note.target.clone());
+            super::notify::interrupt(&self.notifier, note, &out, &self.ws.settings, click);
+        }
+    }
+
     /// Show conversation `id`, on its messages. A channel we are not in is previewed.
     fn jump_to(&mut self, id: &str) {
         if self.ws.is_outside(id) {
@@ -2822,7 +2848,7 @@ impl App {
             if desktop && self.ws.settings.notifications.desktop {
                 let (title, body) = super::notify::update_notification(&latest, env!("CARGO_PKG_VERSION"));
                 let events = self.update_events.clone();
-                super::notify::show_silent(title, body, Some(Box::new(move || drop(events.send(super::update_view::UpdateEvent::Clicked)))));
+                self.notifier.show_silent(title, body, Some(Box::new(move || drop(events.send(super::update_view::UpdateEvent::Clicked)))));
             }
             tracing::info!(version = %latest.version, "a new version of ttyak");
             self.update_pill = true;
@@ -4603,6 +4629,22 @@ fn reading(focus_reported: bool, focused: bool) -> bool {
     !focus_reported || focused
 }
 
+/// The terminal's focus for the attention gates: unknown until it reports one.
+fn term_focus(focus_reported: bool, focused: bool) -> TermFocus {
+    match (focus_reported, focused) {
+        (false, _) => TermFocus::Unknown,
+        (true, true) => TermFocus::Focused,
+        (true, false) => TermFocus::Unfocused,
+    }
+}
+
+/// Write the bell to `out` when one is due (between draws, as the clipboard's OSC 52, not through the screen buffer).
+fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) {
+    if notifier.take_bell() {
+        let _ = super::notify::bell(out);
+    }
+}
+
 /// What the open conversation `channel` is marked read up to now: its newest message, unless
 /// that is marked already (`marked`), the user marked it unread while here
 /// (`Workspace::held_unread`), or it is a channel we are not in.
@@ -4955,9 +4997,10 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
     let shown = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(index));
     let badges: super::others::Badges = Default::default();
     let wake = std::sync::Arc::new(tokio::sync::Notify::new());
-    super::others::spawn(sessions.clone(), shown.clone(), badges.clone(), wake.clone(), signed_out.clone());
+    let notifier = super::notify::Notifier::new();
+    super::others::spawn(sessions.clone(), shown.clone(), badges.clone(), wake.clone(), signed_out.clone(), notifier.clone());
     let (clicks_tx, mut clicks) = mpsc::unbounded_channel();
-    super::others::spawn_watchers(sessions.clone(), labels.clone(), shown.clone(), clicks_tx, signed_out.clone());
+    super::others::spawn_watchers(sessions.clone(), labels.clone(), shown.clone(), clicks_tx, signed_out.clone(), notifier.clone());
     let open_after: super::others::OpenAfter = Default::default();
     let logos: super::others::Logos = Default::default();
     super::others::spawn_logos(sessions.clone(), logos.clone(), signed_out.clone());
@@ -5004,7 +5047,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
         // A graphics mode this terminal cannot draw: said once, at the first workspace.
         keymap.1.extend(media.note.take());
         super::messages::set_open_key(keymap.0.first_shown(Context::Messages, Action::Open).unwrap_or_default());
-        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), &mut clicks, &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update, &title).await?;
+        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), &mut clicks, &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update, &title, &notifier).await?;
         (media, clipboard) = (kept_media, kept_clipboard);
         match next {
             Some(i) => index = i,
@@ -5027,7 +5070,7 @@ fn workspace_labels(sessions: &[slack_core::session::WorkspaceSession]) -> Vec<S
 impl App {
     /// An app on `client`'s workspace with nothing loaded or open yet, no keys bound and nothing
     /// kept from earlier runs (the caller fills those in); requests answer on `net`.
-    fn new(client: Client, net: mpsc::UnboundedSender<Net>, rtm_commands: mpsc::UnboundedSender<slack_core::rtm::RtmCommand>, media: super::media::Media, clipboard: super::clipboard::Clipboard) -> App {
+    fn new(client: Client, net: mpsc::UnboundedSender<Net>, rtm_commands: mpsc::UnboundedSender<slack_core::rtm::RtmCommand>, media: super::media::Media, clipboard: super::clipboard::Clipboard, notifier: super::notify::Notifier) -> App {
         App {
             keys: Keymap::default(),
             key_warnings: Vec::new(),
@@ -5105,6 +5148,7 @@ impl App {
             narrow: false,
             terminal_focused: true,
             focus_reported: false,
+            notifier,
             completion: None,
             completion_dismissed: None,
             path_suggestions: None,
@@ -5165,13 +5209,19 @@ async fn run_workspace(
     history: &mut super::history::History,
     update: &mut Update,
     title: &super::terminal::SharedTitle,
+    notifier: &super::notify::Notifier,
 ) -> Result<(Option<usize>, super::media::Media, super::clipboard::Clipboard)> {
     let (net_tx, mut net_rx) = mpsc::unbounded_channel();
     spawn_boot(client.clone(), net_tx.clone());
     let mut rtm = slack_core::rtm::spawn(client.clone());
     media.thumbs.clear();
     let team_name = if workspaces.0.len() > 1 { format!("{}/{} {}", workspaces.1 + 1, workspaces.0.len(), workspaces.0[workspaces.1]) } else { client.session.team_name.clone() };
-    let mut app = App::new(client.clone(), net_tx.clone(), rtm.commands.clone(), media, clipboard);
+    let mut app = App::new(client.clone(), net_tx.clone(), rtm.commands.clone(), media, clipboard, notifier.clone());
+    // The terminal's focus outlives the workspace shown.
+    (app.focus_reported, app.terminal_focused) = match notifier.focus() {
+        TermFocus::Unknown => (false, true),
+        f => (true, f == TermFocus::Focused),
+    };
     (app.keys, app.key_warnings) = keymap.clone();
     (app.workspaces, app.workspace, app.others, app.open_after, app.logos, app.signed_out, app.addresses) = workspaces;
     app.drafts = super::drafts::load(&client.session.team_id, &client.session.user_id);
@@ -5210,6 +5260,7 @@ async fn run_workspace(
         // The tab title follows what is unread, written only when it changes.
         let badge = super::attention::state(&app.ws, &app.others.lock().unwrap_or_else(|e| e.into_inner()));
         let _ = title.lock().unwrap_or_else(|e| e.into_inner()).sync(&mut std::io::stdout(), app.ws.settings.notifications.title_mark, badge, &app.client.session.team_name);
+        ring_bell(&app.notifier, &mut std::io::stdout());
         app.request_thumbs();
         app.request_feed_replies();
         app.request_authors();
@@ -5405,6 +5456,7 @@ fn handle_event(app: &mut App, ev: Event) -> bool {
     }
     if let Event::FocusGained | Event::FocusLost = ev {
         (app.focus_reported, app.terminal_focused) = (true, matches!(ev, Event::FocusGained));
+        app.notifier.set_focus(term_focus(app.focus_reported, app.terminal_focused));
         if !app.terminal_focused {
             app.clear_main_hover();
             app.clear_dialog_hover();
@@ -6494,6 +6546,9 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
         }
         RtmEvent::Event(v) => {
             let fx = super::live::apply(&mut app.ws, &v, app.current.as_deref());
+            if let Some((channel, thread, up_to)) = &fx.read {
+                app.notifier.read(&app.bubble_key(channel), thread.as_deref(), up_to);
+            }
             // An edit, a deletion or a reaction in a thread of the Threads feed: in its block; on an Activity item's
             // message: on it.
             app.threads.apply_live(&v);
@@ -6535,12 +6590,8 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
             if let Some((channel, user)) = fx.huddle_started {
                 let in_it = app.call.as_ref().is_some_and(|c| c.channel == channel);
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
-                if let Some((title, body)) = super::notify::huddle_notification(&app.ws, &channel, &user, in_it, now, &app.keys.first_key(Context::Global, Action::Huddle).unwrap_or_default()) {
-                    if app.ws.settings.notifications.desktop {
-                        let target = super::notify::Target { channel: channel.clone(), ts: None, thread_ts: None };
-                        super::notify::show(title, body, &app.ws.settings, Some(app.on_click(target)));
-                    }
-                }
+                let decision = super::attention::decide_huddle(&app.ws, app.workspace, &channel, &user, in_it, &app.keys.first_key(Context::Global, Action::Huddle).unwrap_or_default());
+                app.interrupt(decision, &app.gates(false, now));
             }
             if let Some((channel, room, user)) = fx.huddle_invite {
                 // The same rules as the huddle notification: DMs, not muted, no DND, not ours.
@@ -6570,14 +6621,9 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
                     app.view == View::Conversation && app.current.as_deref() == Some(channel.as_str())
                 };
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
-                let note = super::notify::notification(&app.ws, &channel, &m, app.terminal_focused && in_view, now);
-                tracing::debug!(channel, ts = m.ts, in_view, focused = app.terminal_focused, dnd = ?app.ws.dnd, notify = note.is_some(), "incoming message");
-                if let Some((title, body)) = note {
-                    if app.ws.settings.notifications.desktop {
-                        let target = super::notify::Target::message(&channel, &m);
-                        super::notify::show(title, body, &app.ws.settings, Some(app.on_click(target)));
-                    }
-                }
+                let decision = super::attention::decide(&app.ws, app.workspace, &channel, &m);
+                tracing::debug!(channel, ts = m.ts, in_view, focused = app.terminal_focused, dnd = ?app.ws.dnd, for_you = matches!(decision, super::attention::Decision::ForYou(_)), "incoming message");
+                app.interrupt(decision, &app.gates(in_view, now));
             }
         }
     }
@@ -8415,6 +8461,76 @@ mod tests {
         assert!(req.contains("conversations.mark"), "{req}");
     }
 
+    /// [`test_app`] with a DM from U2 (D1), its notifications going to a server in memory.
+    fn notified_app() -> (super::App, std::sync::Arc<crate::tui::notify::fake::Server>) {
+        use slack_core::types::{Conversation, User};
+        let (mut app, _net) = test_app();
+        let (notifier, server) = crate::tui::notify::Notifier::fake();
+        app.notifier = notifier;
+        app.ws.self_id = "U0".into();
+        app.ws.users.insert("U2".into(), User { id: "U2".into(), name: "bob".into(), ..Default::default() });
+        app.ws.conversations.insert("D1".into(), Conversation { id: "D1".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
+        (app, server)
+    }
+
+    fn dm(ts: &str) -> slack_core::rtm::RtmEvent {
+        slack_core::rtm::RtmEvent::Event(serde_json::json!({"type": "message", "channel": "D1", "user": "U2", "text": "hi", "ts": ts}))
+    }
+
+    #[tokio::test]
+    async fn the_bell_rings_only_unfocused_and_reported() {
+        use crossterm::event::Event;
+        let (mut app, server) = notified_app();
+        let mut out = Vec::new();
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        super::ring_bell(&app.notifier, &mut out);
+        assert!(out.is_empty(), "a terminal that never reported focus: no bell");
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::handle_rtm(&mut app, dm("1700000002.000100"));
+        super::ring_bell(&app.notifier, &mut out);
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "reported and unfocused: one bell");
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        super::handle_rtm(&mut app, dm("1700000003.000100"));
+        app.ws.settings.notifications.bell = false;
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::handle_rtm(&mut app, dm("1700000004.000100"));
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "focused, or the bell off: none");
+        app.notifier.settled().await;
+        assert_eq!(server.calls().len(), 4, "a bubble each time, the one before replaced: {:?}", server.calls());
+    }
+
+    #[tokio::test]
+    async fn reading_withdraws_the_bubble() {
+        use crate::tui::notify::fake::Call;
+        use crate::tui::state::Timeline;
+        use crossterm::event::Event;
+        let (mut app, server) = notified_app();
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        app.ws.timelines.insert("D1".into(), Timeline { loaded: true, ..Default::default() });
+        app.current = Some("D1".into());
+        app.view = super::View::Conversation;
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        app.mark_reads();
+        app.notifier.settled().await;
+        assert!(matches!(server.calls()[..], [Call::Show { .. }]), "unfocused: not read, still shown");
+        // Read here.
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        app.mark_reads();
+        app.notifier.settled().await;
+        assert_eq!(server.calls().pop(), Some(Call::Close(1)));
+        // Read on another client: Slack says so.
+        super::handle_event(&mut app, Event::FocusLost);
+        super::handle_rtm(&mut app, dm("1700000002.000100"));
+        super::handle_rtm(&mut app, slack_core::rtm::RtmEvent::Event(serde_json::json!({"type": "im_marked", "channel": "D1", "ts": "1700000001.000100", "unread_count_display": 1})));
+        app.notifier.settled().await;
+        assert!(matches!(server.calls().pop(), Some(Call::Show { .. })), "marked before it: stays");
+        super::handle_rtm(&mut app, slack_core::rtm::RtmEvent::Event(serde_json::json!({"type": "im_marked", "channel": "D1", "ts": "1700000002.000100", "unread_count_display": 0})));
+        app.notifier.settled().await;
+        assert_eq!(server.calls().pop(), Some(Call::Close(2)));
+    }
+
     /// An app on a workspace that answers nothing (every request is refused at once), with the
     /// default keys; what its requests bring back arrives on the receiver.
     fn test_app() -> (super::App, tokio::sync::mpsc::UnboundedReceiver<super::Net>) {
@@ -8422,7 +8538,7 @@ mod tests {
         let session = WorkspaceSession { url: "http://127.0.0.1:9/".into(), team_id: "T0".into(), user_id: "U0".into(), ..Default::default() };
         let (net, rx) = tokio::sync::mpsc::unbounded_channel();
         let (rtm, _) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = super::App::new(super::Client::new(session).unwrap(), net, rtm, super::super::media::Media::with(ratatui_image::picker::Picker::halfblocks()), Default::default());
+        let mut app = super::App::new(super::Client::new(session).unwrap(), net, rtm, super::super::media::Media::with(ratatui_image::picker::Picker::halfblocks()), Default::default(), super::super::notify::Notifier::fake().0);
         app.keys = super::Keymap::load("").0;
         (app, rx)
     }
@@ -8433,7 +8549,7 @@ mod tests {
         let session = WorkspaceSession { url: url.into(), team_id: "T0".into(), user_id: "U0".into(), ..Default::default() };
         let (net, rx) = tokio::sync::mpsc::unbounded_channel();
         let (rtm, _) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = super::App::new(super::Client::new(session).unwrap(), net, rtm, super::super::media::Media::with(ratatui_image::picker::Picker::halfblocks()), Default::default());
+        let mut app = super::App::new(super::Client::new(session).unwrap(), net, rtm, super::super::media::Media::with(ratatui_image::picker::Picker::halfblocks()), Default::default(), super::super::notify::Notifier::fake().0);
         app.keys = super::Keymap::load("").0;
         (app, rx)
     }
