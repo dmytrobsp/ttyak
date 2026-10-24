@@ -347,6 +347,8 @@ struct App {
     media: super::media::Media,
     /// The terminal window has focus (focus-change reporting).
     terminal_focused: bool,
+    /// The terminal has reported a focus change at least once (else `terminal_focused` is only our assumption).
+    focus_reported: bool,
     /// Open @/#/: suggestion list.
     completion: Option<super::autocomplete::Completion>,
     /// Suggestions closed with Esc for this (composer, token start) until the token changes.
@@ -525,6 +527,18 @@ impl App {
                 self.load_history(&id, false);
             }
         }
+    }
+
+    /// Mark what is on screen read: the open conversation and thread. Not while a view hides it (what comes meanwhile
+    /// stays unread) and not while the terminal is unfocused.
+    fn mark_reads(&mut self) {
+        if !reading(self.focus_reported, self.terminal_focused) {
+            return;
+        }
+        if self.view == View::Conversation && self.current.as_ref().and_then(|c| self.ws.timelines.get(c)).is_some_and(|t| t.loaded) {
+            self.mark_current_read();
+        }
+        self.mark_thread_read();
     }
 
     /// Mark the current conversation read up to its newest message.
@@ -2244,7 +2258,7 @@ impl App {
     fn feed_tick(&mut self, now: std::time::Instant) {
         let shown = self.view == View::Threads && self.threads.area != Rect::default() && self.overlay().is_none();
         let after = Duration::from_secs(self.ws.settings.threads.read_after_secs as u64);
-        for (channel, parent) in self.threads.tick(shown, now, after) {
+        for (channel, parent) in self.threads.tick(shown && reading(self.focus_reported, self.terminal_focused), now, after) {
             self.mark_feed_read(channel, parent);
         }
         if shown && self.threads.at_end() {
@@ -4575,6 +4589,11 @@ fn upload_status(name: &str, sent: u64, total: u64) -> String {
     format!("uploading {name}… {percent}% ({} of {})", super::text::human_size(sent), super::text::human_size(total))
 }
 
+/// Whether what is on screen counts as read: the terminal is focused, or has never reported focus (then as before).
+fn reading(focus_reported: bool, focused: bool) -> bool {
+    !focus_reported || focused
+}
+
 /// What the open conversation `channel` is marked read up to now: its newest message, unless
 /// that is marked already (`marked`), the user marked it unread while here
 /// (`Workspace::held_unread`), or it is a channel we are not in.
@@ -5075,6 +5094,7 @@ impl App {
             screen: Default::default(),
             narrow: false,
             terminal_focused: true,
+            focus_reported: false,
             completion: None,
             completion_dismissed: None,
             path_suggestions: None,
@@ -5269,11 +5289,7 @@ async fn run_workspace(
         app.show_edit_note();
         app.track_place(went);
         app.autosave_drafts();
-        // Not while a view hides it: what comes meanwhile stays unread.
-        if app.view == View::Conversation && app.current.as_ref().and_then(|c| app.ws.timelines.get(c)).is_some_and(|t| t.loaded) {
-            app.mark_current_read();
-        }
-        app.mark_thread_read();
+        app.mark_reads();
         app.feed_tick(std::time::Instant::now());
         app.refresh_preview();
         app.refresh_statuses();
@@ -5374,7 +5390,7 @@ fn handle_event(app: &mut App, ev: Event) -> bool {
         _ => {}
     }
     if let Event::FocusGained | Event::FocusLost = ev {
-        app.terminal_focused = matches!(ev, Event::FocusGained);
+        (app.focus_reported, app.terminal_focused) = (true, matches!(ev, Event::FocusGained));
         if !app.terminal_focused {
             app.clear_main_hover();
             app.clear_dialog_hover();
@@ -8340,6 +8356,42 @@ mod tests {
         assert!(ws.unread["D1"].has_unreads, "leaving does not read it");
         ws.timelines.get_mut("D1").unwrap().messages.pop();
         assert_eq!(read_mark_target(&ws, "D1", &marked), Some(ts(4)), "the cache of what was marked is forgotten");
+    }
+
+    #[test]
+    fn reads_only_while_focused() {
+        use super::reading;
+        assert!(reading(false, false), "no focus report yet: as today");
+        assert!(reading(true, true));
+        assert!(!reading(true, false));
+    }
+
+    #[tokio::test]
+    async fn an_unfocused_terminal_leaves_new_messages_unread() {
+        use crate::tui::state::{Timeline, Unread};
+        use slack_core::types::{Conversation, Message};
+        use crossterm::event::Event;
+        let (url, mut asked) = fake_slack(&[]).await;
+        let (mut app, _net) = test_app_at(&url);
+        app.ws.conversations.insert("D1".into(), Conversation { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() });
+        let mut t = Timeline { loaded: true, ..Default::default() };
+        t.upsert(Message { ts: "1700000000.000100".into(), user: Some("U1".into()), text: "hi".into(), ..Default::default() });
+        app.ws.timelines.insert("D1".into(), t);
+        app.ws.unread.insert("D1".into(), Unread { has_unreads: true, mentions: 0 });
+        app.current = Some("D1".into());
+        app.view = super::View::Conversation;
+        // The terminal reports it lost focus: the message stays unread and nothing goes to Slack.
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        assert!(app.focus_reported && !app.terminal_focused);
+        app.mark_reads();
+        assert!(app.ws.unread["D1"].has_unreads);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(300), asked.recv()).await.is_err(), "nothing marked");
+        // Back in the window: the next read step marks it.
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        app.mark_reads();
+        assert!(!app.ws.unread["D1"].has_unreads);
+        let req = tokio::time::timeout(std::time::Duration::from_secs(10), asked.recv()).await.expect("a request").unwrap();
+        assert!(req.contains("conversations.mark"), "{req}");
     }
 
     /// An app on a workspace that answers nothing (every request is refused at once), with the

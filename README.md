@@ -158,7 +158,7 @@ the keys of a sequence under way (`␣h`, `^␣h` for Ctrl+Space) and the hints 
 in `? help` (`↑/↓ move · Enter thread · i type · ␣ actions · ? help`). A thumb on a pane's right border shows where you are when it scrolls. The selected message is highlighted
 across the whole width of its pane, every row of it, like a selection in a list (so is the selected message of the Threads feed and the selected item of the Activity view). A conversation
 opened with unread messages has a red "new" line above the first of them; while you read further
-up, the bottom border counts the newer messages below ("↓ 3 newer"). With two or more
+up, the bottom border counts the newer messages below ("↓ 3 newer"). The open conversation and thread (and the Threads feed, by its timer) are marked read only while the terminal window has focus, in a terminal that reports focus changes; what comes while it does not stays unread until you are back. With two or more
 workspaces in the profile a rail on the far left has a tile for each — its logo where it has
 one and the terminal draws pictures, else its initials and number in a colour of its own — with
 the shown one marked by an accent bar and the others with unread messages by a thinner, dimmer
