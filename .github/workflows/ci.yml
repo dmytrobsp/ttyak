@@ -2,13 +2,19 @@
 # CONTRIBUTING.md describes (its tests cannot run there).
 name: CI
 
-# Not for a change of docs alone: the name check runs over the whole repo at the next push that changes anything else.
+# Not for a change of docs or of the site alone (Pages tests the site): the name check runs over the whole repo at the
+# next push that changes anything else.
 on:
   push:
     branches: [master]
-    paths-ignore: ["**.md", "docs/**"]
+    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**"]
   pull_request:
-    paths-ignore: ["**.md", "docs/**"]
+    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**"]
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,8 +45,10 @@ jobs:
           "${apt[@]}" update -qq
           "${apt[@]}" install -y --no-install-recommends pkg-config cmake libasound2-dev
       - uses: dtolnay/rust-toolchain@stable
+      # Only master saves: a branch's cache would be read by that branch alone.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo test --locked
 
   macos:
@@ -51,8 +59,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
+      # Only master saves: a branch's cache would be read by that branch alone.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo test --locked
 
   windows-cross:
@@ -89,17 +99,21 @@ jobs:
           bash tools/ci/apt-install.sh /tmp/ttyak-apt "${packages[@]}"
       # Only after an install that worked; an exact hit is kept as it is.
       - uses: actions/cache/save@v6
-        if: steps.apt-cache.outputs.cache-hit != 'true'
+        if: steps.apt-cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master'
         with:
           path: /tmp/ttyak-apt/*.deb
           key: ${{ steps.apt-key.outputs.key }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
+      # Only master saves: a branch's cache would be read by that branch alone.
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --release --target x86_64-pc-windows-gnu
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      # Debug: this job checks that it builds and links; the release profile is the release workflow's.
+      - run: cargo build --locked --target x86_64-pc-windows-gnu
       - name: No MinGW DLLs needed
         run: |
-          imports=$(x86_64-w64-mingw32-objdump -p target/x86_64-pc-windows-gnu/release/ttyak.exe | grep 'DLL Name' || true)
+          imports=$(x86_64-w64-mingw32-objdump -p target/x86_64-pc-windows-gnu/debug/ttyak.exe | grep 'DLL Name' || true)
           echo "$imports"
           ! echo "$imports" | grep -Ei 'libstdc|libgcc|libwinpthread'

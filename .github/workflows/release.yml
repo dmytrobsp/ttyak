@@ -49,8 +49,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # Windows: the .debs (158 MB) cached as in CI's windows-cross (same key, same path). Saved from a branch's run
-      # only: a tag's cache would serve that tag alone.
+      # Windows: the .debs (158 MB) cached as in CI's windows-cross (same key, same path). Restored only: CI saves
+      # them on master, and a tag's cache would serve that tag alone.
       - name: Packages cache key (Windows)
         id: apt-key
         if: matrix.name == 'x86_64-windows'
@@ -73,11 +73,6 @@ jobs:
         run: |
           read -ra packages <<< "$APT_PACKAGES"
           bash tools/ci/apt-install.sh /tmp/ttyak-apt "${packages[@]}"
-      - uses: actions/cache/save@v6
-        if: matrix.name == 'x86_64-windows' && steps.apt-cache.outputs.cache-hit != 'true' && github.ref_type == 'branch'
-        with:
-          path: /tmp/ttyak-apt/*.deb
-          key: ${{ steps.apt-key.outputs.key }}
       # Pinned by commit: they run before the macOS signing steps, which hold the Apple secrets. (CI keeps the tags.)
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -86,6 +81,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
+          # Restore only: releases come further apart than GitHub's 7-day cache eviction, so a save would never be read.
+          save-if: false
       - run: cargo build --locked --release --target ${{ matrix.target }}
       # macOS: the binary signed with the user's Developer ID (hardened runtime, Apple's timestamp) and notarized,
       # before it is staged, so the zips, SHA256SUMS and attestations are of the signed one. A tag of dmytrobsp/ttyak
