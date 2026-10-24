@@ -130,7 +130,7 @@ desktop notification, so the system's DND hid the popup but not the chime. Fix a
 - Set with OSC 2 (crossterm `SetTitle`); the terminal's previous title is saved and restored on quit (XTWINOPS 22/23
   push/pop where supported; the builder handles terminals that don't). The workspace name is sanitised (no control or
   bidi characters).
-- Setting: on/off, default on, in `settings.toml` and F6 (the builder picks the section; `[ui]` or alike).
+- Setting: on/off, default on, in `settings.toml` and F6 → Notifications ("Mark in the tab title", see Settings below).
 - Inside tmux the title reaches the pane; the outer terminal only with tmux's `set-titles` — README says so.
 
 ### 2. `ttyak ctl status`
@@ -157,7 +157,7 @@ desktop notification, so the system's DND hid the popup but not the chime. Fix a
   enables them and tracks `terminal_focused`). Terminals turn it into an urgency hint (the window manager / bar
   highlights the workspace), tmux flags the window.
 - Claude's call: a terminal that never reported focus → no bell (better silent than ringing while you read).
-- Setting: on/off, `settings.toml` + F6. Claude's call: default on.
+- Setting: on/off, `settings.toml` + F6 → Notifications ("Bell when not focused"). Claude's call: default on.
 - Some terminals also beep on BEL (kitty's `enable_audio_bell` is on by default). ttyak can't turn that off; the README
   names the setting.
 
