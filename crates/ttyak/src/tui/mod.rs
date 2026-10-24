@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod applink;
+pub mod attention;
 pub mod autocomplete;
 pub mod call;
 pub mod clipboard;

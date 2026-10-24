@@ -1,66 +1,34 @@
 //! Desktop notifications for incoming messages.
 
-use slack_core::format;
 use slack_core::types::Message;
 
-use super::live::mentions_me;
+use super::attention::{self, Decision};
 use super::state::Workspace;
-
-const BODY_MAX: usize = 300;
 
 /// Title and body for a notification about `m` in `channel`, or None if it should stay
 /// quiet. `viewing`: the user is looking at this conversation (or its thread) right now.
 pub fn notification(ws: &Workspace, channel: &str, m: &Message, viewing: bool, now: f64) -> Option<(String, String)> {
-    let from_me = m.user.as_deref() == Some(ws.self_id.as_str());
-    let system = m.subtype.as_deref().is_some_and(|s| !matches!(s, "thread_broadcast" | "file_share" | "bot_message" | "me_message"));
-    if from_me || system || m.hidden || viewing || ws.muted.contains(channel) || ws.dnd_active(now) {
+    if viewing || ws.dnd_active(now) {
         return None;
     }
-    let conv = ws.conversations.get(channel);
-    let is_im = conv.is_some_and(|c| c.is_im);
-    let in_my_thread = m.is_reply()
-        && m.thread_ts.as_deref().and_then(|t| ws.find_message(channel, t)).is_some_and(|p| p.user.as_deref() == Some(ws.self_id.as_str()) || p.reply_users.contains(&ws.self_id));
-    let mentioned = mentions_me(ws, m) || ws.notify.keyword_in(&m.text).is_some();
-    let wanted = match ws.notify.level(channel, conv.is_some_and(|c| c.is_mpim)) {
-        "nothing" => false,
-        // Every top-level message; replies only where we take part.
-        "everything" => is_im || mentioned || in_my_thread || !m.is_reply(),
-        _ => is_im || mentioned || in_my_thread || conv.is_some_and(|c| c.is_mpim),
-    };
-    if !wanted {
-        return None;
-    }
-    let author = ws.author(m);
-    let mut title = match conv {
-        Some(c) if c.is_im => author,
-        Some(c) if c.is_mpim => format!("{author} in {}", ws.conversation_label(c)),
-        _ => format!("{author} in #{}", ws.channel_label(channel)),
-    };
-    if m.is_reply() {
-        title.push_str(" (thread)");
-    }
-    let mut body = format::plain_text(&format::message_blocks(&m.text, &m.blocks), &|i| super::text::inline_plain(ws, i));
-    if body.trim().is_empty() {
-        if let Some(f) = m.files.first() {
-            body = format!("sent a file: {}", if f.title.is_empty() { &f.name } else { &f.title });
-        }
-    }
-    if body.chars().count() > BODY_MAX {
-        body = body.chars().take(BODY_MAX).collect::<String>() + "…";
-    }
-    Some((title, body))
+    shown(attention::decide(ws, 0, channel, m))
 }
 
 /// Notification for someone starting a huddle in a DM or group DM with us (Slack rings
 /// there); None for channels, muted conversations, DND, or a huddle we are already in.
 pub fn huddle_notification(ws: &Workspace, channel: &str, user: &str, in_it: bool, now: f64, join_key: &str) -> Option<(String, String)> {
-    let conv = ws.conversations.get(channel)?;
-    if in_it || user == ws.self_id || !conv.is_dm() || ws.muted.contains(channel) || ws.dnd_active(now) {
+    if ws.dnd_active(now) {
         return None;
     }
-    let who = ws.user_name(user);
-    let title = if conv.is_mpim { format!("{who} started a huddle in {}", ws.conversation_label(conv)) } else { format!("{who} started a huddle") };
-    Some((title, format!("Press {join_key} in ttyak to join")))
+    shown(attention::decide_huddle(ws, 0, channel, user, in_it, join_key))
+}
+
+/// The title and body of a for-you decision.
+fn shown(d: Decision) -> Option<(String, String)> {
+    match d {
+        Decision::ForYou(n) => Some((n.title, n.body)),
+        Decision::Unread | Decision::Nothing => None,
+    }
 }
 
 const NEW_VERSION: &str = "ttyak {version} is out";
