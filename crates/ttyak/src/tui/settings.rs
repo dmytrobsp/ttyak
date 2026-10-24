@@ -205,7 +205,7 @@ pub struct Notifications {
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { desktop: true, sound: "off".into(), bell: true, title_mark: true }
+        Notifications { desktop: true, sound: "off".into(), bell: false, title_mark: true }
     }
 }
 

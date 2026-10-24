@@ -4638,9 +4638,10 @@ fn term_focus(focus_reported: bool, focused: bool) -> TermFocus {
     }
 }
 
-/// Write the bell to `out` when one is due (between draws, as the clipboard's OSC 52, not through the screen buffer).
+/// Write the bell to `out` when one is due and the terminal is still unfocused (else it is dropped); between draws, as
+/// the clipboard's OSC 52, not through the screen buffer.
 fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) {
-    if notifier.take_bell() {
+    if notifier.take_bell() && notifier.focus() == TermFocus::Unfocused {
         let _ = super::notify::bell(out);
     }
 }
@@ -8482,6 +8483,8 @@ mod tests {
         use crossterm::event::Event;
         let (mut app, server) = notified_app();
         let mut out = Vec::new();
+        assert!(!crate::tui::settings::Settings::default().notifications.bell, "off by default");
+        app.ws.settings.notifications.bell = true;
         super::handle_rtm(&mut app, dm("1700000001.000100"));
         super::ring_bell(&app.notifier, &mut out);
         assert!(out.is_empty(), "a terminal that never reported focus: no bell");
@@ -8499,6 +8502,21 @@ mod tests {
         assert_eq!(out, b"\x07", "focused, or the bell off: none");
         app.notifier.settled().await;
         assert_eq!(server.calls().len(), 4, "a bubble each time, the one before replaced: {:?}", server.calls());
+    }
+
+    #[tokio::test]
+    async fn a_bell_is_dropped_once_focus_is_back() {
+        use crossterm::event::Event;
+        let (mut app, _server) = notified_app();
+        app.ws.settings.notifications.bell = true;
+        let mut out = Vec::new();
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        super::ring_bell(&app.notifier, &mut out);
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::ring_bell(&app.notifier, &mut out);
+        assert!(out.is_empty(), "back before it was written: dropped, not kept for later");
     }
 
     #[tokio::test]

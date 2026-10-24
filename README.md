@@ -284,11 +284,15 @@ ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
 A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
 instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
 workspaces, by their next 30-second check — where the notification server allows it (Linux desktops; macOS and
-Windows still show each one). Such a notification also rings the terminal's bell while the terminal is not focused:
-most terminals then mark the window urgent (the window manager or bar highlights it) and tmux flags the window. It
-never rings while notifications are paused, nor in a terminal that does not report focus; it does ring with desktop
-notifications off. F6 → Notifications → Bell when not focused (`bell` in `settings.toml`) turns it off. Some
-terminals also beep on the bell (kitty: `enable_audio_bell no`).
+Windows still show each one). A thread reply's notification stays until that thread is read (reading the
+conversation does not take it away).
+
+F6 → Notifications → Bell when not focused (`bell` in `settings.toml`, off by default) also rings the terminal's bell
+with such a notification while the terminal is not focused. Terminals turn it into an urgent mark (the window manager
+or bar highlights the window), tmux flags the window. Some desktops bring the window forward and switch to its
+workspace on a bell instead — kitty's default `window_alert_on_bell` with Hyprland's `misc:focus_on_activate = 1`
+does — and kitty may also beep (`enable_audio_bell`). The bell never rings while notifications are paused, nor in a
+terminal that does not report focus; it does ring with desktop notifications off.
 
 ## Keys
 

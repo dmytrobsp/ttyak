@@ -100,11 +100,12 @@ pub fn spawn_logos(sessions: Vec<WorkspaceSession>, logos: Logos, signed_out: Si
 }
 
 /// The conversations of workspace `index` a `client.counts` answer shows read: their bubbles go when they show nothing
-/// newer than that (best effort, every [`POLL`]; a thread's bubble goes with the watcher's live read events only).
+/// newer than that (best effort, every [`POLL`]; a thread's bubble goes with the watcher's live read events only, a
+/// huddle's start stays).
 fn withdraw_read(notifier: &Notifier, index: usize, counts: &Value) {
     for c in ["channels", "mpims", "ims"].iter().flat_map(|k| counts[*k].as_array().into_iter().flatten()) {
         if let (Some(id), Some(last_read)) = (c["id"].as_str(), c["last_read"].as_str()) {
-            notifier.read(&Key { workspace: index, channel: id.to_string() }, None, last_read);
+            notifier.polled_read(&Key { workspace: index, channel: id.to_string() }, last_read);
         }
     }
 }
