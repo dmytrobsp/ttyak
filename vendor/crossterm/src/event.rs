@@ -545,7 +545,7 @@ impl Command for PopKeyboardEnhancementFlags {
 /// Represents an event.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
-#[cfg_attr(not(feature = "bracketed-paste"), derive(Copy))]
+// ttyak: no Copy without bracketed-paste either: Osc carries a String.
 #[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Hash)]
 pub enum Event {
     /// The terminal gained focus
@@ -563,6 +563,9 @@ pub enum Event {
     /// An resize event with new dimensions after resize (columns, rows).
     /// **Note** that resize events can occur in batches.
     Resize(u16, u16),
+    // ttyak: the payload of an OSC reply from the terminal, between `ESC ]` and its end (BEL or `ESC \`), both left
+    // out (kitty's notification click: `99;i=…;`). Only the Unix backend produces it.
+    Osc(String),
 }
 
 impl Event {

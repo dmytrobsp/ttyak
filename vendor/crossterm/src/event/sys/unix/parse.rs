@@ -23,6 +23,40 @@ fn could_not_parse_event_error() -> io::Error {
     io::Error::new(io::ErrorKind::Other, "Could not parse an event.")
 }
 
+// ttyak: the longest OSC reply read (bytes, `ESC ]` included). A stray `ESC ] 9` with no end must not swallow
+// input for ever: past this the bytes read so far are dropped as a parse error and the input after goes on as usual.
+const OSC_MAX_LEN: usize = 4096;
+
+// ttyak: `ESC ]` followed by `next`, which is no digit: the buffer was Alt+] after all. Gives that key, so the
+// caller can clear its buffer and start the next sequence with `next` instead of losing it.
+pub(crate) fn alt_bracket_before(buffer: &[u8], next: u8) -> Option<InternalEvent> {
+    if buffer == b"\x1B]" && !next.is_ascii_digit() {
+        Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char(']'),
+            KeyModifiers::ALT,
+        ))))
+    } else {
+        None
+    }
+}
+
+// ttyak: `ESC ] <digit> …` up to BEL or `ESC \`, as `Event::Osc`. `None` while the end has not come.
+fn parse_osc(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
+    let osc = |payload: &[u8]| {
+        Ok(Some(InternalEvent::Event(Event::Osc(
+            String::from_utf8_lossy(payload).into_owned(),
+        ))))
+    };
+    match buffer {
+        [.., b'\x07'] => osc(&buffer[2..buffer.len() - 1]),
+        [.., b'\x1B', b'\\'] => osc(&buffer[2..buffer.len() - 2]),
+        // An ESC that is not the start of ST: not an OSC we can read.
+        [.., b'\x1B', _] => Err(could_not_parse_event_error()),
+        _ if buffer.len() > OSC_MAX_LEN => Err(could_not_parse_event_error()),
+        _ => Ok(None),
+    }
+}
+
 pub(crate) fn parse_event(
     buffer: &[u8],
     input_available: bool,
@@ -74,6 +108,10 @@ pub(crate) fn parse_event(
                         }
                     }
                     b'[' => parse_csi(buffer),
+                    // ttyak: `ESC ] <digit>` starts an OSC reply; `ESC ]` alone waits for the next byte while more
+                    // input is pending, else (and for anything but a digit) it is Alt+] as before.
+                    b']' if buffer.len() == 2 && input_available => Ok(None),
+                    b']' if buffer.len() > 2 && buffer[2].is_ascii_digit() => parse_osc(buffer),
                     b'\x1B' => Ok(Some(InternalEvent::Event(Event::Key(KeyCode::Esc.into())))),
                     _ => parse_event(&buffer[1..], input_available).map(|event_option| {
                         event_option.map(|event| {
@@ -1108,6 +1146,53 @@ mod tests {
                 modifiers: KeyModifiers::CONTROL,
             })))
         );
+    }
+
+    // ttyak: an OSC reply (kitty's notification click) is an event, ended by BEL or ST.
+    #[test]
+    fn osc_replies_become_events() {
+        let osc = |s: &str| Some(InternalEvent::Event(Event::Osc(s.to_string())));
+        for (input, more) in [
+            (&b"\x1B]99;i=w0-C1;\x1B\\"[..], false),
+            (&b"\x1B]99;i=w0-C1;\x07"[..], false),
+            (&b"\x1B]99;i=w0-C1;\x07"[..], true),
+        ] {
+            assert_eq!(parse_event(input, more).unwrap(), osc("99;i=w0-C1;"));
+        }
+    }
+
+    // ttyak: `ESC ]` with nothing after stays Alt+], and so does `ESC ]` and a non-digit.
+    #[test]
+    fn alt_bracket_is_still_a_key() {
+        let alt_bracket = Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char(']'),
+            KeyModifiers::ALT,
+        ))));
+        assert_eq!(parse_event(b"\x1B]", false).unwrap(), alt_bracket);
+        assert_eq!(parse_event(b"\x1B]x", false).unwrap(), alt_bracket);
+        // With more input pending it waits for the byte that tells, which the readers then hand on.
+        assert_eq!(parse_event(b"\x1B]", true).unwrap(), None);
+        assert_eq!(alt_bracket_before(b"\x1B]", b'x'), alt_bracket);
+        assert_eq!(alt_bracket_before(b"\x1B]", b'\x1B'), alt_bracket);
+        assert_eq!(alt_bracket_before(b"\x1B]", b'9'), None);
+        assert_eq!(alt_bracket_before(b"\x1B]9", b'x'), None);
+    }
+
+    // ttyak: an OSC split across reads waits for its end; a runaway or broken one is a parse error.
+    #[test]
+    fn an_osc_split_across_reads_waits_for_its_end() {
+        assert_eq!(parse_event(b"\x1B]99;i=w0", true).unwrap(), None);
+        assert_eq!(parse_event(b"\x1B]99;i=w0\x1B", true).unwrap(), None);
+        assert_eq!(
+            parse_event(b"\x1B]99;i=w0\x07", false).unwrap(),
+            Some(InternalEvent::Event(Event::Osc("99;i=w0".to_string())))
+        );
+        assert!(parse_event(b"\x1B]99;i=w0\x1Bx", true).is_err());
+        let mut long = b"\x1B]9".to_vec();
+        long.resize(OSC_MAX_LEN, b'a');
+        assert_eq!(parse_event(&long, true).unwrap(), None);
+        long.push(b'a');
+        assert!(parse_event(&long, true).is_err());
     }
 
     // ttyak: the side buttons (SGR 8 and 9) decode as Back and Forward.

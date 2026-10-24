@@ -6,7 +6,7 @@ use signal_hook_mio::v1_0::Signals;
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
 use crate::event::{
-    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, Event, InternalEvent,
+    source::EventSource, sys::unix::parse::{alt_bracket_before, parse_event}, timeout::PollTimeout, Event, InternalEvent,
 };
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
@@ -198,6 +198,12 @@ impl Parser {
     fn advance(&mut self, buffer: &[u8], more: bool) {
         for (idx, byte) in buffer.iter().enumerate() {
             let more = idx + 1 < buffer.len() || more;
+
+            // ttyak: `ESC ]` and no digit after: Alt+], then `byte` starts the next sequence.
+            if let Some(ie) = alt_bracket_before(&self.buffer, *byte) {
+                self.internal_events.push_back(ie);
+                self.buffer.clear();
+            }
 
             self.buffer.push(*byte);
 

@@ -5331,7 +5331,7 @@ fn ends_sequence(ev: &Event) -> bool {
         Event::Key(k) => k.kind != KeyEventKind::Release,
         Event::Mouse(m) => !matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)),
         Event::Paste(_) => true,
-        Event::FocusGained | Event::FocusLost | Event::Resize(..) => false,
+        Event::FocusGained | Event::FocusLost | Event::Resize(..) | Event::Osc(_) => false,
     }
 }
 
@@ -5357,7 +5357,7 @@ fn passive(ev: &Event) -> bool {
     match ev {
         Event::Key(k) => k.kind == KeyEventKind::Release,
         Event::Mouse(m) => matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Up(_)),
-        Event::FocusGained | Event::FocusLost | Event::Resize(..) => true,
+        Event::FocusGained | Event::FocusLost | Event::Resize(..) | Event::Osc(_) => true,
         Event::Paste(_) => false,
     }
 }
@@ -5410,6 +5410,11 @@ fn handle_event(app: &mut App, ev: Event) -> bool {
             app.clear_dialog_hover();
         }
         tracing::debug!(focused = app.terminal_focused, "terminal focus");
+        return true;
+    }
+    // An OSC reply from the terminal is not a key; nothing reads it yet.
+    if let Event::Osc(payload) = &ev {
+        tracing::debug!(len = payload.len(), "terminal OSC reply");
         return true;
     }
     if let Event::Key(k) = &ev {
@@ -10720,6 +10725,18 @@ mod tests {
         assert!(app.overlay().is_some());
         mouse(&mut app, MouseEventKind::Down(MouseButton::Back));
         assert!(app.overlay().is_some(), "the dialog stays");
+    }
+
+    #[tokio::test]
+    async fn an_osc_reply_is_no_key_and_changes_nothing() {
+        use crossterm::event::Event;
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        let before = (app.current.clone(), app.focus, app.composer.is_empty(), app.status.clone());
+        assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
+        settle(&mut app, true);
+        assert_eq!((app.current.clone(), app.focus, app.composer.is_empty(), app.status.clone()), before);
     }
 
     #[tokio::test]
