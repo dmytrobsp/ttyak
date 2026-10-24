@@ -201,11 +201,13 @@ pub struct Notifications {
     pub bell: bool,
     /// The read/unread mark (○ ● ◆) in the terminal's tab title.
     pub title_mark: bool,
+    /// No interruption while the system's do-not-disturb is on (where ttyak can ask: swaync, mako, dunst, GNOME, KDE).
+    pub follow_system_dnd: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { desktop: true, sound: "off".into(), bell: false, title_mark: true }
+        Notifications { desktop: true, sound: "off".into(), bell: false, title_mark: true, follow_system_dnd: true }
     }
 }
 

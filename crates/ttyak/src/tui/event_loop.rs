@@ -2791,7 +2791,7 @@ impl App {
     }
 
     /// What holds back an event here at `now`: the pause or schedule, viewing it (`in_view` in a focused terminal), and
-    /// the terminal's focus for the bell. (The system's do-not-disturb is not read yet.)
+    /// the terminal's focus for the bell. (The system's do-not-disturb is asked by the notifier's worker.)
     fn gates(&self, in_view: bool, now: f64) -> super::attention::Gates {
         super::attention::Gates { paused: self.ws.dnd_active(now), system_dnd: false, viewing: self.terminal_focused && in_view, focus: term_focus(self.focus_reported, self.terminal_focused) }
     }
@@ -8486,10 +8486,13 @@ mod tests {
         assert!(!crate::tui::settings::Settings::default().notifications.bell, "off by default");
         app.ws.settings.notifications.bell = true;
         super::handle_rtm(&mut app, dm("1700000001.000100"));
+        app.notifier.settled().await;
         super::ring_bell(&app.notifier, &mut out);
         assert!(out.is_empty(), "a terminal that never reported focus: no bell");
         assert!(super::handle_event(&mut app, Event::FocusLost));
         super::handle_rtm(&mut app, dm("1700000002.000100"));
+        // (The worker asks the system about do-not-disturb first, so the bell is due a moment later.)
+        app.notifier.settled().await;
         super::ring_bell(&app.notifier, &mut out);
         super::ring_bell(&app.notifier, &mut out);
         assert_eq!(out, b"\x07", "reported and unfocused: one bell");
@@ -8498,6 +8501,7 @@ mod tests {
         app.ws.settings.notifications.bell = false;
         assert!(super::handle_event(&mut app, Event::FocusLost));
         super::handle_rtm(&mut app, dm("1700000004.000100"));
+        app.notifier.settled().await;
         super::ring_bell(&app.notifier, &mut out);
         assert_eq!(out, b"\x07", "focused, or the bell off: none");
         app.notifier.settled().await;
@@ -8512,6 +8516,7 @@ mod tests {
         let mut out = Vec::new();
         assert!(super::handle_event(&mut app, Event::FocusLost));
         super::handle_rtm(&mut app, dm("1700000001.000100"));
+        app.notifier.settled().await;
         assert!(super::handle_event(&mut app, Event::FocusGained));
         super::ring_bell(&app.notifier, &mut out);
         assert!(super::handle_event(&mut app, Event::FocusLost));

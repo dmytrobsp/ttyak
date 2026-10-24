@@ -264,8 +264,11 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
         Field::TitleMark => {
             b.text("Puts a mark in front of the terminal's tab title: ○ nothing unread, ● something unread, ◆ something for you (a direct message or a mention). Your terminal's own title comes back when ttyak ends. In tmux this needs set-titles on.");
         }
+        Field::FollowSystemDnd => {
+            b.text("Holds back every notification, its sound and the bell while the system's do-not-disturb is on, as ttyak's own pause does. ttyak asks the notification server each time: SwayNotificationCenter, mako, dunst, GNOME (banners off) and KDE (notifications inhibited) can be asked; with any other, or when the server does not answer, notifications go through. Off: only ttyak's own pause and schedule hold them back.");
+        }
         Field::Sound => {
-            b.text("The sound played with each notification. How loud is Notification sound volume under Audio & video.").blank();
+            b.text("The sound played with each notification. How loud is Notification sound volume under Audio & video. Where the notification server plays sounds itself (it lists the sound capability), the sound goes with the notification, so the system's do-not-disturb silences it too; the volume and speaker set here then do not apply. Otherwise ttyak plays it.").blank();
             b.value("off", "silent").value("chime, ping, knock", "built-in sounds").value("system", "the desktop's own notification sound").blank();
             b.change("the next sound, played for you to hear");
         }

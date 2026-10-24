@@ -45,6 +45,7 @@ pub mod sound;
 pub mod state;
 pub mod status;
 pub mod switcher;
+pub mod system_dnd;
 pub mod terminal;
 pub mod theme;
 pub mod theme_picker;

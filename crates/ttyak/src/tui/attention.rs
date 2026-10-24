@@ -159,7 +159,8 @@ pub enum TermFocus {
 pub struct Gates {
     /// The pause or the schedule's quiet time.
     pub paused: bool,
-    /// The system's do-not-disturb (where ttyak can read it).
+    /// The system's do-not-disturb (where ttyak can read it). Never set by the callers: asking the system takes a
+    /// moment, so the notifier's worker asks (`notify::Guard`) and fires nothing while it is on.
     pub system_dnd: bool,
     /// The user is looking at that conversation (or thread) in a focused terminal.
     pub viewing: bool,

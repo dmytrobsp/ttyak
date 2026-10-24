@@ -76,6 +76,52 @@ pub fn samples(name: &str) -> Vec<i16> {
     f.into_iter().map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).collect()
 }
 
+/// Samples as a WAV file: 48 kHz, mono, 16 bit.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn wav_bytes(samples: &[i16]) -> Vec<u8> {
+    let data = samples.len() as u32 * 2;
+    let rate = huddle::session::SAMPLE_RATE;
+    let mut wav = Vec::with_capacity(44 + data as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    // PCM, one channel, the rate, bytes per second, bytes per frame, bits per sample.
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data.to_le_bytes());
+    wav.extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+    wav
+}
+
+/// A built-in sound as a WAV file in the cache folder, written once (None for `off`, `system`, unknown names, or when
+/// the cache cannot be written): for a notification server that plays a `sound-file` itself.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn wav_file(name: &str) -> Option<std::path::PathBuf> {
+    let samples = samples(name);
+    if samples.is_empty() {
+        return None;
+    }
+    let dir = slack_core::session::project_dirs()?.cache_dir().join("sounds");
+    let path = dir.join(format!("{name}.wav"));
+    let wav = wav_bytes(&samples);
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() == wav.len() as u64) {
+        return Some(path);
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    // Written whole beside it, then renamed: a server never reads half a sound.
+    static PARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let part = dir.join(format!("{name}.wav.{}.{}", std::process::id(), PARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    std::fs::write(&part, &wav).ok()?;
+    std::fs::rename(&part, &path).ok()?;
+    Some(path)
+}
+
 /// Play a built-in sound without blocking (no-op for `off`/`system`). `device`: part of an
 /// output device's name, None for the default; `volume` in percent.
 pub fn play(name: &str, device: Option<String>, volume: u32) {
@@ -172,5 +218,16 @@ mod tests {
         let secs = lullaby.len() as f32 / RATE;
         let peak = lullaby.iter().map(|s| s.unsigned_abs()).max().unwrap();
         assert!((8.0..11.0).contains(&secs) && (2_000..9_000).contains(&peak), "two quiet phrases of ~9 s: {secs} s, peak {peak}");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn a_sound_as_a_wav_file() {
+        let path = wav_file("chime").expect("the cache folder is writable");
+        let wav = std::fs::read(&path).unwrap();
+        assert_eq!((&wav[..4], &wav[8..16]), (&b"RIFF"[..], &b"WAVEfmt "[..]));
+        assert_eq!(wav.len(), 44 + samples("chime").len() * 2);
+        assert_eq!(wav_file("chime"), Some(path), "written once, found again");
+        assert!(wav_file("off").is_none() && wav_file("system").is_none() && wav_file("nope").is_none());
     }
 }
