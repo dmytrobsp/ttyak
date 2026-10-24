@@ -214,6 +214,40 @@ the order inside each OS.
   OSC 99 close), where the route allows.
 - One click waiter per live bubble; a replaced bubble's waiter ends.
 
+### Settings: F6 → Notifications becomes the one place (the user: "ok, let's try this")
+
+Today the attention settings sit in three sections (Availability: pause + schedule; Notifications: desktop, sound,
+levels, keywords, VIPs; Audio & video: the notification sound's volume). The Notifications section is reworked around
+the one system (layout as shown to the user; the builder adapts the rows to F6's row/help machinery):
+
+```
+Notifications
+  What notifies you   (kept on Slack, as today)
+    This conversation · Channels by default · Keywords · VIPs
+  How you're told
+    Desktop notifications      on
+    Sound                      chime      volume 80 %   (moved from Audio & video)
+    Bell when not focused      on
+    Mark in the tab title      on         ○ ● ◆
+  Quiet
+    Paused until / schedule    (shown here and in Availability; same setting, both ways in)
+    Follow the system's do-not-disturb   on
+  On this machine   (shown only)
+    Notifications shown by     kitty           sound played by   ttyak
+    A click                    opens it and brings the window forward via kitty
+    System do-not-disturb      swaync: off
+    Send a test notification   (Enter)
+```
+
+Claude's calls inside it:
+- "Follow the system's do-not-disturb" is a switch (default on), for a system whose detection misfires.
+- "Send a test notification" sends a real one through the route found, with its sound, and — after a few seconds, so
+  the user can switch away — the bell if unfocused; for checking a setup (and the live tests).
+- Pause and schedule stay in Availability (they are Slack availability) and also appear here.
+- `settings.toml`: the new switches under `[notifications]`; the sound volume's key may move there too, with the old
+  `[audio] sound_volume` still read (old files keep working; the builder decides whether to move the key at all).
+- Every row gets its F6 help text (W1's per-item help), words through `tr`.
+
 ## 6. Ctrl+↑/↓ → moved into a rethink of scrolling and navigation
 
 The builder check found macOS takes Ctrl+↑/↓ (Mission Control / App Exposé). The user: "let's instead re-think
