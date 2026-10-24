@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::io::{self, Write};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use slack_core::types::Message;
@@ -68,9 +68,9 @@ impl Target {
 }
 
 /// A notification titled `title` saying `body`, with the settings' `sound` (None: none at all) as `by` carries it:
-/// `Notification`: the server plays it ("system": the desktop's own, else the built-in one as a file); otherwise the
-/// server is told to keep quiet (ttyak plays it itself, or nobody does).
-fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy) -> notify_rust::Notification {
+/// `Notification`: the server plays it ("system": the desktop's own, else the built-in one as the WAV `file`); otherwise
+/// the server is told to keep quiet (ttyak plays it itself, or nobody does).
+fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy, file: Option<&std::path::Path>) -> notify_rust::Notification {
     let mut n = notify_rust::Notification::new();
     n.appname("ttyak").summary(title).body(body);
     let by_server = sound.filter(|_| by == SoundBy::Notification);
@@ -80,7 +80,7 @@ fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy) -> notify_r
         }
         // (Without a sound name macOS and Windows stay silent; XDG servers may play their own.)
         #[cfg(all(unix, not(target_os = "macos")))]
-        Some(name) => match super::sound::wav_file(name) {
+        Some(_) => match file {
             Some(file) => {
                 n.hint(notify_rust::Hint::SoundFile(file.to_string_lossy().into_owned()));
             }
@@ -93,7 +93,9 @@ fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy) -> notify_r
             n.hint(notify_rust::Hint::SuppressSound(true));
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
-        Some(_) | None => {}
+        Some(_) | None => {
+            let _ = file;
+        }
     }
     n
 }
@@ -117,6 +119,8 @@ struct Bubble {
     sound: Option<String>,
     /// Who plays it (the worker decides from what the server can do).
     by: SoundBy,
+    /// The WAV file of the built-in sound, when the server plays it.
+    file: Option<std::path::PathBuf>,
     /// The server's id of the bubble it replaces.
     replaces: Option<u32>,
     /// A click is waited for.
@@ -132,6 +136,8 @@ trait Backend: Send + Sync {
     fn suppressed(&self, server: Server) -> Fut<'static, Option<bool>>;
     /// Play `sound` in ttyak's own player.
     fn play(&self, sound: Sound);
+    /// The built-in sound `name` as a WAV file, for a server that plays files (None: it cannot be written).
+    fn sound_file(&self, name: &str) -> Option<std::path::PathBuf>;
 }
 
 /// A sound ttyak plays itself: the settings' name, the output device (None: the default) and the volume in percent.
@@ -157,6 +163,8 @@ pub struct Guard {
     pub dnd: bool,
     /// Ring the bell (after that question).
     pub bell: bool,
+    /// The focus period the event was decided in (set by the notifier): the bell is for that one only.
+    epoch: u64,
 }
 
 /// A bubble on screen.
@@ -178,7 +186,7 @@ impl Backend for System {
         Box::pin(async move {
             #[cfg(all(unix, not(target_os = "macos")))]
             {
-                let mut n = notice(&bubble.title, &bubble.body, bubble.sound.as_deref(), bubble.by);
+                let mut n = notice(&bubble.title, &bubble.body, bubble.sound.as_deref(), bubble.by, bubble.file.as_deref());
                 if let Some(id) = bubble.replaces {
                     n.id(id);
                 }
@@ -192,7 +200,7 @@ impl Backend for System {
             }
             #[cfg(not(all(unix, not(target_os = "macos"))))]
             {
-                let n = notice(&bubble.title, &bubble.body, bubble.sound.as_deref(), bubble.by);
+                let n = notice(&bubble.title, &bubble.body, bubble.sound.as_deref(), bubble.by, bubble.file.as_deref());
                 let _ = (bubble.replaces, bubble.clickable);
                 tokio::task::spawn_blocking(move || {
                     if let Err(e) = n.show() {
@@ -214,6 +222,16 @@ impl Backend for System {
 
     fn play(&self, sound: Sound) {
         super::sound::play(&sound.name, sound.device, sound.volume);
+    }
+
+    fn sound_file(&self, name: &str) -> Option<std::path::PathBuf> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        return super::sound::wav_file(name);
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        return {
+            let _ = name;
+            None
+        };
     }
 }
 
@@ -277,15 +295,37 @@ struct Inner {
     focus: AtomicU8,
 }
 
+/// How long the system's answer about do-not-disturb is reused for the next event (an internal wait: a burst of
+/// messages asks the system once, not once each).
+const DND_REUSE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long a failed look for the notification server is remembered before the next (an internal wait: a hung bus
+/// costs [`SERVER_WAIT`] once, not for every command).
+const DISCOVERY_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// What the worker shares with the run loop.
-#[derive(Default)]
 struct Shared {
-    /// A bell is due.
-    bell: AtomicBool,
+    /// A bell is due, as the focus period (plus one) it was decided in; 0: none.
+    bell: AtomicU64,
+    /// Counts the changes of the terminal's focus: a bell is for the period it was decided in only.
+    epoch: AtomicU64,
     /// The notification server, once found (a failed show forgets it: the server may have changed).
     environment: Mutex<Option<Environment>>,
+    /// When looking for the server last failed.
+    discovery_failed: Mutex<Option<std::time::Instant>>,
+    /// The system's last answer about do-not-disturb, and when it came.
+    dnd: Mutex<Option<(std::time::Instant, Option<bool>)>>,
     /// The server was looked for for F6 already.
     probed: AtomicBool,
+    /// [`DND_REUSE`] and [`DISCOVERY_RETRY`] (tests shorten them).
+    reuse: std::time::Duration,
+    retry: std::time::Duration,
+}
+
+impl Shared {
+    fn new(reuse: std::time::Duration, retry: std::time::Duration) -> Shared {
+        Shared { bell: AtomicU64::new(0), epoch: AtomicU64::new(0), environment: Mutex::default(), discovery_failed: Mutex::default(), dnd: Mutex::default(), probed: AtomicBool::new(false), reuse, retry }
+    }
 }
 
 /// A request to the worker.
@@ -294,7 +334,7 @@ enum Cmd {
     /// played if the server will not play it; `guard`: what is asked first.
     Show { key: Option<Key>, at: Option<Place>, bubble: Bubble, own: Option<Sound>, guard: Guard, on_click: Option<Box<dyn FnOnce() + Send>> },
     /// Ring the bell unless the system is not to be disturbed (`dnd`).
-    Bell { dnd: bool },
+    Bell { dnd: bool, epoch: u64 },
     /// Find out what the notification server is and can do.
     Probe,
     /// Close `key`'s bubble, `how` says when.
@@ -372,7 +412,11 @@ impl Notifier {
     }
 
     fn with(backend: Arc<dyn Backend>) -> Notifier {
-        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::default(), focus: AtomicU8::new(TermFocus::Unknown as u8) }) }
+        Notifier::with_waits(backend, DND_REUSE, DISCOVERY_RETRY)
+    }
+
+    fn with_waits(backend: Arc<dyn Backend>, reuse: std::time::Duration, retry: std::time::Duration) -> Notifier {
+        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::new(Shared::new(reuse, retry)), focus: AtomicU8::new(TermFocus::Unknown as u8) }) }
     }
 
     fn send(&self, cmd: Cmd) {
@@ -398,7 +442,8 @@ impl Notifier {
     /// As [`Notifier::show`], with the worker asking `guard` first.
     pub fn show_guarded(&self, note: Note, sound: Option<Sound>, guard: Guard, on_click: Box<dyn FnOnce() + Send>) {
         let at = note.target.ts.clone().map(|ts| Place { thread: note.target.thread_ts.clone(), ts });
-        let bubble = Bubble { title: note.title, body: note.body, sound: sound.as_ref().map(|s| s.name.clone()), by: SoundBy::None, replaces: None, clickable: true };
+        let bubble = Bubble { title: note.title, body: note.body, sound: sound.as_ref().map(|s| s.name.clone()), by: SoundBy::None, file: None, replaces: None, clickable: true };
+        let guard = Guard { epoch: self.inner.shared.epoch.load(Ordering::Relaxed), ..guard };
         self.send(Cmd::Show { key: Some(note.key), at, bubble, own: sound, guard, on_click: Some(on_click) });
     }
 
@@ -425,45 +470,49 @@ impl Notifier {
     /// Show a bubble without any sound, ttyak's or the desktop's, that nothing replaces (the update notice: quiet hours
     /// do not hold it back, so it must never sound); `on_click` as in [`Notifier::show`].
     pub fn show_silent(&self, title: String, body: String, on_click: Option<Box<dyn FnOnce() + Send>>) {
-        let bubble = Bubble { title, body, sound: None, by: SoundBy::None, replaces: None, clickable: on_click.is_some() };
+        let bubble = Bubble { title, body, sound: None, by: SoundBy::None, file: None, replaces: None, clickable: on_click.is_some() };
         self.send(Cmd::Show { key: None, at: None, bubble, own: None, guard: Guard::default(), on_click });
     }
 
-    /// How bubbles, their sound and clicks go on this machine. (The server is looked for the first time this is asked:
-    /// until it is found, the sound's route reads "not known yet".)
+    /// How bubbles, their sound (the settings' `sound`) and clicks go on this machine. (The server is looked for the first
+    /// time this is asked: until it is found, the sound's route reads "not known yet".)
     #[allow(dead_code)] // read by F6, wired in after this
-    pub fn route(&self) -> RouteInfo {
+    pub fn route(&self, sound: &str) -> RouteInfo {
         let click = if cfg!(all(unix, not(target_os = "macos"))) { "opens it in ttyak" } else { "does what the system does" };
         let environment = self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if environment.is_none() && !self.inner.shared.probed.swap(true, Ordering::Relaxed) {
             self.send(Cmd::Probe);
         }
-        let sound_by = match environment {
-            Some(e) if system_dnd::sound_by(&e.capabilities, "chime") == SoundBy::Notification => "the notification",
-            Some(_) => "ttyak",
+        let sound_by = match environment.map(|e| system_dnd::sound_route(&e.capabilities, sound)) {
             None => "not known yet",
+            Some(SoundBy::Notification) => "the notification",
+            Some(SoundBy::Ttyak) if sound == "system" => "nobody (the server has no sound of its own to play)",
+            Some(SoundBy::Ttyak) => "ttyak",
+            Some(SoundBy::None) => "nobody (the sound is off)",
         };
         RouteInfo { shown_by: "the system's notifications".into(), sound_by: sound_by.into(), click: click.into() }
     }
 
     /// Ask for the bell (the run loop writes it between draws).
     pub fn ring(&self) {
-        self.inner.shared.bell.store(true, Ordering::Relaxed);
+        self.inner.shared.bell.store(self.inner.shared.epoch.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
     }
 
     /// Ask for the bell unless the system is not to be disturbed: the worker asks it first.
     pub fn ring_unless_quiet(&self) {
-        self.send(Cmd::Bell { dnd: true });
+        self.send(Cmd::Bell { dnd: true, epoch: self.inner.shared.epoch.load(Ordering::Relaxed) });
     }
 
-    /// Whether a bell is due, once.
+    /// Whether a bell is due, once, and decided in the focus period it still is.
     pub fn take_bell(&self) -> bool {
-        self.inner.shared.bell.swap(false, Ordering::Relaxed)
+        self.inner.shared.bell.swap(0, Ordering::Relaxed) == self.inner.shared.epoch.load(Ordering::Relaxed) + 1
     }
 
     /// The terminal reported its focus.
     pub fn set_focus(&self, focus: TermFocus) {
-        self.inner.focus.store(focus as u8, Ordering::Relaxed);
+        if self.inner.focus.swap(focus as u8, Ordering::Relaxed) != focus as u8 {
+            self.inner.shared.epoch.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// The terminal's focus as last reported.
@@ -486,18 +535,20 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 // The system's do-not-disturb holds back all of it; else the bell, and the sound where the server will
                 // not play it.
                 let environment = if bubble.sound.is_some() || guard.dnd { Some(environment(&backend, &shared).await) } else { None };
-                if guard.dnd && held_back(&backend, environment.as_ref()).await {
+                if guard.dnd && held_back(&backend, &shared, environment.as_ref()).await {
                     continue;
                 }
                 if guard.bell {
-                    shared.bell.store(true, Ordering::Relaxed);
+                    ring_in(&shared, guard.epoch);
                 }
                 if let (Some(sound), Some(environment)) = (&bubble.sound, &environment) {
-                    bubble.by = system_dnd::sound_by(&environment.capabilities, sound);
-                    // (macOS and Windows toasts carry only the desktop's own sound, until their routes play files.)
-                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    bubble.by = system_dnd::sound_route(&environment.capabilities, sound);
                     if bubble.by == SoundBy::Notification && sound != "system" {
-                        bubble.by = SoundBy::Ttyak;
+                        bubble.file = backend.sound_file(sound);
+                        // (A sound that cannot be written for the server is played by ttyak rather than lost.)
+                        if bubble.file.is_none() {
+                            bubble.by = SoundBy::Ttyak;
+                        }
                     }
                 }
                 if let (SoundBy::Ttyak, Some(own)) = (bubble.by, own) {
@@ -530,10 +581,10 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                     live.insert(key, Live { shown, at, generation, waiter });
                 }
             }
-            Cmd::Bell { dnd } => {
+            Cmd::Bell { dnd, epoch } => {
                 let environment = if dnd { Some(environment(&backend, &shared).await) } else { None };
-                if !(dnd && held_back(&backend, environment.as_ref()).await) {
-                    shared.bell.store(true, Ordering::Relaxed);
+                if !(dnd && held_back(&backend, &shared, environment.as_ref()).await) {
+                    ring_in(&shared, epoch);
                 }
             }
             Cmd::Probe => drop(environment(&backend, &shared).await),
@@ -563,37 +614,60 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
     }
 }
 
-/// What the notification server is and can do: as found before, else asked (for at most [`SERVER_WAIT`]; a server that
-/// does not answer is taken for one that can do nothing, and asked again next time).
-async fn environment(backend: &Arc<dyn Backend>, shared: &Shared) -> Environment {
-    if let Some(known) = shared.environment.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-        return known;
-    }
-    match tokio::time::timeout(SERVER_WAIT, backend.environment()).await {
-        Ok(Ok(found)) => {
-            tracing::debug!(server = ?found.server, capabilities = ?found.capabilities, "notification server");
-            *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = Some(found.clone());
-            found
-        }
-        Ok(Err(e)) => {
-            tracing::debug!("notification server: {e}");
-            Environment { server: Server::Other(String::new()), capabilities: Vec::new() }
-        }
-        Err(_) => {
-            tracing::debug!("notification server: no answer");
-            Environment { server: Server::Other(String::new()), capabilities: Vec::new() }
-        }
+/// The bell is due, if the focus period `epoch` it was decided in is still the current one.
+fn ring_in(shared: &Shared, epoch: u64) {
+    if shared.epoch.load(Ordering::Relaxed) == epoch {
+        shared.bell.store(epoch + 1, Ordering::Relaxed);
     }
 }
 
-/// Whether the system says notifications are suppressed (not being able to tell counts as not).
-async fn held_back(backend: &Arc<dyn Backend>, environment: Option<&Environment>) -> bool {
+/// What the notification server is and can do: as found before, else asked (for at most [`SERVER_WAIT`]; a server that
+/// does not answer is taken for one that can do nothing, and not asked again for [`DISCOVERY_RETRY`]).
+async fn environment(backend: &Arc<dyn Backend>, shared: &Shared) -> Environment {
+    let nothing = || Environment { server: Server::Other(String::new()), capabilities: Vec::new() };
+    if let Some(known) = shared.environment.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return known;
+    }
+    let failed = *shared.discovery_failed.lock().unwrap_or_else(|e| e.into_inner());
+    if failed.is_some_and(|at| at.elapsed() < shared.retry) {
+        return nothing();
+    }
+    let found = match tokio::time::timeout(SERVER_WAIT, backend.environment()).await {
+        Ok(Ok(found)) => Some(found),
+        Ok(Err(e)) => {
+            tracing::debug!("notification server: {e}");
+            None
+        }
+        Err(_) => {
+            tracing::debug!("notification server: no answer");
+            None
+        }
+    };
+    *shared.discovery_failed.lock().unwrap_or_else(|e| e.into_inner()) = found.is_none().then(std::time::Instant::now);
+    if let Some(found) = &found {
+        tracing::debug!(server = ?found.server, capabilities = ?found.capabilities, "notification server");
+    }
+    *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = found.clone();
+    found.unwrap_or_else(nothing)
+}
+
+/// Whether the system says notifications are suppressed (not being able to tell counts as not). An answer younger than
+/// [`DND_REUSE`] stands for the next event.
+async fn held_back(backend: &Arc<dyn Backend>, shared: &Shared, environment: Option<&Environment>) -> bool {
     let Some(environment) = environment else { return false };
-    let suppressed = backend.suppressed(environment.server.clone()).await == Some(true);
-    if suppressed {
+    let recent = *shared.dnd.lock().unwrap_or_else(|e| e.into_inner());
+    let answer = match recent {
+        Some((at, answer)) if at.elapsed() < shared.reuse => answer,
+        _ => {
+            let answer = backend.suppressed(environment.server.clone()).await;
+            *shared.dnd.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), answer));
+            answer
+        }
+    };
+    if answer == Some(true) {
         tracing::debug!(server = ?environment.server, "the system's do-not-disturb is on: nothing fired");
     }
-    suppressed
+    answer == Some(true)
 }
 
 /// Wait for a click on `shown` (at most [`CLICK_WAIT`]) and run `on_click` for it; then tell the worker (`ended`).
@@ -619,7 +693,7 @@ async fn wait(shown: Arc<dyn Shown>, on_click: Box<dyn FnOnce() + Send>, ended: 
 pub fn interrupt(notifier: &Notifier, note: Note, out: &Outputs, settings: &super::settings::Settings, on_click: Box<dyn FnOnce() + Send>) {
     let dnd = settings.notifications.follow_system_dnd;
     if out.bubble {
-        notifier.show_guarded(note, out.sound.then(|| Sound::of(settings)), Guard { dnd, bell: out.bell }, on_click);
+        notifier.show_guarded(note, out.sound.then(|| Sound::of(settings)), Guard { dnd, bell: out.bell, ..Guard::default() }, on_click);
     } else if out.bell {
         if dnd {
             notifier.ring_unless_quiet();
@@ -645,7 +719,7 @@ pub mod fake {
     /// What the server was asked.
     #[derive(Debug, Clone, PartialEq)]
     pub enum Call {
-        Show { replaces: Option<u32>, title: String, body: String, sound: Option<String>, by: SoundBy, clickable: bool },
+        Show { replaces: Option<u32>, title: String, body: String, sound: Option<String>, by: SoundBy, file: Option<std::path::PathBuf>, clickable: bool },
         Close(u32),
         /// ttyak's own player was asked for this sound.
         Play(String),
@@ -659,6 +733,12 @@ pub mod fake {
         hung: AtomicBool,
         environment: Mutex<Environment>,
         suppressed: Mutex<Option<bool>>,
+        /// How often the system was asked about do-not-disturb, and the notification server about itself.
+        asked: AtomicU32,
+        looked: AtomicU32,
+        /// The server cannot be found / the sound cannot be written as a file.
+        no_server: AtomicBool,
+        no_files: AtomicBool,
         clicks: Mutex<HashMap<u32, Arc<tokio::sync::Notify>>>,
     }
 
@@ -672,6 +752,10 @@ pub mod fake {
                 hung: AtomicBool::default(),
                 environment: Mutex::new(Environment { server: system_dnd::Server::Other("fake".into()), capabilities: Vec::new() }),
                 suppressed: Mutex::new(Some(false)),
+                asked: AtomicU32::default(),
+                looked: AtomicU32::default(),
+                no_server: AtomicBool::default(),
+                no_files: AtomicBool::default(),
                 clicks: Mutex::default(),
             }
         }
@@ -681,6 +765,26 @@ pub mod fake {
         /// What the server offers from now on.
         pub fn set_capabilities(&self, capabilities: &[&str]) {
             self.environment.lock().unwrap().capabilities = capabilities.iter().map(|c| c.to_string()).collect();
+        }
+
+        /// How often the system was asked about do-not-disturb.
+        pub fn asked(&self) -> u32 {
+            self.asked.load(Ordering::Relaxed)
+        }
+
+        /// How often the server was looked for.
+        pub fn looked(&self) -> u32 {
+            self.looked.load(Ordering::Relaxed)
+        }
+
+        /// From now on the server cannot be found (`no_server`), or can.
+        pub fn set_no_server(&self, no_server: bool) {
+            self.no_server.store(no_server, Ordering::Relaxed);
+        }
+
+        /// From now on the built-in sounds cannot be written as files, or can.
+        pub fn set_no_files(&self, no_files: bool) {
+            self.no_files.store(no_files, Ordering::Relaxed);
         }
 
         /// What the system says about do-not-disturb from now on (None: cannot be told).
@@ -718,7 +822,7 @@ pub mod fake {
         fn show(&self, b: Bubble) -> Fut<'static, anyhow::Result<Arc<dyn Shown>>> {
             let server = self.0.clone();
             Box::pin(async move {
-                server.calls.lock().unwrap().push(Call::Show { replaces: b.replaces, title: b.title, body: b.body, sound: b.sound, by: b.by, clickable: b.clickable });
+                server.calls.lock().unwrap().push(Call::Show { replaces: b.replaces, title: b.title, body: b.body, sound: b.sound, by: b.by, file: b.file, clickable: b.clickable });
                 if server.down.load(Ordering::Relaxed) {
                     anyhow::bail!("no notification server");
                 }
@@ -731,17 +835,24 @@ pub mod fake {
         }
 
         fn environment(&self) -> Fut<'static, anyhow::Result<Environment>> {
+            self.0.looked.fetch_add(1, Ordering::Relaxed);
             let found = self.0.environment.lock().unwrap().clone();
-            Box::pin(async move { Ok(found) })
+            let missing = self.0.no_server.load(Ordering::Relaxed);
+            Box::pin(async move { if missing { anyhow::bail!("no bus") } else { Ok(found) } })
         }
 
         fn suppressed(&self, _: system_dnd::Server) -> Fut<'static, Option<bool>> {
+            self.0.asked.fetch_add(1, Ordering::Relaxed);
             let answer = *self.0.suppressed.lock().unwrap();
             Box::pin(async move { answer })
         }
 
         fn play(&self, sound: Sound) {
             self.0.calls.lock().unwrap().push(Call::Play(sound.name));
+        }
+
+        fn sound_file(&self, name: &str) -> Option<std::path::PathBuf> {
+            (!self.0.no_files.load(Ordering::Relaxed)).then(|| std::path::PathBuf::from(format!("/fake/{name}.wav")))
         }
     }
 
@@ -772,6 +883,12 @@ pub mod fake {
     impl Notifier {
         /// A notifier on a server in memory.
         pub fn fake() -> (Notifier, Arc<Server>) {
+            let server = Arc::new(Server::default());
+            (Notifier::with_waits(Arc::new(Memory(server.clone())), std::time::Duration::ZERO, std::time::Duration::ZERO), server)
+        }
+
+        /// As [`Notifier::fake`], with the real waits for reusing an answer and retrying a lost server.
+        pub fn fake_remembering() -> (Notifier, Arc<Server>) {
             let server = Arc::new(Server::default());
             (Notifier::with(Arc::new(Memory(server.clone()))), server)
         }
@@ -874,8 +991,8 @@ mod tests {
 
     #[test]
     fn the_update_notice_is_silent() {
-        let quiet = notice("t", "b", None, SoundBy::None);
-        let loud = notice("t", "b", Some("system"), SoundBy::Notification);
+        let quiet = notice("t", "b", None, SoundBy::None, None);
+        let loud = notice("t", "b", Some("system"), SoundBy::Notification, None);
         assert_eq!((quiet.summary.as_str(), quiet.body.as_str(), quiet.appname.as_str()), ("t", "b", "ttyak"));
         #[cfg(all(unix, not(target_os = "macos")))]
         {
@@ -890,17 +1007,18 @@ mod tests {
     #[test]
     fn off_mutes_the_server() {
         use notify_rust::Hint;
+        let file = std::path::Path::new("/fake/chime.wav");
         for by in [SoundBy::None, SoundBy::Ttyak, SoundBy::Notification] {
-            let off = notice("t", "b", None, by);
+            let off = notice("t", "b", None, by, None);
             assert!(off.hints.contains(&Hint::SuppressSound(true)), "{by:?}: {:?}", off.hints);
         }
         // ttyak plays it itself: the server stays quiet.
-        let own = notice("t", "b", Some("chime"), SoundBy::Ttyak);
+        let own = notice("t", "b", Some("chime"), SoundBy::Ttyak, None);
         assert!(own.hints.contains(&Hint::SuppressSound(true)) && !own.hints.iter().any(|h| matches!(h, Hint::SoundFile(_) | Hint::SoundName(_))), "{:?}", own.hints);
-        // The server plays it: a file of the built-in sound, or the desktop's own name.
-        let file = notice("t", "b", Some("chime"), SoundBy::Notification);
-        assert!(!file.hints.contains(&Hint::SuppressSound(true)) && file.hints.iter().any(|h| matches!(h, Hint::SoundFile(f) if f.ends_with("chime.wav"))), "{:?}", file.hints);
-        let named = notice("t", "b", Some("system"), SoundBy::Notification);
+        // The server plays it: the file of the built-in sound, or the desktop's own name.
+        let loud = notice("t", "b", Some("chime"), SoundBy::Notification, Some(file));
+        assert!(!loud.hints.contains(&Hint::SuppressSound(true)) && loud.hints.contains(&Hint::SoundFile("/fake/chime.wav".into())), "{:?}", loud.hints);
+        let named = notice("t", "b", Some("system"), SoundBy::Notification, None);
         assert!(named.hints.iter().any(|h| matches!(h, Hint::SoundName(_))) && !named.hints.iter().any(|h| matches!(h, Hint::SoundFile(_))), "{:?}", named.hints);
     }
 
@@ -917,7 +1035,7 @@ mod tests {
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(calls.as_slice(), [fake::Call::Show { sound: Some(s), by: SoundBy::Notification, .. }] if s == "chime"), "{calls:?}");
-        assert_eq!(n.route().sound_by, "the notification");
+        assert_eq!(n.route("chime").sound_by, if cfg!(all(unix, not(target_os = "macos"))) { "the notification" } else { "ttyak" });
         // Off: nobody, whatever the server can do.
         n.show(note("D3", "3.0", None, "three"), None, Box::new(|| {}));
         n.settled().await;
@@ -932,29 +1050,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_bell_decided_in_an_earlier_focus_period_is_dropped() {
+        let (n, _server) = Notifier::fake();
+        n.set_focus(TermFocus::Unfocused);
+        n.show_guarded(note("D1", "1.0", None, "one"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.ring_unless_quiet();
+        // Focus came back and went again before the worker had asked the system.
+        n.set_focus(TermFocus::Focused);
+        n.set_focus(TermFocus::Unfocused);
+        n.settled().await;
+        assert!(!n.take_bell(), "that bell was for the period before");
+        n.show_guarded(note("D1", "2.0", None, "two"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.settled().await;
+        assert!(n.take_bell(), "one decided in this period rings");
+    }
+
+    #[tokio::test]
     async fn route_tells_who_plays_the_sound() {
         let (n, server) = Notifier::fake();
         server.set_capabilities(&["sound"]);
-        assert_eq!(n.route().sound_by, "not known yet", "the server is looked for now");
+        assert_eq!(n.route("chime").sound_by, "not known yet", "the server is looked for now");
         n.settled().await;
-        assert_eq!(n.route().sound_by, "the notification");
+        assert_eq!(n.route("system").sound_by, "the notification");
+        assert_eq!(n.route("off").sound_by, "nobody (the sound is off)");
         let (n, _) = Notifier::fake();
-        n.route();
+        n.route("chime");
         n.settled().await;
-        assert_eq!(n.route().sound_by, "ttyak");
+        assert_eq!(n.route("chime").sound_by, "ttyak");
+        assert_eq!(n.route("system").sound_by, "nobody (the server has no sound of its own to play)", "ttyak has no system sound");
+    }
+
+    #[tokio::test]
+    async fn a_burst_asks_the_system_once() {
+        let (n, server) = Notifier::fake_remembering();
+        let guard = Guard { dnd: true, bell: false, ..Guard::default() };
+        for i in 0..5 {
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|| {}));
+        }
+        n.settled().await;
+        assert_eq!((server.asked(), server.looked()), (1, 1), "one question and one look for five events");
+        let (n, server) = Notifier::fake();
+        for i in 0..3 {
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|| {}));
+        }
+        n.settled().await;
+        assert_eq!(server.asked(), 3, "no reuse without the wait");
+    }
+
+    #[tokio::test]
+    async fn a_lost_server_is_not_asked_for_again_at_once() {
+        let (n, server) = Notifier::fake_remembering();
+        server.set_no_server(true);
+        for i in 0..3 {
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), sound("chime"), Guard::default(), Box::new(|| {}));
+        }
+        n.settled().await;
+        assert_eq!(server.looked(), 1, "looked for once, remembered");
+        let plays = server.calls().iter().filter(|c| matches!(c, fake::Call::Play(_))).count();
+        assert_eq!(plays, 3, "meanwhile ttyak plays the sounds itself");
+    }
+
+    #[tokio::test]
+    async fn a_sound_that_cannot_be_a_file_is_played_by_ttyak() {
+        let (n, server) = Notifier::fake();
+        server.set_capabilities(&["sound"]);
+        server.set_no_files(true);
+        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|| {}));
+        n.settled().await;
+        let calls = server.calls();
+        assert!(matches!(calls.as_slice(), [fake::Call::Play(_), fake::Call::Show { by: SoundBy::Ttyak, file: None, .. }]) || !cfg!(all(unix, not(target_os = "macos"))), "{calls:?}");
     }
 
     #[tokio::test]
     async fn the_systems_do_not_disturb_holds_back_all_of_it() {
         let (n, server) = Notifier::fake();
-        let guard = Guard { dnd: true, bell: true };
+        let guard = Guard { dnd: true, bell: true, ..Guard::default() };
         server.set_suppressed(Some(true));
         n.show_guarded(note("D1", "1.0", None, "one"), sound("chime"), guard, Box::new(|| {}));
         n.ring_unless_quiet();
         n.settled().await;
         assert!(server.calls().is_empty() && !n.take_bell(), "no bubble, no sound, no bell: {:?}", server.calls());
         // Not asked when the setting says not to follow it.
-        n.show_guarded(note("D1", "2.0", None, "two"), sound("chime"), Guard { dnd: false, bell: true }, Box::new(|| {}));
+        n.show_guarded(note("D1", "2.0", None, "two"), sound("chime"), Guard { dnd: false, bell: true, ..Guard::default() }, Box::new(|| {}));
         n.settled().await;
         assert_eq!(server.calls().len(), 2, "the sound and the bubble");
         assert!(n.take_bell());
@@ -985,7 +1162,7 @@ mod tests {
     }
 
     fn shown(replaces: Option<u32>, body: &str) -> fake::Call {
-        fake::Call::Show { replaces, title: "Bob".into(), body: body.into(), sound: None, by: SoundBy::None, clickable: true }
+        fake::Call::Show { replaces, title: "Bob".into(), body: body.into(), sound: None, by: SoundBy::None, file: None, clickable: true }
     }
 
     /// What each click ran, by the body of the note it was for.

@@ -37,9 +37,9 @@ impl Dirs {
 }
 
 /// Names next to the profiles that are ttyak's own: the default-profile file, `settings.toml` and `keys.toml` (and the
-/// `.tmp` files they are written through), `themes/` and `locales/` in the config folder, `login-browser/` in the cache
-/// folder.
-const RESERVED: &[&str] = &[DEFAULT_FILE, "settings.toml", "settings.tmp", "keys.toml", "keys.tmp", "themes", "locales", "login-browser"];
+/// `.tmp` files they are written through), `themes/` and `locales/` in the config folder, `login-browser/` and `sounds/`
+/// in the cache folder.
+const RESERVED: &[&str] = &[DEFAULT_FILE, "settings.toml", "settings.tmp", "keys.toml", "keys.tmp", "themes", "locales", "login-browser", "sounds"];
 
 /// Windows' device names: a file named so, with any extension after it (`con.txt`), is the device there.
 const DEVICES: &[&str] = &["con", "nul", "aux", "prn", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"];
@@ -353,7 +353,7 @@ mod tests {
         touch(&t.1.config.join("settings.toml"));
         let before = tree(&t.0);
         for name in [
-            "", ".", "..", "../x", "a/b", "a\\b", "default-profile", "Default-Profile", "a b", "../config/a", "themes", "Themes", "locales", "login-browser", "con", "NUL", "aux", "prn", "com1", "COM9", "lpt1", "lpt9",
+            "", ".", "..", "../x", "a/b", "a\\b", "default-profile", "Default-Profile", "a b", "../config/a", "themes", "Themes", "locales", "login-browser", "sounds", "Sounds", "con", "NUL", "aux", "prn", "com1", "COM9", "lpt1", "lpt9",
             // A dot or @ only inside a name, never two dots; ttyak's files next to the profiles; a device name with an
             // extension is still the device on Windows.
             ".a", "a.", "..a", "a..b", ".hidden", "@a", "a@", "settings.toml", "Keys.toml", "settings.tmp", "con.txt", "NUL.json", "com1.x", "lpt9.tar.gz", "Aux.a.b",

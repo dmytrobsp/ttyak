@@ -103,22 +103,30 @@ fn wav_bytes(samples: &[i16]) -> Vec<u8> {
 /// the cache cannot be written): for a notification server that plays a `sound-file` itself.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn wav_file(name: &str) -> Option<std::path::PathBuf> {
+    wav_file_in(&slack_core::session::project_dirs()?.cache_dir().join("sounds"), name)
+}
+
+/// [`wav_file`] in the folder `dir`: kept as it is when its bytes are the sound's, else written whole beside it and
+/// renamed (a server never reads half a sound; nothing is left behind when that fails).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn wav_file_in(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     let samples = samples(name);
     if samples.is_empty() {
         return None;
     }
-    let dir = slack_core::session::project_dirs()?.cache_dir().join("sounds");
     let path = dir.join(format!("{name}.wav"));
     let wav = wav_bytes(&samples);
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() == wav.len() as u64) {
+    if std::fs::read(&path).is_ok_and(|have| have == wav) {
         return Some(path);
     }
-    std::fs::create_dir_all(&dir).ok()?;
-    // Written whole beside it, then renamed: a server never reads half a sound.
+    std::fs::create_dir_all(dir).ok()?;
     static PARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let part = dir.join(format!("{name}.wav.{}.{}", std::process::id(), PARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-    std::fs::write(&part, &wav).ok()?;
-    std::fs::rename(&part, &path).ok()?;
+    let done = std::fs::write(&part, &wav).and_then(|()| std::fs::rename(&part, &path));
+    if done.is_err() {
+        let _ = std::fs::remove_file(&part);
+        return None;
+    }
     Some(path)
 }
 
@@ -223,11 +231,24 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn a_sound_as_a_wav_file() {
-        let path = wav_file("chime").expect("the cache folder is writable");
+        let dir = std::env::temp_dir().join(format!("ttyak-wav-test-{}", std::process::id()));
+        let path = wav_file_in(&dir, "chime").expect("the folder is writable");
         let wav = std::fs::read(&path).unwrap();
         assert_eq!((&wav[..4], &wav[8..16]), (&b"RIFF"[..], &b"WAVEfmt "[..]));
         assert_eq!(wav.len(), 44 + samples("chime").len() * 2);
-        assert_eq!(wav_file("chime"), Some(path), "written once, found again");
-        assert!(wav_file("off").is_none() && wav_file("system").is_none() && wav_file("nope").is_none());
+        assert_eq!(wav_file_in(&dir, "chime"), Some(path.clone()), "found again");
+        assert!(wav_file_in(&dir, "off").is_none() && wav_file_in(&dir, "system").is_none() && wav_file_in(&dir, "nope").is_none());
+        // Same size, other bytes (a sound changed in a new version): written again.
+        let mut other = wav.clone();
+        other[100] ^= 0x55;
+        std::fs::write(&path, &other).unwrap();
+        wav_file_in(&dir, "chime").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), wav, "compared by bytes, not by size");
+        // Nothing left beside it, and a folder that cannot be made gives none.
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["chime.wav"]);
+        assert!(wav_file_in(&path.join("sub"), "chime").is_none());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

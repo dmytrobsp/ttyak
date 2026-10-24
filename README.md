@@ -295,10 +295,12 @@ does — and kitty may also beep (`enable_audio_bell`). The bell never rings whi
 terminal that does not report focus; it does ring with desktop notifications off.
 
 The notification sound (F6 → Notifications → Sound) goes with the notification where the notification server can play
-it (it lists the `sound` capability), so the system's do-not-disturb silences both; ttyak's volume and speaker setting
-then do not apply. Where it cannot — SwayNotificationCenter, mako, dunst and GNOME's do not — ttyak plays the sound
-itself, and first asks the system whether notifications are suppressed: SwayNotificationCenter, mako, dunst, GNOME
-(banners off) and KDE (notifications inhibited) can be asked, and while the answer is yes ttyak fires nothing: no
+it (it lists the `sound` capability: GNOME's does, SwayNotificationCenter, mako and dunst do not), so the system's
+do-not-disturb silences both; ttyak's volume and speaker setting then do not apply. Where the server cannot, ttyak plays
+the sound itself — except `system`, the desktop's own sound, which then stays silent because there is none to play. With
+Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before every
+interruption, whoever plays the sound: SwayNotificationCenter, mako (a `do-not-disturb` or `dnd` mode), dunst (paused),
+GNOME (banners off) and KDE (notifications inhibited) can be asked, and while the answer is yes ttyak fires nothing: no
 notification, no sound, no bell. With any other server, or when it does not answer within a second, notifications go
 through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in `settings.toml`, on by
 default) turns this off; ttyak's own pause and schedule always hold notifications back.

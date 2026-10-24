@@ -8525,6 +8525,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_late_bell_does_not_ring_at_the_next_focus_loss() {
+        use crossterm::event::Event;
+        let (mut app, _server) = notified_app();
+        app.ws.settings.notifications.bell = true;
+        let mut out = Vec::new();
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        // Focus is back and gone again before the worker has asked the system about do-not-disturb.
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        app.notifier.settled().await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert!(out.is_empty(), "the bell was for the earlier time away");
+        super::handle_rtm(&mut app, dm("1700000002.000100"));
+        app.notifier.settled().await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "one for this time away rings");
+    }
+
+    #[tokio::test]
     async fn reading_withdraws_the_bubble() {
         use crate::tui::notify::fake::Call;
         use crate::tui::state::Timeline;
