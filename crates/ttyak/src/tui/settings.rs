@@ -197,11 +197,13 @@ pub struct Notifications {
     pub desktop: bool,
     /// Sound with each notification: off, chime, ping, knock, or system (the desktop's).
     pub sound: String,
+    /// The read/unread mark (○ ● ◆) in the terminal's tab title.
+    pub title_mark: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { desktop: true, sound: "off".into() }
+        Notifications { desktop: true, sound: "off".into(), title_mark: true }
     }
 }
 

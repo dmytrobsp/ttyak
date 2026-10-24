@@ -276,6 +276,11 @@ with the same profile adds them to it: inside the app, `Alt+1 … Alt+9` switche
 and `/workspace [name]` lists them or switches by name. The rail on the left shows
 unread messages in the others (checked every 30 s), and their desktop notifications still arrive (titled with the workspace); clicking one switches there.
 
+The terminal's tab title carries a mark: `○ ttyak - <workspace>` with nothing unread, `●` with something unread (in any
+workspace of the profile), `◆` with something for you (a direct message, a mention). Your terminal's own title comes
+back when ttyak ends. F6 → Notifications → Mark in the tab title (`title_mark` in `settings.toml`) turns it off, and
+ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
+
 ## Keys
 
 Press **F1** (or `?` outside the composer) in the app for the full list, with the keys in effect.
@@ -513,7 +518,7 @@ on Windows only from an SSH session, where `gdigrab` cannot capture (no desktop)
 
 | Variable | |
 |---|---|
-| (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
+| (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, the mark in the tab title, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
 | `TTYAK_LOG` | log filter, e.g. `ttyak=debug` (log file: `~/.cache/ttyak/<profile>/ttyak.log`); the websocket library's handshake and frames (`tungstenite::handshake::client`, `tungstenite::client`, `tungstenite::protocol`), which would print the token, cookie and messages, stay off unless named |
 | `TTYAK_DOWNLOAD_DIR` | where `␣s` saves attachments first, over F6 → Messages & media → Save files to (default: your downloads folder) |
 | `TTYAK_OPEN_WITH` | the program `␣o` opens links with, given the address (default: the system's opener — `xdg-open`, `open`, Windows' URL handler); only web and mail links are opened |

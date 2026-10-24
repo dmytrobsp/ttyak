@@ -1,9 +1,6 @@
 //! Attention: what each incoming event is worth (nothing, unread, for you), the badge state (○ ● ◆) that follows
 //! what is unread right now, and which outputs an event fires once the gates let it through.
 
-// The badge and the outputs are read by the tab title, the notifier and `ctl status`, wired in after this module.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use slack_core::format;
@@ -123,6 +120,7 @@ impl State {
     }
 
     /// The name in `ttyak ctl status`.
+    #[allow(dead_code)] // read by `ctl status`, wired in after this
     pub fn name(self) -> &'static str {
         match self {
             State::Read => "read",
@@ -148,6 +146,7 @@ pub fn state(ws: &Workspace, others: &HashMap<usize, Badge>) -> State {
 }
 
 /// Whether the terminal has the focus, as its focus reports say.
+#[allow(dead_code)] // wired in with the notifier
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TermFocus {
     Focused,
@@ -157,6 +156,7 @@ pub enum TermFocus {
 }
 
 /// What holds back every output of a for-you event.
+#[allow(dead_code)] // wired in with the notifier
 #[derive(Clone, Copy, Debug)]
 pub struct Gates {
     /// The pause or the schedule's quiet time.
@@ -169,6 +169,7 @@ pub struct Gates {
 }
 
 /// The outputs the user switched on.
+#[allow(dead_code)] // wired in with the notifier
 #[derive(Clone, Copy, Debug)]
 pub struct Switches {
     /// Desktop notifications (the bubble).
@@ -180,6 +181,7 @@ pub struct Switches {
 }
 
 /// What a for-you event fires.
+#[allow(dead_code)] // wired in with the notifier
 #[derive(Debug, PartialEq, Default)]
 pub struct Outputs {
     pub bubble: bool,
@@ -189,6 +191,7 @@ pub struct Outputs {
 
 /// What decision `d` fires: nothing unless it is for you and no gate holds it back; then the switches pick the
 /// bubble, its sound (no bubble, no sound) and the bell (only while the terminal is known to be unfocused).
+#[allow(dead_code)] // wired in with the notifier
 pub fn outputs(d: &Decision, g: &Gates, s: &Switches) -> Outputs {
     if !matches!(d, Decision::ForYou(_)) || g.paused || g.system_dnd || g.viewing {
         return Outputs::default();

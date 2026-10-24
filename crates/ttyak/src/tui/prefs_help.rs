@@ -258,6 +258,9 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
         Field::Desktop => {
             b.text("Shows a desktop notification for a message that notifies you, as the levels below decide.");
         }
+        Field::TitleMark => {
+            b.text("Puts a mark in front of the terminal's tab title: ○ nothing unread, ● something unread, ◆ something for you (a direct message or a mention). Your terminal's own title comes back when ttyak ends. In tmux this needs set-titles on.");
+        }
         Field::Sound => {
             b.text("The sound played with each notification. How loud is Notification sound volume under Audio & video.").blank();
             b.value("off", "silent").value("chime, ping, knock", "built-in sounds").value("system", "the desktop's own notification sound").blank();

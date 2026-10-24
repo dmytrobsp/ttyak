@@ -1067,7 +1067,6 @@ impl Workspace {
 
     /// Whether a DM or group DM is unread, by the same rule as [`Self::total_unread`] (listed, not muted): Slack
     /// badges each one, with or without a mention count.
-    #[allow(dead_code)] // read by `attention::state`, wired in after it
     pub fn dm_unread(&self) -> bool {
         let now = now_secs();
         self.unread.iter().any(|(id, u)| u.has_unreads && !self.muted.contains(id) && self.conversations.get(id).is_some_and(|c| c.is_dm() && self.is_listed(c, now, true)))

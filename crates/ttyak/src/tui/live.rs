@@ -112,7 +112,7 @@ pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>) -> Effects {
                     }
                     if current != Some(channel.as_str()) && !m.is_reply() {
                         let is_dm = ws.conversations.get(&channel).is_some_and(|c| c.is_dm());
-                        let mention = is_dm || mentions_me(ws, &m);
+                        let mention = (is_dm && !ws.muted.contains(&channel)) || mentions_me(ws, &m);
                         let u = ws.unread.entry(channel.clone()).or_default();
                         // Newly unread: a quiet conversation comes back to the sidebar.
                         if !u.has_unreads {
@@ -557,6 +557,18 @@ mod tests {
         let ev = |id: &str| json!({"type": "dnd_invalidated", "event_ts": "1.5", "user": {"id": id}});
         assert!(apply(&mut w, &ev("UME"), None).dnd_invalidated);
         assert!(!apply(&mut w, &ev("U2"), None).dnd_invalidated, "someone else's: ttyak shows no one else's DND");
+    }
+
+    #[test]
+    fn a_muted_dm_adds_no_mention() {
+        let mut w = ws();
+        w.conversations.insert("D1".into(), Conversation { id: "D1".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
+        let dm = |ts: &str| json!({"type":"message","channel":"D1","user":"U2","text":"hey","ts":ts});
+        apply(&mut w, &dm("10.0"), None);
+        assert_eq!(w.unread["D1"].mentions, 1, "a DM counts as a mention");
+        w.muted.insert("D1".into());
+        apply(&mut w, &dm("11.0"), None);
+        assert_eq!(w.unread["D1"].mentions, 1, "muted: no further mention");
     }
 
     #[test]

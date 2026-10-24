@@ -4966,7 +4966,8 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
         tracing::warn!("{w}");
     }
     tokio::task::spawn_blocking(super::highlight::warm_up);
-    let (_guard, mut terminal) = TerminalGuard::enter()?;
+    let (guard, mut terminal) = TerminalGuard::enter()?;
+    let title = guard.title();
     // Query the terminal before the event stream starts reading stdin.
     let mut media = super::media::Media::detect(&super::settings::load().0.messages.graphics);
     let mut clipboard = super::clipboard::Clipboard::default();
@@ -5003,7 +5004,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
         // A graphics mode this terminal cannot draw: said once, at the first workspace.
         keymap.1.extend(media.note.take());
         super::messages::set_open_key(keymap.0.first_shown(Context::Messages, Action::Open).unwrap_or_default());
-        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), &mut clicks, &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update).await?;
+        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), &mut clicks, &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update, &title).await?;
         (media, clipboard) = (kept_media, kept_clipboard);
         match next {
             Some(i) => index = i,
@@ -5163,6 +5164,7 @@ async fn run_workspace(
     clipboard: super::clipboard::Clipboard,
     history: &mut super::history::History,
     update: &mut Update,
+    title: &super::terminal::SharedTitle,
 ) -> Result<(Option<usize>, super::media::Media, super::clipboard::Clipboard)> {
     let (net_tx, mut net_rx) = mpsc::unbounded_channel();
     spawn_boot(client.clone(), net_tx.clone());
@@ -5205,6 +5207,9 @@ async fn run_workspace(
             draw(f, &mut app);
             super::media::reattach_pictures(f.buffer_mut());
         })?;
+        // The tab title follows what is unread, written only when it changes.
+        let badge = super::attention::state(&app.ws, &app.others.lock().unwrap_or_else(|e| e.into_inner()));
+        let _ = title.lock().unwrap_or_else(|e| e.into_inner()).sync(&mut std::io::stdout(), app.ws.settings.notifications.title_mark, badge, &app.client.session.team_name);
         app.request_thumbs();
         app.request_feed_replies();
         app.request_authors();

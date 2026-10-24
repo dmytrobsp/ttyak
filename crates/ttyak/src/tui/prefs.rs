@@ -60,6 +60,7 @@ pub enum Field {
     Language,
     Desktop,
     Sound,
+    TitleMark,
     /// Slack: the level for the conversation on screen.
     ConversationLevel,
     /// Slack: the default level for channels.
@@ -153,7 +154,7 @@ pub const CATEGORIES: &[(&str, &[Field])] = &[
     ("Appearance", &[Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive]),
     ("Messages & media", &[Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir]),
     ("Language & region", &[Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language]),
-    ("Notifications", &[Field::Desktop, Field::Sound, Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips]),
+    ("Notifications", &[Field::Desktop, Field::Sound, Field::TitleMark, Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips]),
     ("Audio & video", &[Field::Input, Field::Output, Field::HuddleVolume, Field::SoundVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera]),
     ("Huddles", &[Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs]),
     // The Update row only while a newer version is known (see `Prefs::fields`).
@@ -227,6 +228,7 @@ impl Field {
             Field::Language => "Language (locales/<code>.toml)",
             Field::Desktop => "Desktop notifications",
             Field::Sound => "Sound",
+            Field::TitleMark => "Mark in the tab title",
             Field::ConversationLevel => "This conversation notifies about",
             Field::ChannelDefault => "Channels notify about (default)",
             Field::Keywords => "Keywords",
@@ -323,6 +325,7 @@ impl Field {
             Field::TimeZone => format!("{} ({})", s.region.timezone, super::clock::now().format("%H:%M")),
             Field::Desktop => yes(s.notifications.desktop),
             Field::Sound => s.notifications.sound.clone(),
+            Field::TitleMark => yes(s.notifications.title_mark),
             Field::ConversationLevel => match current {
                 Some(c) => {
                     let mpim = ws.conversations.get(c).is_some_and(|c| c.is_mpim);
@@ -484,6 +487,7 @@ impl Field {
                 s.region.date_format = DATE_FORMATS[i].into();
             }
             Field::Desktop => s.notifications.desktop ^= true,
+            Field::TitleMark => s.notifications.title_mark ^= true,
             Field::WhichKeyShow => s.which_key.show ^= true,
             Field::WhichKeyIcons => s.which_key.icons ^= true,
             Field::WhichKeyCorner => {
@@ -786,7 +790,7 @@ fn recording_label(keys: &Keymap, seq: &[Key]) -> String {
 /// Category names and fixed labels, for translation templates.
 pub fn translatable() -> Vec<String> {
     let all = [
-        Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive, Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir, Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language, Field::Desktop, Field::Sound,
+        Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive, Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir, Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language, Field::Desktop, Field::Sound, Field::TitleMark,
         Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::Status, Field::Away, Field::Notifications, Field::Schedule, Field::ScheduleHours, Field::Input, Field::Output,
         Field::HuddleVolume, Field::SoundVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera, Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs,
         Field::UpdateVersion, Field::UpdateCheck, Field::UpdateEvery, Field::UpdateCheckTimeout, Field::UpdateTimeout, Field::UpdateCheckNow, Field::UpdateCommand, Field::UpdateOpen,
@@ -1654,7 +1658,7 @@ mod tests {
     fn slack_side_changes() {
         let mut ws = Workspace::default();
         let mut p = Prefs { category: 4, ..Default::default() };
-        p.selected = 2;
+        p.selected = 3;
         assert_eq!(p.change(&mut ws, Some("C1"), &Keymap::default()), Some(SlackChange::ConversationLevel { channel: "C1".into(), level: "everything".into() }), "default → everything");
         let mut cycle = Vec::new();
         for _ in 0..4 {
@@ -1664,9 +1668,9 @@ mod tests {
         }
         assert_eq!(cycle, ["everything", "mentions_dms", "nothing", "default"], "back to the default after nothing");
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), None, "no conversation, no change");
-        p.selected = 3;
-        assert_eq!(p.change(&mut ws, None, &Keymap::default()), Some(SlackChange::ChannelDefault("nothing".into())));
         p.selected = 4;
+        assert_eq!(p.change(&mut ws, None, &Keymap::default()), Some(SlackChange::ChannelDefault("nothing".into())));
+        p.selected = 5;
         ws.notify.keywords = vec!["a".into()];
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), None, "Enter starts editing");
         assert_eq!(p.editing.as_deref(), Some("a"));

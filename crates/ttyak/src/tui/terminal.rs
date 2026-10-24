@@ -9,6 +9,8 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement};
 use ratatui::Terminal;
+
+use super::title::Title;
 use ratatui::backend::{Backend, ClearType, CrosstermBackend, WindowSize};
 use ratatui::buffer::{Cell, CellWidth};
 use ratatui::layout::{Position, Size};
@@ -114,6 +116,17 @@ fn give_back_stderr() {}
 /// Restores the terminal when dropped.
 pub struct TerminalGuard {
     keyboard_enhanced: bool,
+    title: SharedTitle,
+}
+
+/// The tab title ttyak set, shared with the panic hook so that both put the old one back.
+pub type SharedTitle = std::sync::Arc<std::sync::Mutex<Title>>;
+
+impl TerminalGuard {
+    /// The title, for the run loop to set.
+    pub fn title(&self) -> SharedTitle {
+        self.title.clone()
+    }
 }
 
 impl TerminalGuard {
@@ -126,14 +139,15 @@ impl TerminalGuard {
         if keyboard_enhanced {
             execute!(out, PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
         }
-        install_panic_hook(keyboard_enhanced);
+        let title = SharedTitle::default();
+        install_panic_hook(keyboard_enhanced, title.clone());
         divert_stderr();
         let terminal = Terminal::new(WideSafe(CrosstermBackend::new(out)))?;
-        Ok((TerminalGuard { keyboard_enhanced }, terminal))
+        Ok((TerminalGuard { keyboard_enhanced, title }, terminal))
     }
 }
 
-fn restore(keyboard_enhanced: bool) {
+fn restore(keyboard_enhanced: bool, title: &SharedTitle) {
     // First, so a panic message printed after this reaches the terminal.
     give_back_stderr();
     let mut out = io::stdout();
@@ -142,19 +156,20 @@ fn restore(keyboard_enhanced: bool) {
     }
     let _ = execute!(out, DisableFocusChange, DisableBracketedPaste, DisableMouseCapture, LeaveAlternateScreen);
     let _ = disable_raw_mode();
+    title.lock().unwrap_or_else(|e| e.into_inner()).restore(&mut out);
 }
 
-fn install_panic_hook(keyboard_enhanced: bool) {
+fn install_panic_hook(keyboard_enhanced: bool, title: SharedTitle) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        restore(keyboard_enhanced);
+        restore(keyboard_enhanced, &title);
         previous(info);
     }));
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        restore(self.keyboard_enhanced);
+        restore(self.keyboard_enhanced, &self.title);
     }
 }
 
