@@ -6,7 +6,7 @@ use signal_hook_mio::v1_0::Signals;
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
 use crate::event::{
-    source::EventSource, sys::unix::parse::{alt_bracket_before, parse_event}, timeout::PollTimeout, Event, InternalEvent,
+    source::EventSource, sys::unix::parse::advance_bytes, timeout::PollTimeout, Event, InternalEvent,
 };
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
@@ -196,33 +196,8 @@ impl Default for Parser {
 
 impl Parser {
     fn advance(&mut self, buffer: &[u8], more: bool) {
-        for (idx, byte) in buffer.iter().enumerate() {
-            let more = idx + 1 < buffer.len() || more;
-
-            // ttyak: `ESC ]` and no digit after: Alt+], then `byte` starts the next sequence.
-            if let Some(ie) = alt_bracket_before(&self.buffer, *byte) {
-                self.internal_events.push_back(ie);
-                self.buffer.clear();
-            }
-
-            self.buffer.push(*byte);
-
-            match parse_event(&self.buffer, more) {
-                Ok(Some(ie)) => {
-                    self.internal_events.push_back(ie);
-                    self.buffer.clear();
-                }
-                Ok(None) => {
-                    // Event can't be parsed, because we don't have enough bytes for
-                    // the current sequence. Keep the buffer and process next bytes.
-                }
-                Err(_) => {
-                    // Event can't be parsed (not enough parameters, parameter is not a number, ...).
-                    // Clear the buffer and continue with another sequence.
-                    self.buffer.clear();
-                }
-            }
-        }
+        // ttyak: the loop is in `advance_bytes` (it gives a stray OSC back as input).
+        advance_bytes(&mut self.buffer, &mut self.internal_events, buffer, more);
     }
 }
 
@@ -231,5 +206,48 @@ impl Iterator for Parser {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.internal_events.pop_front()
+    }
+}
+
+// ttyak: `Parser::advance` as the reader uses it: OSC replies and what a stray one leaves.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn events(reads: &[(&[u8], bool)]) -> Vec<InternalEvent> {
+        let mut parser = Parser::default();
+        for (input, more) in reads {
+            parser.advance(input, *more);
+        }
+        parser.collect()
+    }
+
+    fn key(c: char, modifiers: KeyModifiers) -> InternalEvent {
+        InternalEvent::Event(Event::Key(KeyEvent::new(KeyCode::Char(c), modifiers)))
+    }
+
+    #[test]
+    fn esc_bracket_and_a_key_is_alt_bracket_and_the_key() {
+        assert_eq!(
+            events(&[(b"\x1B]x", false)]),
+            vec![key(']', KeyModifiers::ALT), key('x', KeyModifiers::NONE)]
+        );
+    }
+
+    #[test]
+    fn an_st_split_between_esc_and_backslash_is_one_osc() {
+        assert_eq!(
+            events(&[(b"\x1B]99;i=w0;\x1B", true), (b"\\", false)]),
+            vec![InternalEvent::Event(Event::Osc("99;i=w0;".to_string()))]
+        );
+    }
+
+    #[test]
+    fn a_stray_osc_then_typing_loses_nothing() {
+        let typed: Vec<_> = "99;hello".chars().map(|c| key(c, KeyModifiers::NONE)).collect();
+        let mut want = vec![key(']', KeyModifiers::ALT)];
+        want.extend(typed);
+        assert_eq!(events(&[(b"\x1B]99;hello", false)]), want);
     }
 }

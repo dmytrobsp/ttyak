@@ -1,4 +1,4 @@
-use std::io;
+use std::{collections::VecDeque, io};
 
 use crate::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
@@ -23,24 +23,90 @@ fn could_not_parse_event_error() -> io::Error {
     io::Error::new(io::ErrorKind::Other, "Could not parse an event.")
 }
 
-// ttyak: the longest OSC reply read (bytes, `ESC ]` included). A stray `ESC ] 9` with no end must not swallow
-// input for ever: past this the bytes read so far are dropped as a parse error and the input after goes on as usual.
-const OSC_MAX_LEN: usize = 4096;
+// ttyak: the longest OSC reply read (bytes, `ESC ]` included). A real reply from kitty (`ESC ] 99 ; i=<id> ; …`) is a
+// few dozen bytes; past this the bytes are given back as ordinary input (see `advance_bytes`).
+const OSC_MAX_LEN: usize = 256;
 
-// ttyak: `ESC ]` followed by `next`, which is no digit: the buffer was Alt+] after all. Gives that key, so the
-// caller can clear its buffer and start the next sequence with `next` instead of losing it.
-pub(crate) fn alt_bracket_before(buffer: &[u8], next: u8) -> Option<InternalEvent> {
-    if buffer == b"\x1B]" && !next.is_ascii_digit() {
-        Some(InternalEvent::Event(Event::Key(KeyEvent::new(
-            KeyCode::Char(']'),
-            KeyModifiers::ALT,
-        ))))
+// ttyak: the start every OSC reply ttyak reads has after `ESC ]`: kitty's notification report.
+const OSC_START: &[u8] = b"99;";
+
+// ttyak: whether `next`, coming after `buffer` (which starts with `ESC ]`), cannot belong to an OSC reply: not the
+// start `99;`, then not a printable ASCII byte without space, BEL or ESC; an ESC must be followed by `\`; and not past
+// `OSC_MAX_LEN`. Then the OSC is given up (see `advance_bytes`). Also covers `ESC ]` and a byte that is no `9`: Alt+].
+fn osc_broken_by(buffer: &[u8], next: u8) -> bool {
+    if buffer.len() < 2 || buffer[0] != b'\x1B' || buffer[1] != b']' {
+        return false;
+    }
+    let body = &buffer[2..];
+    if body.len() < OSC_START.len() {
+        next != OSC_START[body.len()]
+    } else if buffer.len() >= OSC_MAX_LEN {
+        true
+    } else if body.last() == Some(&b'\x1B') {
+        next != b'\\'
     } else {
-        None
+        !(next == b'\x07' || next == b'\x1B' || (0x21..=0x7E).contains(&next))
     }
 }
 
-// ttyak: `ESC ] <digit> …` up to BEL or `ESC \`, as `Event::Osc`. `None` while the end has not come.
+// ttyak: the reader's loop over `input`, the way both readers (`source/unix/mio.rs`, `tty.rs`) used to have it, plus:
+// when an OSC cannot go on (`osc_broken_by`), its `ESC ]` is Alt+] and everything after it, `next` included, is fed
+// again as ordinary input. Nothing is lost: a stray `ESC ] 9 9 ; h` is Alt+], `9`, `9`, `;`, `h`, and an `ESC` inside it
+// starts the sequence that follows (a mouse move after a stray OSC stays a mouse move).
+pub(crate) fn advance_bytes(
+    buffer: &mut Vec<u8>,
+    events: &mut VecDeque<InternalEvent>,
+    input: &[u8],
+    more: bool,
+) {
+    let mut pending: VecDeque<u8> = input.iter().copied().collect();
+    while let Some(byte) = pending.pop_front() {
+        // `more`: further bytes of this read are waiting, or the caller says so.
+        let more = !pending.is_empty() || more;
+
+        if osc_broken_by(buffer, byte) {
+            pending.push_front(byte);
+            give_up_osc(buffer, events, &mut pending);
+            continue;
+        }
+
+        buffer.push(byte);
+
+        match parse_event(buffer, more) {
+            Ok(Some(ie)) => {
+                events.push_back(ie);
+                buffer.clear();
+            }
+            Ok(None) => {
+                // Event can't be parsed, because we don't have enough bytes for
+                // the current sequence. Keep the buffer and process next bytes.
+                // ttyak: except an OSC with nothing more to read right now: a reply comes in one piece, so
+                // this one is a stray and gives its bytes back.
+                if !more && buffer.starts_with(b"\x1B]") {
+                    give_up_osc(buffer, events, &mut pending);
+                }
+            }
+            Err(_) => {
+                // Event can't be parsed (not enough parameters, parameter is not a number, ...).
+                // Clear the buffer and continue with another sequence.
+                buffer.clear();
+            }
+        }
+    }
+}
+
+// ttyak: the `ESC ]` of the OSC in `buffer` is Alt+]; the rest of `buffer` goes back in front of `pending`.
+fn give_up_osc(buffer: &mut Vec<u8>, events: &mut VecDeque<InternalEvent>, pending: &mut VecDeque<u8>) {
+    events.push_back(InternalEvent::Event(Event::Key(KeyEvent::new(
+        KeyCode::Char(']'),
+        KeyModifiers::ALT,
+    ))));
+    for held in buffer.drain(..).skip(2).rev() {
+        pending.push_front(held);
+    }
+}
+
+// ttyak: `ESC ] 99 ; …` up to BEL or `ESC \`, as `Event::Osc`. `None` while the end has not come.
 fn parse_osc(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
     let osc = |payload: &[u8]| {
         Ok(Some(InternalEvent::Event(Event::Osc(
@@ -50,8 +116,6 @@ fn parse_osc(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
     match buffer {
         [.., b'\x07'] => osc(&buffer[2..buffer.len() - 1]),
         [.., b'\x1B', b'\\'] => osc(&buffer[2..buffer.len() - 2]),
-        // An ESC that is not the start of ST: not an OSC we can read.
-        [.., b'\x1B', _] => Err(could_not_parse_event_error()),
         _ if buffer.len() > OSC_MAX_LEN => Err(could_not_parse_event_error()),
         _ => Ok(None),
     }
@@ -108,10 +172,10 @@ pub(crate) fn parse_event(
                         }
                     }
                     b'[' => parse_csi(buffer),
-                    // ttyak: `ESC ] <digit>` starts an OSC reply; `ESC ]` alone waits for the next byte while more
-                    // input is pending, else (and for anything but a digit) it is Alt+] as before.
+                    // ttyak: `ESC ] 9` starts an OSC reply (`advance_bytes` gives up one that is not `ESC ] 99 ; …`);
+                    // `ESC ]` alone waits for the next byte while more input is pending, else it is Alt+] as before.
                     b']' if buffer.len() == 2 && input_available => Ok(None),
-                    b']' if buffer.len() > 2 && buffer[2].is_ascii_digit() => parse_osc(buffer),
+                    b']' if buffer.len() > 2 && buffer[2] == b'9' => parse_osc(buffer),
                     b'\x1B' => Ok(Some(InternalEvent::Event(Event::Key(KeyCode::Esc.into())))),
                     _ => parse_event(&buffer[1..], input_available).map(|event_option| {
                         event_option.map(|event| {
@@ -1161,7 +1225,7 @@ mod tests {
         }
     }
 
-    // ttyak: `ESC ]` with nothing after stays Alt+], and so does `ESC ]` and a non-digit.
+    // ttyak: `ESC ]` with nothing after stays Alt+], and so does `ESC ]` and a byte that cannot go on an OSC.
     #[test]
     fn alt_bracket_is_still_a_key() {
         let alt_bracket = Some(InternalEvent::Event(Event::Key(KeyEvent::new(
@@ -1170,15 +1234,18 @@ mod tests {
         ))));
         assert_eq!(parse_event(b"\x1B]", false).unwrap(), alt_bracket);
         assert_eq!(parse_event(b"\x1B]x", false).unwrap(), alt_bracket);
-        // With more input pending it waits for the byte that tells, which the readers then hand on.
+        // With more input pending it waits for the byte that tells.
         assert_eq!(parse_event(b"\x1B]", true).unwrap(), None);
-        assert_eq!(alt_bracket_before(b"\x1B]", b'x'), alt_bracket);
-        assert_eq!(alt_bracket_before(b"\x1B]", b'\x1B'), alt_bracket);
-        assert_eq!(alt_bracket_before(b"\x1B]", b'9'), None);
-        assert_eq!(alt_bracket_before(b"\x1B]9", b'x'), None);
+        assert!(osc_broken_by(b"\x1B]", b'x'));
+        assert!(osc_broken_by(b"\x1B]", b'\x1B'));
+        assert!(osc_broken_by(b"\x1B]", b'1'));
+        assert!(!osc_broken_by(b"\x1B]", b'9'));
+        assert!(osc_broken_by(b"\x1B]9", b'x'));
+        assert!(osc_broken_by(b"\x1B]99", b'x'));
+        assert!(!osc_broken_by(b"\x1B]99", b';'));
     }
 
-    // ttyak: an OSC split across reads waits for its end; a runaway or broken one is a parse error.
+    // ttyak: an OSC split across reads waits for its end; what a reply cannot hold gives it up.
     #[test]
     fn an_osc_split_across_reads_waits_for_its_end() {
         assert_eq!(parse_event(b"\x1B]99;i=w0", true).unwrap(), None);
@@ -1187,12 +1254,64 @@ mod tests {
             parse_event(b"\x1B]99;i=w0\x07", false).unwrap(),
             Some(InternalEvent::Event(Event::Osc("99;i=w0".to_string())))
         );
-        assert!(parse_event(b"\x1B]99;i=w0\x1Bx", true).is_err());
-        let mut long = b"\x1B]9".to_vec();
-        long.resize(OSC_MAX_LEN, b'a');
-        assert_eq!(parse_event(&long, true).unwrap(), None);
+        // Given up: a space, a control, a non-ASCII byte, an ESC not followed by `\`, the length cap.
+        for next in [b' ', b'\r', b'\n', b'\t', 0x7F, 0xC3] {
+            assert!(osc_broken_by(b"\x1B]99;i=w0", next), "{next:#x}");
+        }
+        assert!(osc_broken_by(b"\x1B]99;i=w0\x1B", b'['));
+        assert!(!osc_broken_by(b"\x1B]99;i=w0\x1B", b'\\'));
+        let mut long = b"\x1B]99;".to_vec();
+        long.resize(OSC_MAX_LEN - 1, b'a');
+        assert!(!osc_broken_by(&long, b'a'));
         long.push(b'a');
-        assert!(parse_event(&long, true).is_err());
+        assert!(osc_broken_by(&long, b'a'));
+    }
+
+    fn run(reads: &[(&[u8], bool)]) -> Vec<InternalEvent> {
+        let (mut buffer, mut events) = (Vec::new(), VecDeque::new());
+        for (input, more) in reads {
+            advance_bytes(&mut buffer, &mut events, input, *more);
+        }
+        events.into_iter().collect()
+    }
+
+    fn key(c: char, modifiers: KeyModifiers) -> InternalEvent {
+        InternalEvent::Event(Event::Key(KeyEvent::new(KeyCode::Char(c), modifiers)))
+    }
+
+    // ttyak: through the readers' loop: nothing a stray OSC held is lost, and what follows it stays what it is.
+    #[test]
+    fn a_stray_osc_gives_back_what_it_held() {
+        let alt = KeyModifiers::ALT;
+        let none = KeyModifiers::NONE;
+        // `ESC ] x`: Alt+] then `x`.
+        assert_eq!(run(&[(b"\x1B]x", false)]), vec![key(']', alt), key('x', none)]);
+        // The ST split between ESC and `\` across reads.
+        assert_eq!(
+            run(&[(b"\x1B]99;i=w0;\x1B", true), (b"\\", false)]),
+            vec![InternalEvent::Event(Event::Osc("99;i=w0;".to_string()))]
+        );
+        // A stray OSC, then typing: Alt+], the digits and `;` as keys, then `hello`.
+        let mut want = vec![key(']', alt)];
+        want.extend("99;hello".chars().map(|c| key(c, none)));
+        assert_eq!(run(&[(b"\x1B]99;hello", false)]), want);
+        // An Enter inside it is an Enter.
+        assert_eq!(
+            run(&[(&b"\x1B]99;\r"[..], false)])[4],
+            InternalEvent::Event(Event::Key(KeyCode::Enter.into()))
+        );
+        // A stray OSC, then a mouse move, a focus report, an arrow.
+        for (seq, ev) in [
+            (&b"\x1B[<35;10;5M"[..], Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, column: 9, row: 4, modifiers: KeyModifiers::NONE })),
+            (&b"\x1B[I"[..], Event::FocusGained),
+            (&b"\x1B[A"[..], Event::Key(KeyCode::Up.into())),
+        ] {
+            let mut input = b"\x1B]99;".to_vec();
+            input.extend_from_slice(seq);
+            let got = run(&[(&input, false)]);
+            assert_eq!(got.last(), Some(&InternalEvent::Event(ev)), "{seq:?}");
+            assert_eq!(got.len(), 1 + 3 + 1, "{seq:?}: Alt+], `99;`, the event");
+        }
     }
 
     // ttyak: the side buttons (SGR 8 and 9) decode as Back and Forward.

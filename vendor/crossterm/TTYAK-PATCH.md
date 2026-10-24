@@ -24,16 +24,23 @@ as one event (Task 9 of 0.12.0).
   the Unix backend produces it; the Windows backend never does, so it compiles unchanged. `Event` is no longer
   `Copy` without the `bracketed-paste` feature (it carries a `String`; ttyak uses the default features, where it
   was not `Copy` already).
-- `parse_event` (`parse.rs`): `ESC ]` followed by an ASCII digit starts an OSC, read to BEL or `ESC \` (`None`
-  until then). `ESC ]` with no more input pending stays Alt+], as does `ESC ]` and any other byte. With more input
-  pending, `ESC ]` waits for the next byte; so that a non-digit byte is not lost with it, the two readers
-  (`source/unix/mio.rs` and `tty.rs`, `Parser::advance`) ask `alt_bracket_before` first: it gives Alt+] and the
-  reader starts the next sequence with that byte.
-- Bounds: an OSC longer than 4096 bytes (`OSC_MAX_LEN`) is a parse error, and so is an `ESC` inside it that is not
-  followed by `\`. As for any parse error, the reader drops the bytes read so far (the whole `ESC ] …` up to and
-  including the byte that broke it) and goes on with the input after, so a stray `ESC ] 9` costs the next 4 KiB of
-  input at worst, never more.
-- Unit tests: `osc_replies_become_events`, `alt_bracket_is_still_a_key`, `an_osc_split_across_reads_waits_for_its_end`.
+- `parse_event` (`parse.rs`): `ESC ] 9` starts an OSC, read to BEL or `ESC \` (`None` until then). `ESC ]` with no more
+  input pending stays Alt+], as does `ESC ]` and any other byte.
+- Only kitty's notification report is read: `ESC ] 99 ;` then printable ASCII without space (`0x21..=0x7E`), ended by
+  BEL or `ESC \`, at most 256 bytes in all. `advance_bytes` (`parse.rs`, shared by the two readers `source/unix/mio.rs`
+  and `tty.rs`, which used to have the loop each) gives an OSC up on the first byte that cannot belong to it (anything
+  not `99;` right after `ESC ]`, a control byte, space, non-ASCII, an `ESC` not followed by `\`, the 257th byte) and
+  also when the read ends with the OSC incomplete and nothing more to read. Giving up means the `ESC ]` is Alt+] and
+  every byte after it is fed again as ordinary input, so nothing is lost and nothing is swallowed: a stray
+  `ESC ] 9 9 ; h` is Alt+], `9`, `9`, `;`, `h`, and a mouse report or arrow after a stray OSC stays a mouse report or
+  an arrow.
+- Known limit: a reply whose first read ends before its end (for instance right after `ESC ]`, or `ESC ] 99 ; i=1`) is
+  not read as one; it comes out as Alt+] and typed characters, as before the patch. kitty writes a reply in one go,
+  so this is rare. (Reads that fill the 1 KiB buffer are the exception: more is known to wait, so the OSC is held.)
+- Unit tests: `osc_replies_become_events`, `alt_bracket_is_still_a_key`, `an_osc_split_across_reads_waits_for_its_end`,
+  `a_stray_osc_gives_back_what_it_held` (`parse.rs`); `Parser::advance` in `mio.rs`:
+  `esc_bracket_and_a_key_is_alt_bracket_and_the_key`, `an_st_split_between_esc_and_backslash_is_one_osc`,
+  `a_stray_osc_then_typing_loses_nothing`.
   ttyak ignores the event for now (`an_osc_reply_is_no_key_and_changes_nothing`).
 - A unit test for the SGR sequences: `test_parse_csi_sgr_mouse_side_buttons`.
 - `#![allow(unused_parens)]` in `src/lib.rs`: upstream has one needless pair of parentheses

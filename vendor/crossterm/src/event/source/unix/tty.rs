@@ -13,7 +13,7 @@ use filedescriptor::{poll, pollfd, POLLIN};
 
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
-use crate::event::{source::EventSource, sys::unix::parse::{alt_bracket_before, parse_event}, InternalEvent};
+use crate::event::{source::EventSource, sys::unix::parse::advance_bytes, InternalEvent};
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
 /// Holds a prototypical Waker and a receiver we can wait on when doing select().
@@ -245,33 +245,8 @@ impl Default for Parser {
 
 impl Parser {
     fn advance(&mut self, buffer: &[u8], more: bool) {
-        for (idx, byte) in buffer.iter().enumerate() {
-            let more = idx + 1 < buffer.len() || more;
-
-            // ttyak: `ESC ]` and no digit after: Alt+], then `byte` starts the next sequence.
-            if let Some(ie) = alt_bracket_before(&self.buffer, *byte) {
-                self.internal_events.push_back(ie);
-                self.buffer.clear();
-            }
-
-            self.buffer.push(*byte);
-
-            match parse_event(&self.buffer, more) {
-                Ok(Some(ie)) => {
-                    self.internal_events.push_back(ie);
-                    self.buffer.clear();
-                }
-                Ok(None) => {
-                    // Event can't be parsed, because we don't have enough bytes for
-                    // the current sequence. Keep the buffer and process next bytes.
-                }
-                Err(_) => {
-                    // Event can't be parsed (not enough parameters, parameter is not a number, ...).
-                    // Clear the buffer and continue with another sequence.
-                    self.buffer.clear();
-                }
-            }
-        }
+        // ttyak: the loop is in `advance_bytes` (it gives a stray OSC back as input).
+        advance_bytes(&mut self.buffer, &mut self.internal_events, buffer, more);
     }
 }
 
