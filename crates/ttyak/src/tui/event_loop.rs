@@ -2760,6 +2760,15 @@ impl App {
     fn open_target(&mut self, target: super::notify::Target) {
         tracing::debug!(?target, "notification clicked");
         self.open_in_app(target.into(), true);
+        self.land_in_normal();
+    }
+
+    /// After a click led somewhere: NORMAL on the messages (or the thread, when one was opened), never typing in a
+    /// composer; the draft stays in it.
+    fn land_in_normal(&mut self) {
+        if matches!(self.focus, Focus::Composer | Focus::ThreadComposer) {
+            self.focus = if self.thread.is_some() && self.focus == Focus::ThreadComposer { Focus::Thread } else { Focus::Messages };
+        }
     }
 
     /// What clicking a desktop notification about `target` does: open it here (a click
@@ -6592,6 +6601,7 @@ fn handle_net(app: &mut App, msg: Net) {
             if let Some((_, target)) = after {
                 // A link's or a notification's, from the workspace switched from.
                 app.open_in_app(target, true);
+                app.land_in_normal();
             } else if let Some(id) = app.sidebar.remembered.clone().filter(|id| app.ws.conversations.get(id).is_some_and(|c| !c.is_archived)) {
                 // Back where you were last time, in NORMAL on the messages (or the thread).
                 app.start = Some((id.clone(), app.sidebar.remembered_thread.clone()));
@@ -6765,6 +6775,7 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.ws.put_conversation(c);
                 app.sidebar.rebuild(&app.ws);
                 app.open_in_app(target, true);
+                app.land_in_normal();
             }
             other => {
                 if let Err(e) = other {
@@ -10927,6 +10938,56 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
         terminal.draw(|f| super::draw(f, app)).unwrap();
         screen(&terminal)
+    }
+
+    #[tokio::test]
+    async fn a_click_never_leaves_insert_mode() {
+        use super::super::notify::Target;
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        long_c1(&mut app, 30, 5);
+        app.focus = super::Focus::Composer;
+        app.composer.set("half typed");
+        app.open_target(Target { channel: "C1".into(), ts: Some(top_ts(5)), thread_ts: None });
+        assert!(matches!(app.focus, super::Focus::Messages));
+        assert_eq!(app.mode(), super::Mode::Normal);
+        assert_eq!(app.composer.text(), "half typed");
+        assert_eq!(app.messages.selected, Some(top_ts(5)));
+        // A huddle invite (no message) in another conversation, from the thread's composer.
+        app.focus = super::Focus::ThreadComposer;
+        app.open_target(Target { channel: "C2".into(), ts: None, thread_ts: None });
+        settle(&mut app, true);
+        assert_eq!((app.current.as_deref(), app.mode()), (Some("C2"), super::Mode::Normal));
+    }
+
+    #[tokio::test]
+    async fn a_click_on_a_reply_opens_its_thread_at_that_reply() {
+        use super::super::notify::Target;
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        long_c1(&mut app, 30, 5);
+        app.focus = super::Focus::Composer;
+        app.composer.set("half typed");
+        app.open_target(Target { channel: "C1".into(), ts: Some(reply_ts(3)), thread_ts: Some(top_ts(1)) });
+        assert_eq!(app.thread, Some(("C1".into(), top_ts(1))));
+        assert_eq!(app.thread_pane.selected, Some(reply_ts(3)));
+        assert!(matches!(app.focus, super::Focus::Thread));
+        assert_eq!(app.mode(), super::Mode::Normal);
+        assert_eq!(app.composer.text(), "half typed");
+    }
+
+    #[tokio::test]
+    async fn a_click_on_a_deleted_message_lands_in_its_conversation() {
+        use super::super::notify::Target;
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        long_c1(&mut app, 30, 0);
+        app.focus = super::Focus::Composer;
+        app.jump_to("C2");
+        settle(&mut app, true);
+        app.focus = super::Focus::Composer;
+        app.open_target(Target { channel: "C1".into(), ts: Some("1000.999999".into()), thread_ts: None });
+        settle(&mut app, true);
+        drawn(&mut app);
+        assert_eq!(app.current.as_deref(), Some("C1"));
+        assert_eq!(app.mode(), super::Mode::Normal);
     }
 
     #[tokio::test]
