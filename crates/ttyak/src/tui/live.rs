@@ -62,7 +62,9 @@ pub fn mentions_me(ws: &Workspace, m: &Message) -> bool {
     m.text.contains(&me) || m.text.contains("<!here") || m.text.contains("<!channel") || m.text.contains("<!everyone")
 }
 
-pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>) -> Effects {
+/// Applies a push to `ws`. `current` is the conversation on screen; `reading` that it is being read right now (the
+/// terminal is focused), so what arrives in it does not count as unread.
+pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>, reading: bool) -> Effects {
     let mut fx = Effects::default();
     let channel = ev["channel"].as_str().unwrap_or_default().to_string();
     match ev["type"].as_str().unwrap_or("") {
@@ -113,7 +115,7 @@ pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>) -> Effects {
                     if let (Some(list), Some(u)) = (ws.typing.get_mut(&channel), m.user.as_deref()) {
                         list.retain(|(x, _)| x != u);
                     }
-                    if current != Some(channel.as_str()) && !m.is_reply() {
+                    if !(reading && current == Some(channel.as_str())) && !m.is_reply() {
                         let is_dm = ws.conversations.get(&channel).is_some_and(|c| c.is_dm());
                         let mention = (is_dm && !ws.muted.contains(&channel)) || mentions_me(ws, &m);
                         let u = ws.unread.entry(channel.clone()).or_default();
@@ -530,19 +532,19 @@ mod tests {
         assert_eq!((w.activity_unread, w.activity_counts.is_some()), (0, false));
         // Made-up counts in the shape seen on the gateway (every type listed; `counts` sometimes too).
         let badge = |dm: u64, mentions: u64, reactions: u64| json!({"type": "badge_counts_updated", "event_ts": "1.5", "counts": {}, "activity_v2": {"at_user": mentions, "dm": dm, "message_reaction": reactions, "thread_v2": 1, "mpdm": 0}});
-        apply(&mut w, &badge(2, 1, 3), None);
+        apply(&mut w, &badge(2, 1, 3), None, true);
         assert_eq!((w.activity_unread, w.activity_counts.is_some()), (4, true), "Slack's own badge: no reactions");
-        apply(&mut w, &badge(1, 0, 3), None);
+        apply(&mut w, &badge(1, 0, 3), None, true);
         assert_eq!(w.activity_unread, 2, "read elsewhere: lower");
         // An item came, changed or went: the Activity view is told.
         let updated = json!({"type": "activity", "subtype": "activity_updated", "key": "at_user-C1-9.5", "event_ts": "9.5",
             "entry": {"feed_ts": "9.5", "is_archived": false, "is_unread": true, "key": "at_user-C1-9.5", "version": "1", "item": {"type": "at_user", "message": {"author_user_id": "U2", "channel": "C1", "ts": "9.5"}}}});
-        assert!(matches!(apply(&mut w, &updated, None).activity, Some(ActivityPush::Updated(it)) if it.key == "at_user-C1-9.5" && it.unread));
+        assert!(matches!(apply(&mut w, &updated, None, true).activity, Some(ActivityPush::Updated(it)) if it.key == "at_user-C1-9.5" && it.unread));
         let deleted = json!({"type": "activity", "subtype": "activity_deleted", "key": "k1", "event_ts": "9.6"});
-        assert!(matches!(apply(&mut w, &deleted, None).activity, Some(ActivityPush::Deleted(k)) if k == "k1"));
+        assert!(matches!(apply(&mut w, &deleted, None, true).activity, Some(ActivityPush::Deleted(k)) if k == "k1"));
         let invalidated = json!({"type": "activity", "subtype": "activity_invalidated", "event_ts": "9.7"});
-        assert!(matches!(apply(&mut w, &invalidated, None).activity, Some(ActivityPush::Invalidated)));
-        assert!(apply(&mut w, &json!({"type": "activity", "subtype": "activity_views_updated", "views": []}), None).activity.is_none());
+        assert!(matches!(apply(&mut w, &invalidated, None, true).activity, Some(ActivityPush::Invalidated)));
+        assert!(apply(&mut w, &json!({"type": "activity", "subtype": "activity_views_updated", "views": []}), None, true).activity.is_none());
         assert_eq!(w.activity_unread, 2, "items do not change the badge: its own event does");
     }
 
@@ -552,12 +554,12 @@ mod tests {
         w.users.insert("U2".into(), User { id: "U2".into(), ..Default::default() });
         // The gateway's push when someone's profile (status, huddle state) changed: their id only.
         let ev = |id: &str| json!({"type": "user_invalidated", "event_ts": "1.5", "user": {"id": id}});
-        assert_eq!(apply(&mut w, &ev("U2"), None).invalidated.as_deref(), Some("U2"));
+        assert_eq!(apply(&mut w, &ev("U2"), None, true).invalidated.as_deref(), Some("U2"));
         assert!(w.users.contains_key("U2"), "kept until looked up");
         // Yourself: your own changes come as user_change. Someone ttyak never had: nothing to refresh.
-        assert_eq!(apply(&mut w, &ev("UME"), None).invalidated, None);
-        assert_eq!(apply(&mut w, &ev("U9"), None).invalidated, None);
-        assert_eq!(apply(&mut w, &json!({"type": "user_invalidated"}), None).invalidated, None);
+        assert_eq!(apply(&mut w, &ev("UME"), None, true).invalidated, None);
+        assert_eq!(apply(&mut w, &ev("U9"), None, true).invalidated, None);
+        assert_eq!(apply(&mut w, &json!({"type": "user_invalidated"}), None, true).invalidated, None);
     }
 
     #[test]
@@ -565,8 +567,8 @@ mod tests {
         let mut w = ws();
         // The gateway's push in place of `dnd_updated`: only whose DND changed.
         let ev = |id: &str| json!({"type": "dnd_invalidated", "event_ts": "1.5", "user": {"id": id}});
-        assert!(apply(&mut w, &ev("UME"), None).dnd_invalidated);
-        assert!(!apply(&mut w, &ev("U2"), None).dnd_invalidated, "someone else's: ttyak shows no one else's DND");
+        assert!(apply(&mut w, &ev("UME"), None, true).dnd_invalidated);
+        assert!(!apply(&mut w, &ev("U2"), None, true).dnd_invalidated, "someone else's: ttyak shows no one else's DND");
     }
 
     #[test]
@@ -574,58 +576,71 @@ mod tests {
         let mut w = ws();
         w.conversations.insert("D1".into(), Conversation { id: "D1".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
         let dm = |ts: &str| json!({"type":"message","channel":"D1","user":"U2","text":"hey","ts":ts});
-        apply(&mut w, &dm("10.0"), None);
+        apply(&mut w, &dm("10.0"), None, true);
         assert_eq!(w.unread["D1"].mentions, 1, "a DM counts as a mention");
         w.muted.insert("D1".into());
-        apply(&mut w, &dm("11.0"), None);
+        apply(&mut w, &dm("11.0"), None, true);
         assert_eq!(w.unread["D1"].mentions, 1, "muted: no further mention");
     }
 
     #[test]
     fn new_message_lands_and_counts_unread() {
         let mut w = ws();
-        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"hi <@UME>","ts":"10.0"}), None);
+        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"hi <@UME>","ts":"10.0"}), None, true);
         assert_eq!(w.timelines["C1"].messages.len(), 1);
         assert!(fx.incoming.is_some());
         assert!(w.unread["C1"].has_unreads);
         assert_eq!(w.unread["C1"].mentions, 1);
         // Viewing the channel: no unread bump.
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"again","ts":"11.0"}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"again","ts":"11.0"}), Some("C1"), true);
+        assert_eq!(w.unread["C1"].mentions, 1);
+    }
+
+    #[test]
+    fn the_open_conversation_counts_unread_while_it_is_not_being_read() {
+        let mut w = ws();
+        let msg = |ts: &str| json!({"type":"message","channel":"C1","user":"U2","text":"hi <@UME>","ts":ts});
+        // Open, but the terminal is unfocused: unread and mentioned like any other.
+        apply(&mut w, &msg("10.0"), Some("C1"), false);
+        assert!(w.unread["C1"].has_unreads);
+        assert_eq!(w.unread["C1"].mentions, 1);
+        // Open and read: nothing more.
+        apply(&mut w, &msg("11.0"), Some("C1"), true);
         assert_eq!(w.unread["C1"].mentions, 1);
     }
 
     #[test]
     fn your_reply_from_elsewhere_goes_to_the_feed_only() {
         let mut w = ws();
-        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"UME","text":"r","ts":"11.0","thread_ts":"10.0"}), None);
+        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"UME","text":"r","ts":"11.0","thread_ts":"10.0"}), None, true);
         assert!(fx.incoming.is_none(), "no notification");
         assert!(!w.unread.get("C1").is_some_and(|u| u.has_unreads));
         assert_eq!(fx.own_reply.as_ref().map(|(c, m)| (c.as_str(), m.ts.as_str())), Some(("C1", "11.0")));
         // Not a reply: nothing for the feed.
-        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"UME","text":"p","ts":"12.0"}), None);
+        let fx = apply(&mut w, &json!({"type":"message","channel":"C1","user":"UME","text":"p","ts":"12.0"}), None, true);
         assert!(fx.own_reply.is_none());
     }
 
     #[test]
     fn edits_deletes_and_reactions() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"orig","ts":"10.0"}), Some("C1"));
-        apply(&mut w, &json!({"type":"message","subtype":"message_changed","channel":"C1","message":{"type":"message","user":"U2","text":"edited","ts":"10.0","edited":{"user":"U2","ts":"12.0"}}}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"orig","ts":"10.0"}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"message","subtype":"message_changed","channel":"C1","message":{"type":"message","user":"U2","text":"edited","ts":"10.0","edited":{"user":"U2","ts":"12.0"}}}), Some("C1"), true);
         assert_eq!(w.timelines["C1"].messages[0].text, "edited");
-        apply(&mut w, &json!({"type":"reaction_added","user":"UME","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"));
-        apply(&mut w, &json!({"type":"reaction_added","user":"U2","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"));
+        apply(&mut w, &json!({"type":"reaction_added","user":"UME","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"reaction_added","user":"U2","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"), true);
         assert_eq!(w.timelines["C1"].messages[0].reactions[0].count, 2);
-        apply(&mut w, &json!({"type":"reaction_removed","user":"UME","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"));
+        apply(&mut w, &json!({"type":"reaction_removed","user":"UME","reaction":"tada","item":{"channel":"C1","ts":"10.0"}}), Some("C1"), true);
         assert_eq!(w.timelines["C1"].messages[0].reactions[0].count, 1);
-        apply(&mut w, &json!({"type":"message","subtype":"message_deleted","channel":"C1","deleted_ts":"10.0"}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","subtype":"message_deleted","channel":"C1","deleted_ts":"10.0"}), Some("C1"), true);
         assert!(w.timelines["C1"].messages.is_empty());
     }
 
     #[test]
     fn replies_bump_parent_not_timeline() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"parent","ts":"10.0"}), Some("C1"));
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U3","text":"reply","ts":"11.0","thread_ts":"10.0"}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"parent","ts":"10.0"}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U3","text":"reply","ts":"11.0","thread_ts":"10.0"}), Some("C1"), true);
         let t = &w.timelines["C1"];
         assert_eq!(t.messages.len(), 1);
         assert_eq!(t.messages[0].reply_count, 1);
@@ -636,21 +651,21 @@ mod tests {
     fn huddle_invitations() {
         let mut w = ws();
         // Captured with `ctl listen` (the Chime credentials in `free_willy` left out).
-        let fx = apply(&mut w, &json!({"call_id":"R0CB0UP0BJL","channel_id":"D0CA2V8G8CE","event_ts":"1792357509.005400","is_guest":false,"sender_user_id":"U0BOB000001","team_id":"T0TEST00001","type":"huddle_invite"}), None);
+        let fx = apply(&mut w, &json!({"call_id":"R0CB0UP0BJL","channel_id":"D0CA2V8G8CE","event_ts":"1792357509.005400","is_guest":false,"sender_user_id":"U0BOB000001","team_id":"T0TEST00001","type":"huddle_invite"}), None, true);
         assert_eq!(fx.huddle_invite, Some(("D0CA2V8G8CE".into(), "R0CB0UP0BJL".into(), "U0BOB000001".into())));
-        let fx = apply(&mut w, &json!({"channel_id":"D0CA2V8G8CE","event_ts":"1792357516.005500","team_id":"T0TEST00001","type":"huddle_invite_cancel"}), None);
+        let fx = apply(&mut w, &json!({"channel_id":"D0CA2V8G8CE","event_ts":"1792357516.005500","team_id":"T0TEST00001","type":"huddle_invite_cancel"}), None, true);
         assert_eq!(fx.invite_cancelled.as_deref(), Some("D0CA2V8G8CE"));
     }
 
     #[test]
     fn custom_emoji_events() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"emoji_changed","subtype":"add","name":"crab2","value":"https://emoji.slack-edge.com/T1/crab2/1.png","event_ts":"1.0"}), None);
-        apply(&mut w, &json!({"type":"emoji_changed","subtype":"add","name":"yes","value":"alias:white_check_mark","event_ts":"2.0"}), None);
+        apply(&mut w, &json!({"type":"emoji_changed","subtype":"add","name":"crab2","value":"https://emoji.slack-edge.com/T1/crab2/1.png","event_ts":"1.0"}), None, true);
+        apply(&mut w, &json!({"type":"emoji_changed","subtype":"add","name":"yes","value":"alias:white_check_mark","event_ts":"2.0"}), None, true);
         assert_eq!(w.custom_emoji.len(), 2);
-        apply(&mut w, &json!({"type":"emoji_changed","subtype":"rename","old_name":"crab2","new_name":"crab3","value":"https://emoji.slack-edge.com/T1/crab3/1.png","event_ts":"3.0"}), None);
+        apply(&mut w, &json!({"type":"emoji_changed","subtype":"rename","old_name":"crab2","new_name":"crab3","value":"https://emoji.slack-edge.com/T1/crab3/1.png","event_ts":"3.0"}), None, true);
         assert!(w.custom_emoji.contains_key("crab3") && !w.custom_emoji.contains_key("crab2"));
-        apply(&mut w, &json!({"type":"emoji_changed","subtype":"remove","names":["crab3","yes"],"event_ts":"4.0"}), None);
+        apply(&mut w, &json!({"type":"emoji_changed","subtype":"remove","names":["crab3","yes"],"event_ts":"4.0"}), None, true);
         assert!(w.custom_emoji.is_empty());
     }
 
@@ -658,20 +673,20 @@ mod tests {
     fn pref_change_events() {
         let mut w = ws();
         // Captured with `ctl listen` (trimmed).
-        apply(&mut w, &json!({"name":"all_notifications_prefs","type":"pref_change","value":"{\"channels\":{\"C6\":{\"muted\":true,\"temp_mute_expiration_ts\":0},\"C1\":{\"desktop\":\"everything\"}},\"global\":{\"global_desktop\":\"everything\",\"global_keywords\":\"deploy\"}}"}), None);
+        apply(&mut w, &json!({"name":"all_notifications_prefs","type":"pref_change","value":"{\"channels\":{\"C6\":{\"muted\":true,\"temp_mute_expiration_ts\":0},\"C1\":{\"desktop\":\"everything\"}},\"global\":{\"global_desktop\":\"everything\",\"global_keywords\":\"deploy\"}}"}), None, true);
         assert_eq!(w.notify.level("C1", false), "everything");
         assert!(w.muted.contains("C6"));
         assert_eq!(w.notify.keywords, vec!["deploy"]);
         w.vip.insert("U2".into());
-        apply(&mut w, &json!({"event_ts":"1792335553.041700","name":"vip_users","type":"pref_change","value":""}), None);
+        apply(&mut w, &json!({"event_ts":"1792335553.041700","name":"vip_users","type":"pref_change","value":""}), None, true);
         assert!(w.vip.is_empty());
         // Whether your huddle state is kept alive: off until Slack says so, then as it says.
         assert!(!w.huddles_set_status);
-        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":true}), None);
+        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":true}), None, true);
         assert!(w.huddles_set_status);
-        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":"false"}), None);
+        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":"false"}), None, true);
         assert!(!w.huddles_set_status);
-        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":"maybe"}), None);
+        apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":"maybe"}), None, true);
         assert!(!w.huddles_set_status, "kept");
     }
 
@@ -679,16 +694,16 @@ mod tests {
     fn star_and_section_events() {
         let mut w = ws();
         // Real payloads captured with `ctl listen`.
-        let fx = apply(&mut w, &json!({"event_ts":"1792332670.021900","item":{"channel":"C1","date_create":1792332670,"type":"channel"},"type":"star_added","user":"UME"}), None);
+        let fx = apply(&mut w, &json!({"event_ts":"1792332670.021900","item":{"channel":"C1","date_create":1792332670,"type":"channel"},"type":"star_added","user":"UME"}), None, true);
         assert!(fx.rebuild_sidebar && w.starred.contains("C1"));
-        apply(&mut w, &json!({"event_ts":"1792332670.021800","item":{"channel":"C1","date_create":0,"type":"channel"},"type":"star_removed","user":"UME"}), None);
+        apply(&mut w, &json!({"event_ts":"1792332670.021800","item":{"channel":"C1","date_create":0,"type":"channel"},"type":"star_removed","user":"UME"}), None, true);
         assert!(w.starred.is_empty());
-        apply(&mut w, &json!({"channel_section_id":"L1","channel_section_type":"standard","emoji":"","event_ts":"1","is_redacted":false,"last_update":1,"name":"Work","next_channel_section_id":null,"type":"channel_section_upserted"}), None);
-        apply(&mut w, &json!({"channel_ids":["C1"],"channel_section_id":"L1","event_ts":"2","type":"channel_sections_channels_upserted"}), None);
+        apply(&mut w, &json!({"channel_section_id":"L1","channel_section_type":"standard","emoji":"","event_ts":"1","is_redacted":false,"last_update":1,"name":"Work","next_channel_section_id":null,"type":"channel_section_upserted"}), None, true);
+        apply(&mut w, &json!({"channel_ids":["C1"],"channel_section_id":"L1","event_ts":"2","type":"channel_sections_channels_upserted"}), None, true);
         assert_eq!(w.section_of("C1").map(|s| s.name.as_str()), Some("Work"));
-        apply(&mut w, &json!({"channel_ids":["C1"],"channel_section_id":"L1","event_ts":"3","last_update":3,"type":"channel_sections_channels_removed"}), None);
+        apply(&mut w, &json!({"channel_ids":["C1"],"channel_section_id":"L1","event_ts":"3","last_update":3,"type":"channel_sections_channels_removed"}), None, true);
         assert!(w.section_of("C1").is_none());
-        apply(&mut w, &json!({"channel_section_id":"L1","event_ts":"4","last_update":4,"type":"channel_section_deleted"}), None);
+        apply(&mut w, &json!({"channel_section_id":"L1","event_ts":"4","last_update":4,"type":"channel_section_deleted"}), None, true);
         assert!(w.sections.is_empty());
     }
 
@@ -696,27 +711,27 @@ mod tests {
     fn channel_membership_events() {
         let mut w = ws();
         w.conversations.insert("C9".into(), Conversation { id: "C9".into(), name: "mine".into(), is_member: true, ..Default::default() });
-        apply(&mut w, &json!({"type":"channel_created","channel":{"id":"C9","name":"mine","creator":"UME"}}), None);
+        apply(&mut w, &json!({"type":"channel_created","channel":{"id":"C9","name":"mine","creator":"UME"}}), None, true);
         assert!(w.conversations["C9"].is_member, "our own create, already applied, is not undone");
-        apply(&mut w, &json!({"type":"channel_created","channel":{"id":"C8","name":"theirs"}}), None);
+        apply(&mut w, &json!({"type":"channel_created","channel":{"id":"C8","name":"theirs"}}), None, true);
         assert!(!w.conversations["C8"].is_member);
-        apply(&mut w, &json!({"type":"channel_joined","channel":{"id":"C8","name":"theirs"}}), None);
+        apply(&mut w, &json!({"type":"channel_joined","channel":{"id":"C8","name":"theirs"}}), None, true);
         assert!(w.conversations["C8"].is_member);
-        let fx = apply(&mut w, &json!({"type":"channel_left","channel":"C8"}), None);
+        let fx = apply(&mut w, &json!({"type":"channel_left","channel":"C8"}), None, true);
         assert!(fx.rebuild_sidebar && !w.conversations["C8"].is_member);
     }
 
     #[test]
     fn huddle_events_track_active_huddles() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"sh_room_join","user":"U2","room":{"id":"R1","channels":["C1"],"participants":["U2"],"has_ended":false,"thread_root_ts":"0000000000.000000"}}), None);
+        apply(&mut w, &json!({"type":"sh_room_join","user":"U2","room":{"id":"R1","channels":["C1"],"participants":["U2"],"has_ended":false,"thread_root_ts":"0000000000.000000"}}), None, true);
         assert_eq!((w.huddles["C1"].room.as_str(), w.huddles["C1"].participants.clone(), w.huddles["C1"].thread.clone()), ("R1", vec!["U2".to_string()], None), "zeros are no thread");
-        let fx = apply(&mut w, &json!({"type":"sh_room_join","user":"U3","room":{"id":"R1","channels":["C1"],"participants":["U2","U3"],"has_ended":false,"thread_root_ts":"1792332523.612529"}}), None);
+        let fx = apply(&mut w, &json!({"type":"sh_room_join","user":"U3","room":{"id":"R1","channels":["C1"],"participants":["U2","U3"],"has_ended":false,"thread_root_ts":"1792332523.612529"}}), None, true);
         assert_eq!(w.huddles["C1"].thread.as_deref(), Some("1792332523.612529"));
-        apply(&mut w, &json!({"type":"sh_room_update","user":"U3","room":{"id":"R1","channels":["C1"],"participants":["U2","U3"],"has_ended":false,"thread_root_ts":"0000000000.000000"}}), None);
+        apply(&mut w, &json!({"type":"sh_room_update","user":"U3","room":{"id":"R1","channels":["C1"],"participants":["U2","U3"],"has_ended":false,"thread_root_ts":"0000000000.000000"}}), None, true);
         assert_eq!(w.huddles["C1"].thread.as_deref(), Some("1792332523.612529"), "a later placeholder does not lose it");
         assert!(fx.huddle_started.is_none(), "joining a running huddle is not a start");
-        apply(&mut w, &json!({"type":"sh_room_leave","user":"U2","room":{"id":"R1","channels":["C1"],"participants":[],"has_ended":false}}), None);
+        apply(&mut w, &json!({"type":"sh_room_leave","user":"U2","room":{"id":"R1","channels":["C1"],"participants":[],"has_ended":false}}), None, true);
         assert!(w.huddles.is_empty());
     }
 
@@ -725,21 +740,21 @@ mod tests {
         let mut w = ws();
         w.conversations.insert("C2".into(), Conversation { id: "C2".into(), name: "two".into(), is_member: true, ..Default::default() });
         let join = |c: &str, room: &str| json!({"type":"sh_room_join","user":"U2","room":{"id":room,"channels":[c],"participants":["U2","U3"],"has_ended":false,"date_start":1_700_000_000,"thread_root_ts":"0000000000.000000"}});
-        apply(&mut w, &join("C1", "R1"), None);
-        apply(&mut w, &join("C2", "R2"), None);
+        apply(&mut w, &join("C1", "R1"), None, true);
+        apply(&mut w, &join("C2", "R2"), None, true);
         assert_eq!(w.huddles["C1"].start, 1_700_000_000, "when it started");
         assert_eq!(w.joinable_live(None).len(), 2);
         // Ended in an update: it leaves the live list, the badge drops.
-        let fx = apply(&mut w, &json!({"type":"sh_room_update","user":"U2","room":{"id":"R1","channels":["C1"],"participants":["U2"],"has_ended":true}}), None);
+        let fx = apply(&mut w, &json!({"type":"sh_room_update","user":"U2","room":{"id":"R1","channels":["C1"],"participants":["U2"],"has_ended":true}}), None, true);
         assert!(!w.huddles.contains_key("C1") && fx.rebuild_sidebar && fx.huddles_ended == ["C1"]);
         assert_eq!(w.joinable_live(None), ["C2"]);
         // `ended_huddle_update` says so too (its room only: a newer one in the channel stays).
-        apply(&mut w, &json!({"type":"ended_huddle_update","huddle":{"id":"R9","channels":["C2"],"has_ended":true}}), None);
+        apply(&mut w, &json!({"type":"ended_huddle_update","huddle":{"id":"R9","channels":["C2"],"has_ended":true}}), None, true);
         assert!(w.huddles.contains_key("C2"), "another room's end");
-        let fx = apply(&mut w, &json!({"type":"ended_huddle_update","huddle":{"id":"R2","channels":["C2"],"has_ended":true}}), None);
+        let fx = apply(&mut w, &json!({"type":"ended_huddle_update","huddle":{"id":"R2","channels":["C2"],"has_ended":true}}), None, true);
         assert!(w.huddles.is_empty() && w.joinable_live(None).is_empty() && fx.rebuild_sidebar && fx.huddles_ended == ["C2"]);
         // A huddle that starts: the live list is asked for again (who is in it comes with sh_room_join too).
-        let fx = apply(&mut w, &json!({"type":"huddle_start","channel_id":"C1"}), None);
+        let fx = apply(&mut w, &json!({"type":"huddle_start","channel_id":"C1"}), None, true);
         assert!(fx.refetch_live_huddles);
     }
 
@@ -749,12 +764,12 @@ mod tests {
         w.conversations.insert("C2".into(), Conversation { id: "C2".into(), name: "two".into(), is_member: true, ..Default::default() });
         w.conversations.insert("C3".into(), Conversation { id: "C3".into(), name: "three".into(), is_member: true, ..Default::default() });
         let room = |c: &str, id: &str, ended: bool| json!({"type": if ended { "sh_room_update" } else { "sh_room_join" },"user":"U2","room":{"id":id,"channels":[c],"participants":["U2"],"has_ended":ended,"date_start":1_700_000_000}});
-        apply(&mut w, &room("C1", "R1", false), None);
+        apply(&mut w, &room("C1", "R1", false), None, true);
         let live = |c: &str, id: &str| slack_core::types::LiveHuddle { channel: c.into(), call_id: id.into(), members: vec!["U2".into()], start: 1_700_000_000, thread_ts: None };
         // The fetch starts; meanwhile R1 ends and R2 starts.
         let since = w.huddle_seq;
-        apply(&mut w, &room("C1", "R1", true), None);
-        apply(&mut w, &room("C2", "R2", false), None);
+        apply(&mut w, &room("C1", "R1", true), None, true);
+        apply(&mut w, &room("C2", "R2", false), None, true);
         // Its answer, from before: R1 live, nothing in C2.
         w.set_live_huddles(vec![live("C1", "R1")], since);
         assert_eq!(w.joinable_live(None), ["C2"], "R1 stays ended, R2 stays live");
@@ -770,11 +785,11 @@ mod tests {
     #[test]
     fn an_older_room_s_end_leaves_the_current_huddle() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"sh_room_join","user":"U2","room":{"id":"R2","channels":["C1"],"participants":["U2"],"has_ended":false}}), None);
-        let fx = apply(&mut w, &json!({"type":"sh_room_update","user":"U2","room":{"id":"R1","channels":["C1"],"participants":[],"has_ended":true}}), None);
+        apply(&mut w, &json!({"type":"sh_room_join","user":"U2","room":{"id":"R2","channels":["C1"],"participants":["U2"],"has_ended":false}}), None, true);
+        let fx = apply(&mut w, &json!({"type":"sh_room_update","user":"U2","room":{"id":"R1","channels":["C1"],"participants":[],"has_ended":true}}), None, true);
         assert_eq!(w.huddles["C1"].room, "R2", "the current one stays live");
         assert!(fx.huddles_ended.is_empty(), "nothing of the view ended");
-        let fx = apply(&mut w, &json!({"type":"sh_room_leave","user":"U2","room":{"id":"R2","channels":["C1"],"participants":[],"has_ended":true}}), None);
+        let fx = apply(&mut w, &json!({"type":"sh_room_leave","user":"U2","room":{"id":"R2","channels":["C1"],"participants":[],"has_ended":true}}), None, true);
         assert!(w.huddles.is_empty());
         assert_eq!(fx.huddles_ended, ["C1"]);
     }
@@ -782,20 +797,20 @@ mod tests {
     #[test]
     fn pin_events_mark_messages() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"pin me","ts":"10.0"}), Some("C1"));
-        apply(&mut w, &json!({"type":"pin_added","user":"U2","channel_id":"C1","item":{"type":"message","channel":"C1","message":{"ts":"10.0"}}}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"pin me","ts":"10.0"}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"pin_added","user":"U2","channel_id":"C1","item":{"type":"message","channel":"C1","message":{"ts":"10.0"}}}), Some("C1"), true);
         assert_eq!(w.timelines["C1"].messages[0].pinned_to, vec!["C1".to_string()]);
-        apply(&mut w, &json!({"type":"pin_removed","user":"U2","channel_id":"C1","item":{"type":"message","channel":"C1","message":{"ts":"10.0"}}}), Some("C1"));
+        apply(&mut w, &json!({"type":"pin_removed","user":"U2","channel_id":"C1","item":{"type":"message","channel":"C1","message":{"ts":"10.0"}}}), Some("C1"), true);
         assert!(w.timelines["C1"].messages[0].pinned_to.is_empty());
     }
 
     #[test]
     fn message_replied_keeps_reactions() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"parent","ts":"10.0"}), Some("C1"));
-        apply(&mut w, &json!({"type":"reaction_added","user":"U3","reaction":"+1","item":{"type":"message","channel":"C1","ts":"10.0"}}), Some("C1"));
-        apply(&mut w, &json!({"type":"message","subtype":"message_replied","channel":"C1","message":{"type":"message","user":"U2","text":"parent","ts":"10.0","thread_ts":"10.0","reply_count":2,"latest_reply":"12.0","reply_users":["U3"]}}), Some("C1"));
-        apply(&mut w, &json!({"type":"message","subtype":"message_changed","channel":"C1","message":{"type":"message","user":"U2","text":"parent v2","ts":"10.0","edited":{"user":"U2","ts":"13.0"}}}), Some("C1"));
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"parent","ts":"10.0"}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"reaction_added","user":"U3","reaction":"+1","item":{"type":"message","channel":"C1","ts":"10.0"}}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"message","subtype":"message_replied","channel":"C1","message":{"type":"message","user":"U2","text":"parent","ts":"10.0","thread_ts":"10.0","reply_count":2,"latest_reply":"12.0","reply_users":["U3"]}}), Some("C1"), true);
+        apply(&mut w, &json!({"type":"message","subtype":"message_changed","channel":"C1","message":{"type":"message","user":"U2","text":"parent v2","ts":"10.0","edited":{"user":"U2","ts":"13.0"}}}), Some("C1"), true);
         let p = &w.timelines["C1"].messages[0];
         assert_eq!(p.reactions.len(), 1);
         assert_eq!(p.text, "parent v2");
@@ -809,9 +824,9 @@ mod tests {
         let replied = json!({"type":"message","subtype":"message_replied","channel":"C1","message":{"type":"message","user":"U2","text":"parent","ts":"10.0","thread_ts":"10.0","reply_count":1,"latest_reply":"11.0"}});
         for order in [[&reply, &replied], [&replied, &reply]] {
             let mut w = ws();
-            apply(&mut w, &parent, Some("C1"));
+            apply(&mut w, &parent, Some("C1"), true);
             for ev in order {
-                apply(&mut w, ev, Some("C1"));
+                apply(&mut w, ev, Some("C1"), true);
             }
             assert_eq!(w.timelines["C1"].messages[0].reply_count, 1);
         }
@@ -821,23 +836,23 @@ mod tests {
     fn read_marks_say_what_was_read() {
         let mut w = ws();
         // Captured from Slack (A marking a DM and a thread in it read from another client; ids replaced).
-        let fx = apply(&mut w, &json!({"channel": "D1", "dm_count": 0, "event_ts": "1792882657.003400", "mention_count_display": 0, "num_mentions_display": 0, "ts": "1792882650.243419", "type": "im_marked", "unread_count_display": 0, "vip_count": 0}), None);
+        let fx = apply(&mut w, &json!({"channel": "D1", "dm_count": 0, "event_ts": "1792882657.003400", "mention_count_display": 0, "num_mentions_display": 0, "ts": "1792882650.243419", "type": "im_marked", "unread_count_display": 0, "vip_count": 0}), None, true);
         assert_eq!(fx.read, Some(("D1".into(), None, "1792882650.243419".into())));
         let thread = json!({"event_ts": "1792882659.003900", "subscription": {"active": true, "channel": "D1", "date_create": 1792882651, "last_read": "1792882653.824959", "thread_ts": "1792882650.243419", "type": "thread"}, "type": "thread_marked"});
-        assert_eq!(apply(&mut w, &thread, None).read, Some(("D1".into(), Some("1792882650.243419".into()), "1792882653.824959".into())));
-        assert_eq!(apply(&mut w, &json!({"type": "channel_marked", "channel": "C1"}), None).read, None, "no ts, nothing said");
+        assert_eq!(apply(&mut w, &thread, None, true).read, Some(("D1".into(), Some("1792882650.243419".into()), "1792882653.824959".into())));
+        assert_eq!(apply(&mut w, &json!({"type": "channel_marked", "channel": "C1"}), None, true).read, None, "no ts, nothing said");
     }
 
     #[test]
     fn markers_and_typing() {
         let mut w = ws();
-        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"x","ts":"10.0"}), None);
-        apply(&mut w, &json!({"type":"channel_marked","channel":"C1","ts":"10.0","unread_count_display":0,"num_mentions_display":0}), None);
+        apply(&mut w, &json!({"type":"message","channel":"C1","user":"U2","text":"x","ts":"10.0"}), None, true);
+        apply(&mut w, &json!({"type":"channel_marked","channel":"C1","ts":"10.0","unread_count_display":0,"num_mentions_display":0}), None, true);
         assert!(!w.unread["C1"].has_unreads);
-        apply(&mut w, &json!({"type":"user_typing","channel":"C1","user":"U2"}), None);
+        apply(&mut w, &json!({"type":"user_typing","channel":"C1","user":"U2"}), None, true);
         assert_eq!(w.typing_in("C1"), vec!["U2".to_string()]);
         // Captured from Slack (B typing in a thread, the web client's frame).
-        apply(&mut w, &json!({"channel":"C0CA5R2EX1Q","id":3,"thread_ts":"1792344539.206299","type":"user_typing","user":"U3"}), None);
+        apply(&mut w, &json!({"channel":"C0CA5R2EX1Q","id":3,"thread_ts":"1792344539.206299","type":"user_typing","user":"U3"}), None, true);
         assert_eq!(w.typing_in("C0CA5R2EX1Q"), Vec::<String>::new(), "thread typing is not channel typing");
         assert_eq!(w.typing_in("C0CA5R2EX1Q/1792344539.206299"), vec!["U3".to_string()]);
     }
@@ -849,13 +864,13 @@ mod tests {
         for id in ["C1", "C2"] {
             w.conversations.insert(id.into(), slack_core::types::Conversation { id: id.into(), name: id.to_lowercase(), is_channel: true, is_member: true, ..Default::default() });
         }
-        let fx = apply(&mut w, &json!({"type":"channel_archive","channel":"C1","user":"U1"}), Some("C1"));
+        let fx = apply(&mut w, &json!({"type":"channel_archive","channel":"C1","user":"U1"}), Some("C1"), true);
         assert!(fx.rebuild_sidebar && w.conversations["C1"].is_archived && !w.conversations["C1"].is_member);
         assert_eq!(w.preview.as_deref(), Some("C1"), "the open channel stays");
         assert_eq!(w.sidebar().0, vec!["C1", "C2"]);
-        apply(&mut w, &json!({"type":"channel_left","channel":"C2"}), Some("C1"));
+        apply(&mut w, &json!({"type":"channel_left","channel":"C2"}), Some("C1"), true);
         assert_eq!(w.preview.as_deref(), Some("C1"), "leaving another channel changes nothing here");
-        apply(&mut w, &json!({"type":"channel_unarchive","channel":"C1","user":"U1"}), Some("C1"));
+        apply(&mut w, &json!({"type":"channel_unarchive","channel":"C1","user":"U1"}), Some("C1"), true);
         assert!(!w.conversations["C1"].is_archived);
     }
 }

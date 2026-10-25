@@ -1742,7 +1742,7 @@ mod tests {
         a.toggle_unread();
         draw(&mut a, &ws, 80);
         assert_eq!(a.builds, 4);
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "profile": {"display_name": "annie"}}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "profile": {"display_name": "annie"}}}), None, true);
         assert!(draw(&mut a, &ws, 80).contains("annie"), "a new name shows");
         ws.settings.messages.avatars = !ws.settings.messages.avatars;
         draw(&mut a, &ws, 80);
@@ -1777,7 +1777,7 @@ mod tests {
         };
         assert!(draw(&mut a, &ws).contains("Mention in #c"));
         // The same conversation again (as many as before), under another name.
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "channel_joined", "channel": {"id": "C1", "name": "renamed", "is_channel": true}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "channel_joined", "channel": {"id": "C1", "name": "renamed", "is_channel": true}}), None, true);
         assert!(draw(&mut a, &ws).contains("Mention in #renamed"));
     }
 

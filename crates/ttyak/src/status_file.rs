@@ -52,7 +52,7 @@ pub struct HuddleStatus {
 }
 
 /// The words of the line, for `tr`.
-pub const WORDS: &[&str] = &["ttyak is not running", "all read", "unread", "{n} for you", "paused until {t}", "in a huddle ({where})", "update {v}"];
+pub const WORDS: &[&str] = &["ttyak is not running", "all read", "unread", "{n} for you", "paused until {t}", "in a huddle ({where})", "update {v}", "a direct message", "a group DM"];
 
 impl Status {
     /// What is read when no ttyak runs the profile.
@@ -146,12 +146,36 @@ fn alive(pid: u32, profile: &str) -> bool {
 }
 
 /// The profile this ttyak runs, and the content last written (without its time), so a file is written once per change.
-static RUNNING: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+static RUNNING: std::sync::Mutex<Option<Running>> = std::sync::Mutex::new(None);
+
+/// How long after a failed write the next one is tried (an internal wait, so a full disk is not hit on every draw).
+const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct Running {
+    profile: String,
+    written: String,
+    retry_at: Option<std::time::Instant>,
+}
+
+/// The profile this ttyak writes the file for (None before [`start`]).
+pub fn profile() -> Option<String> {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.profile.clone())
+}
+
+/// Where a huddle is, without naming a person: a DM is "a direct message", a group DM "a group DM", a channel `#name`.
+pub fn huddle_place(ws: &Workspace, channel: &str) -> String {
+    use super::tui::i18n::tr;
+    match ws.conversations.get(channel) {
+        Some(c) if c.is_im => tr("a direct message").into_owned(),
+        Some(c) if c.is_mpim => tr("a group DM").into_owned(),
+        _ => format!("#{}", ws.channel_label(channel)),
+    }
+}
 
 /// This ttyak runs profile `name`: its file goes when the returned guard drops (a clean quit, an error), and a
 /// leftover one of an earlier run is read as not running meanwhile (its pid is gone).
 pub fn start(name: &str) -> Guard {
-    *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some((name.to_string(), String::new()));
+    *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = Some(Running { profile: name.to_string(), written: String::new(), retry_at: None });
     Guard
 }
 
@@ -159,15 +183,14 @@ pub struct Guard;
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        if let Some((profile, _)) = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            remove(&profile);
+        if let Some(r) = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            remove(&r.profile);
         }
     }
 }
 
 /// The status of the shown workspace `ws` (number `current` of `labels`) and the other workspaces' `others`.
-pub fn snapshot(ws: &Workspace, labels: &[String], current: usize, others: &HashMap<usize, Badge>, huddle: Option<String>, update: Option<String>) -> Option<Status> {
-    let profile = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.0.clone();
+pub fn snapshot(profile: &str, ws: &Workspace, labels: &[String], current: usize, others: &HashMap<usize, Badge>, huddle: Option<String>, update: Option<String>) -> Status {
     let state = attention::state(ws, others);
     // Slack's own counts: mentions in the conversations and threads; an unread DM is at least one.
     let mut here = ws.total_unread().1 + ws.thread_unread.mentions;
@@ -188,20 +211,20 @@ pub fn snapshot(ws: &Workspace, labels: &[String], current: usize, others: &Hash
         })
         .collect();
     let now = super::tui::clock::now();
-    Some(Status {
+    Status {
         version: 1,
         running: true,
         pid: std::process::id(),
-        profile,
+        profile: profile.to_string(),
         state: state.name().into(),
         mark: state.mark().into(),
         for_you: workspaces.iter().map(|w| w.for_you).sum(),
         workspaces,
         paused_until: ws.dnd_until(now.timestamp() as f64).and_then(|t| super::tui::clock::at(t as i64)).map(|t| t.to_rfc3339()),
-        huddle: huddle.map(|place| HuddleStatus { place: title::clean(&place) }),
+        huddle: huddle.map(|place| HuddleStatus { place }),
         update,
         updated_at: now.to_rfc3339(),
-    })
+    }
 }
 
 /// Writes `s` unless it says what was last written (its time aside).
@@ -209,14 +232,15 @@ pub fn publish(mut s: Status) {
     let at = std::mem::take(&mut s.updated_at);
     let Ok(content) = serde_json::to_string(&s) else { return };
     let mut last = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((profile, written)) = last.as_mut() else { return };
-    if *written == content {
+    let Some(r) = last.as_mut() else { return };
+    if r.written == content || r.retry_at.is_some_and(|t| std::time::Instant::now() < t) {
         return;
     }
     s.updated_at = at;
-    // A failed write is tried again at the next change.
-    if write(profile, &s).is_ok() {
-        *written = content;
+    match write(&r.profile, &s) {
+        Ok(()) => (r.written, r.retry_at) = (content, None),
+        // Tried again after a while, not at every draw.
+        Err(_) => r.retry_at = Some(std::time::Instant::now() + RETRY_AFTER),
     }
 }
 
@@ -385,5 +409,38 @@ mod tests {
         assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_huddle_is_placed_without_naming_a_person() {
+        use slack_core::types::Conversation;
+        let mut ws = Workspace::default();
+        ws.conversations.insert("D1".into(), Conversation { id: "D1".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
+        ws.conversations.insert("G1".into(), Conversation { id: "G1".into(), is_mpim: true, name: "mpdm-a--b-1".into(), ..Default::default() });
+        ws.conversations.insert("C1".into(), Conversation { id: "C1".into(), name: "general".into(), ..Default::default() });
+        assert_eq!(huddle_place(&ws, "D1"), "a direct message");
+        assert_eq!(huddle_place(&ws, "G1"), "a group DM");
+        assert_eq!(huddle_place(&ws, "C1"), "#general");
+        let template = super::super::tui::i18n::template();
+        assert!(template.contains("\"a direct message\" = \"\"") && template.contains("\"a group DM\" = \"\""));
+    }
+
+    #[test]
+    fn the_snapshot_says_what_the_title_says() {
+        use super::super::tui::attention::state;
+        let mut ws = Workspace::default();
+        let labels = vec!["acme".to_string(), "beta".to_string()];
+        let mut others = HashMap::new();
+        let s = snapshot("p", &ws, &labels, 0, &others, None, None);
+        assert_eq!((s.state.as_str(), s.mark.as_str()), (state(&ws, &others).name(), "○"));
+        others.insert(1, Badge { attention: 0, unread: true });
+        let s = snapshot("p", &ws, &labels, 0, &others, None, None);
+        assert_eq!(s.state, state(&ws, &others).name());
+        assert_eq!(s.state, "unread");
+        others.insert(1, Badge { attention: 3, unread: true });
+        ws.thread_unread.mentions = 1;
+        let s = snapshot("p", &ws, &labels, 0, &others, None, None);
+        assert_eq!((s.state.as_str(), s.for_you), (state(&ws, &others).name(), 4));
+        assert_eq!(s.state, "for_you");
     }
 }

@@ -1138,7 +1138,7 @@ mod tests {
         draw(&mut t, &ws, 100);
         assert_eq!(t.builds, 1);
         // Someone's name or status changed: built again, at most once a second.
-        let renamed = |ws: &mut Workspace, name: &str| crate::tui::live::apply(ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "profile": {"display_name": name}}}), None);
+        let renamed = |ws: &mut Workspace, name: &str| crate::tui::live::apply(ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "profile": {"display_name": name}}}), None, true);
         renamed(&mut ws, "annie");
         assert!(draw(&mut t, &ws, 100).contains("annie"));
         assert_eq!(t.builds, 2);

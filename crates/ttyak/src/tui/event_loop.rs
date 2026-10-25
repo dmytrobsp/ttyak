@@ -5383,9 +5383,9 @@ async fn run_workspace(
         let _ = title.lock().unwrap_or_else(|e| e.into_inner()).sync(&mut std::io::stdout(), app.ws.settings.notifications.title_mark, badge, &app.client.session.team_name);
         // So does the status file `ctl status` reads.
         {
-            let (call, update) = (app.call.as_ref().map(|c| app.ws.channel_label(&c.channel)), app.update_available.as_ref().map(|l| l.version.to_string()));
-            if let Some(s) = crate::status_file::snapshot(&app.ws, &app.workspaces, app.workspace, &app.others.lock().unwrap_or_else(|e| e.into_inner()), call, update) {
-                crate::status_file::publish(s);
+            let (call, update) = (app.call.as_ref().map(|c| crate::status_file::huddle_place(&app.ws, &c.channel)), app.update_available.as_ref().map(|l| l.version.to_string()));
+            if let Some(profile) = crate::status_file::profile() {
+                crate::status_file::publish(crate::status_file::snapshot(&profile, &app.ws, &app.workspaces, app.workspace, &app.others.lock().unwrap_or_else(|e| e.into_inner()), call, update));
             }
         }
         write_notifications(&app.notifier, &mut std::io::stdout());
@@ -6682,7 +6682,7 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
             app.mark_signed_out();
         }
         RtmEvent::Event(v) => {
-            let fx = super::live::apply(&mut app.ws, &v, app.current.as_deref());
+            let fx = super::live::apply(&mut app.ws, &v, app.current.as_deref(), reading(app.focus_reported, app.terminal_focused));
             if let Some((channel, thread, up_to)) = &fx.read {
                 app.notifier.read(&app.bubble_key(channel), thread.as_deref(), up_to);
             }
@@ -8245,14 +8245,14 @@ mod tests {
         ws.dnd.schedule = ws.dnd.schedule.as_ref().and_then(|s| s.edited(&[Days(Custom)]).ok());
         // Slack echoes the first write a pref at a time, the kind last (as seen live 2026-10-20).
         for (name, value) in [("dnd_start_hour", "17:00"), ("dnd_end_hour", "9:00"), ("dnd_enabled_monday", "partial"), ("dnd_days", "every_day")] {
-            super::super::live::apply(&mut ws, &serde_json::json!({"type": "pref_change", "name": name, "value": value}), None);
+            super::super::live::apply(&mut ws, &serde_json::json!({"type": "pref_change", "name": name, "value": value}), None, true);
             super::show_pending_schedule(&mut ws, &q);
             assert_eq!(ws.dnd.schedule.as_ref().map(|s| s.days), Some(Custom), "after {name}: the latest change stays shown");
         }
         // Nothing of ttyak's in flight: another client's change shows as it is.
         assert_eq!(q.done(true), Some(vec![Days(Custom)]));
         assert_eq!(q.done(true), None);
-        super::super::live::apply(&mut ws, &serde_json::json!({"type": "pref_change", "name": "dnd_days", "value": "weekdays"}), None);
+        super::super::live::apply(&mut ws, &serde_json::json!({"type": "pref_change", "name": "dnd_days", "value": "weekdays"}), None, true);
         super::show_pending_schedule(&mut ws, &q);
         assert_eq!(ws.dnd.schedule.as_ref().map(|s| s.days), Some(Weekdays));
     }
@@ -8707,6 +8707,34 @@ mod tests {
         super::handle_rtm(&mut app, slack_core::rtm::RtmEvent::Event(serde_json::json!({"type": "im_marked", "channel": "D1", "ts": "1700000002.000100", "unread_count_display": 0})));
         app.notifier.settled().await;
         assert_eq!(server.calls().pop(), Some(Call::Close(2)));
+    }
+
+    #[tokio::test]
+    async fn a_message_in_the_open_conversation_is_unread_while_the_terminal_is_away() {
+        use crate::tui::attention::{State, state};
+        use crate::tui::state::Timeline;
+        use crossterm::event::Event;
+        let (mut app, _server) = notified_app();
+        app.ws.timelines.insert("D1".into(), Timeline { loaded: true, ..Default::default() });
+        app.current = Some("D1".into());
+        app.view = super::View::Conversation;
+        let read = |app: &super::App| state(&app.ws, &Default::default());
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        app.mark_reads();
+        assert_eq!(read(&app), State::ForYou, "a DM in the open conversation, terminal away");
+        assert!(app.ws.unread["D1"].has_unreads && app.ws.unread["D1"].mentions == 1);
+        // The status file says the same as the title's badge.
+        let s = crate::status_file::snapshot("p", &app.ws, &["acme".to_string()], 0, &Default::default(), None, None);
+        assert_eq!((s.state.as_str(), s.for_you), ("for_you", 1));
+        // Back: read here.
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        app.mark_reads();
+        assert_eq!(read(&app), State::Read);
+        assert!(!app.ws.unread["D1"].has_unreads);
+        // Focused and reading: it never counts.
+        super::handle_rtm(&mut app, dm("1700000002.000100"));
+        assert_eq!(read(&app), State::Read);
     }
 
     /// An app on a workspace that answers nothing (every request is refused at once), with the

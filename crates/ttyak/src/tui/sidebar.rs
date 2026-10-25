@@ -776,7 +776,7 @@ mod tests {
         assert_eq!(text(&line), "▌💬Threads 3  1 ", "the bar, three unread replies, one mention");
         assert!(line.spans[2].style.add_modifier.contains(Modifier::BOLD));
         // Live: read elsewhere.
-        super::super::live::apply(&mut w, &serde_json::json!({"type": "update_global_thread_state", "has_unreads": false, "mention_count": 0, "unread_count_by_channel": {}}), None);
+        super::super::live::apply(&mut w, &serde_json::json!({"type": "update_global_thread_state", "has_unreads": false, "mention_count": 0, "unread_count_by_channel": {}}), None, true);
         assert_eq!(text(&view_line(&w, &Item::Threads, false, false, None)), " 💬Threads");
         // It is a stop for the selection, and keeps the conversation shown.
         let mut s = Sidebar::default();

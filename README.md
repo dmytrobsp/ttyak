@@ -705,7 +705,9 @@ date (`$XDG_RUNTIME_DIR/ttyak/NAME.json`, readable by you only; elsewhere in the
 session and is cheap to poll every second. The line looks like `◆ acme: 2 for you · paused until 14:00`; the mark is
 `○` all read, `●` unread, `◆` for you, the same as the tab title. `--json` prints the whole object (`state`
 `read`/`unread`/`for_you`, `mark`, `for_you`, `workspaces`, `paused_until`, `huddle`, `update`, `updated_at`, times in
-RFC 3339), `--follow [--every SECS]` prints a new line only when it changes, for bars that read a stream. When no ttyak
+RFC 3339), `--follow [--every SECS]` prints a new line only when it changes, for bars that read a stream; it keeps
+running when ttyak isn't (it waits for it and prints the `not running` line on the change, then the next). `huddle.where`
+names no person: `a direct message`, `a group DM` or `#channel`. When no ttyak
 runs the profile it says `ttyak is not running` (`"running": false` in JSON) and exits 0. The file holds no message text
 and no authors, and ttyak removes it when it quits.
 

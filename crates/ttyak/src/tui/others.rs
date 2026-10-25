@@ -241,7 +241,7 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
             }
             _ => continue,
         };
-        let fx = super::live::apply(&mut ws, &v, None);
+        let fx = super::live::apply(&mut ws, &v, None, true);
         if shown.load(Ordering::Relaxed) == index {
             return Ok(());
         }

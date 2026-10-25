@@ -1218,7 +1218,7 @@ mod tests {
         // A changed profile brings the new status.
         let mut w = set("", "", None, "", 0);
         let ev = serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "name": "bob", "profile": {"status_emoji": ":palm_tree:", "status_text": "Vacationing"}}});
-        crate::tui::live::apply(&mut w, &ev, None);
+        crate::tui::live::apply(&mut w, &ev, None, true);
         assert_eq!(w.status_of("U2", 600).map(|s| s.emoji), Some("palm_tree".into()));
     }
 
@@ -1249,13 +1249,13 @@ mod tests {
         ws.users.insert("U2".into(), bob);
         // Only the id and the fields that changed.
         let ev = serde_json::json!({"type": "user_profile_changed", "user": {"id": "U2", "profile": {"status_emoji": ":palm_tree:", "status_text": "Vacationing", "huddle_state": null}}});
-        crate::tui::live::apply(&mut ws, &ev, None);
+        crate::tui::live::apply(&mut ws, &ev, None, true);
         let u = &ws.users["U2"];
         assert_eq!((u.name.as_str(), u.real_name.as_deref(), u.tz.as_deref()), ("bob", Some("Bob Stone"), Some("Europe/Kyiv")), "the rest of the user stays");
         assert_eq!((u.profile.display_name.as_str(), u.profile.real_name.as_str(), u.profile.image_48.as_deref()), ("bobby", "Bob Stone", Some("https://avatars.slack-edge.com/b_48.png")));
         assert_eq!((u.profile.status_emoji.as_str(), u.profile.status_text.as_str()), (":palm_tree:", "Vacationing"));
         // Someone not known yet: taken as they come.
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U3", "name": "cy", "profile": {"status_emoji": ":x:"}}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U3", "name": "cy", "profile": {"status_emoji": ":x:"}}}), None, true);
         assert_eq!(ws.users["U3"].profile.status_emoji, ":x:");
     }
 
@@ -1273,8 +1273,8 @@ mod tests {
         assert_eq!(ws.conversation_label(&g), "cy, dee, eve");
         assert_eq!(scans(), before, "no walk through all users");
         // Someone renamed (`user_change`) or joining (`team_join`): the index follows.
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "U3", "name": "dora"}}), None);
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "team_join", "user": {"id": "U4", "name": "eve"}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "U3", "name": "dora"}}), None, true);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "team_join", "user": {"id": "U4", "name": "eve"}}), None, true);
         let g2 = Conversation { name: "mpdm-me--cy--dora--eve-1".into(), ..g.clone() };
         assert_eq!(ws.mpim_people(&g2).into_iter().map(|(_, id)| id).collect::<Vec<_>>(), [Some("U2".to_string()), Some("U3".into()), Some("U4".into())]);
         assert_eq!(ws.mpim_people(&g)[1], ("dee".to_string(), None), "the old name is gone");
@@ -1598,11 +1598,11 @@ mod tests {
         assert_eq!(ws.dnd_until(1792486800.0), Some(1792558800.0));
         assert!(ws.dnd_active(1792486800.0));
         // Your own zone changed during the session (`user_change`): followed.
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "UME", "name": "me", "tz": "America/New_York"}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "UME", "name": "me", "tz": "America/New_York"}}), None, true);
         assert_eq!(ws.account_zone(), Some(new_york));
         assert_eq!(ws.dnd_until(1792486800.0), None);
         // Someone else's change is theirs.
-        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "U2", "name": "b", "tz": "Asia/Jerusalem"}}), None);
+        crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_change", "user": {"id": "U2", "name": "b", "tz": "Asia/Jerusalem"}}), None, true);
         assert_eq!(ws.account_zone(), Some(new_york));
     }
 
