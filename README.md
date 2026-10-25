@@ -118,9 +118,14 @@ look for empty boxes or misaligned columns.
 **Windows**
 
 - needs: Windows 10 or 11, 64-bit
-- Windows Terminal is recommended; the classic console (conhost) is expected to show emoji as boxes and no pictures (not tried yet)
+- Windows Terminal is recommended (it draws sixel pictures); the classic console (conhost) draws emoji in monochrome and
+  no pictures, only half blocks (tried)
+- `ctl check`: run it in the terminal on the desktop — over ssh (no desktop session) its Focus Assist and notification
+  rows read wrongly. Windows Terminal 1.24 and conhost answer its questions about mouse, focus and bracketed paste
+  (tried); neither says whether it draws OSC 8 links ("not known"; Windows Terminal does)
 - toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
-  says when it can't tell; under Windows' do-not-disturb the toast goes to the notification center silently
+  says when it can't tell; with Follow the system's do-not-disturb on, the toast still goes out under Windows'
+  do-not-disturb, without its sound, for Windows to file in the notification center (not tried yet)
 - optional: `ffmpeg` for video and cameras
 
 ## Verify
@@ -357,11 +362,12 @@ the sound itself — except `system`, the desktop's own sound, which then stays 
 Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before an
 interruption (the answer stands for the next ones for up to 2 seconds), whoever plays the sound: SwayNotificationCenter,
 mako (a `do-not-disturb` or `dnd` mode), dunst (paused), GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
-fires nothing: no notification, no sound, no bell — except on Windows, where the toast still goes out without its sound
-or the bell (and the huddle invitation rings silently), and Windows files it in the notification center silently, as it
-does for other apps. With any other server, or when it does not answer within a second,
-notifications go through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in
-`settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
+fires nothing: no notification, no sound, no bell (a huddle invitation still rings: its ring follows only Slack's
+do-not-disturb) — except on Windows, where the toast still goes out without its sound or the bell, the huddle ring
+keeps quiet, and Windows' do-not-disturb files the toast in the notification center as it does other apps' (in a busy
+state — a full-screen app — with Windows' full-screen rule off it may still show a banner). With any other server, or
+when it does not answer within a second, notifications go through. F6 → Notifications → Follow the system's
+do-not-disturb (`follow_system_dnd` in `settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
 
 F6 → Notifications is the one place for all of this: what notifies you (kept on Slack: this conversation, channels,
 keywords, VIPs); how you are told (desktop notifications, the sound and its volume — `sound_volume` under
@@ -413,7 +419,8 @@ and then brings ttyak's window forward by the first of these that works here:
   the console they give ttyak; older ones not tried), conhost's own window — is restored when minimised and brought to
   the foreground; after WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the
   foreground only in some cases (the user's last input went to it, or the program in front allows it); otherwise the
-  window's taskbar button flashes instead. Not tried yet on a desktop.
+  window's taskbar button flashes instead. Tried at the desktop after a toast click: Windows Terminal 1.24's window and
+  conhost's came forward.
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the Notification Center's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -436,26 +443,30 @@ nothing to ask — macOS itself holds the notification and the `system` sound ba
 inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
 
 **On Windows** ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu
-shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before; F6 says when
-Windows has PowerShell's notifications turned off (they would vanish without a trace). Each carries its conversation as
-its tag, in a group of its profile's own (two ttyaks on other profiles leave each other's alone): a newer one replaces
-it in place, and reading takes it off the screen and out of the notification center (tried in the notification center's
-list; on screen not tried yet). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
-brings the console's window forward as above (in Windows Terminal on the tab last used) — not tried at the desktop yet
-(toasts don't show over ssh): the toast on screen, the click, where it lands and the window coming forward. A click
-on it later in the notification center does nothing — tried: no click reaches ttyak and no Windows PowerShell opens (it
-has no COM activator registered, which takes an installer). Only the `system` sound goes with the toast (Windows' own, silenced
-with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
+shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before; F6 and `ctl check`
+say when Windows has PowerShell's notifications turned off (they would vanish without a trace), and the log says such a
+toast was not shown. Each carries its conversation as its tag, in a group of its profile's own (two ttyaks on other
+profiles leave each other's alone — tried: two profiles in two Windows Terminal tabs each get their own toast and
+notification-center entry): a newer one replaces it in place (tried: one entry in the notification center; Windows
+shows the newer one as a new popup), and reading takes it off the screen and out of the notification center (tried in
+the notification center). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
+brings the console's window forward as above — tried at the desktop in Windows Terminal and in conhost. Windows
+Terminal keeps showing the tab that was in front: with two profiles in two of its tabs, a click on one's toast brings
+the window forward and that profile opens the message, but its tab is not picked (ttyak can't pick Windows Terminal's
+tab). A click on it later in the notification center does nothing — tried: no click reaches ttyak and no Windows
+PowerShell opens (it has no COM activator registered, which takes an installer). Only the `system` sound goes with the
+toast (Windows' own, silenced with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
 profile — Windows 11's Do not disturb — read through an undocumented Windows state
 (`WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED`; priority only and alarms only count as on, since ttyak can't be on the
 priority list; if Windows changes that state, ttyak can't tell and plays its own sound), and the documented
 notification state (`SHQueryUserNotificationState`): presentation mode and full-screen Direct3D count as on, busy (a
 full-screen app, presentation settings) only while that app is not ttyak's own terminal, and quiet time — the first
 hour after the first sign-in on a new install or after an upgrade — too. While it is on, the toast still goes out, without
-ttyak's sound, Windows' sound or the bell (and the huddle invitation rings silently): Windows' do-not-disturb files it in
-the notification center silently, as it does for other apps' toasts. Tried at the desktop: Do not disturb switched on
-reads as on (profile 1), and so does Windows 11's automatic one for a full-screen app (profile 2, Windows Terminal full
-screen); the silent toast in the notification center under it is not tried yet. Can't do on
+ttyak's sound, Windows' sound or the bell (and the huddle ring keeps quiet): Windows' do-not-disturb files it in the
+notification center, as it does other apps' toasts — though in a busy state with Windows' full-screen rule off Windows
+may still show a banner. Tried at the desktop: Do not disturb switched on reads as on (profile 1), and so does Windows
+11's automatic one for a full-screen app (profile 2, Windows Terminal full screen); the toast sent without sound in the
+notification center under it is not tried yet. Can't do on
 Windows: picking Windows Terminal's tab; a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
 
 Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,

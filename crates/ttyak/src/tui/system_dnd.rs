@@ -80,7 +80,7 @@ pub fn server(name: &str) -> Server {
 /// F6's words for what the system says about do-not-disturb.
 const DND_STATE: &str = "{server}: {state}";
 const DND_STATE_WINDOWS: &str = "{server}: {state} (undocumented state)";
-const DND_STATE_WINDOWS_ON: &str = "{server}: {state} (undocumented state): the toast goes to the notification center silently";
+const DND_STATE_WINDOWS_ON: &str = "{server}: {state} (undocumented state): when followed, the toast goes out without sound";
 const DND_ON: &str = "on";
 const DND_OFF: &str = "off";
 const DND_CANT_TELL: &str = "can't tell";
@@ -100,7 +100,7 @@ pub fn name(server: &Server) -> String {
 }
 
 /// What was read from `server`, for F6: "swaync: off", "Focus Assist: off (undocumented state)", "can't tell" (`answer`
-/// None; a server that can't be asked is no name at all); Windows' on says where the toast goes.
+/// None; a server that can't be asked is no name at all); Windows' on says what becomes of the toast when followed.
 pub fn describe(server: &Server, answer: Option<bool>) -> String {
     use super::i18n::tr;
     if let Server::Other(_) = server {
@@ -380,7 +380,8 @@ mod tests {
         assert_eq!(describe(&Server::Mako, Some(true)), "mako: on");
         assert_eq!(describe(&Server::Gnome, None), "GNOME: can't tell");
         assert_eq!(describe(&Server::Windows, Some(false)), "Focus Assist: off (undocumented state)");
-        assert_eq!(describe(&Server::Windows, Some(true)), "Focus Assist: on (undocumented state): the toast goes to the notification center silently");
+        // (Followed or not: F6's Follow row beside it says which; Windows may still show a banner in a busy state.)
+        assert_eq!(describe(&Server::Windows, Some(true)), "Focus Assist: on (undocumented state): when followed, the toast goes out without sound");
         assert!(files_silently(&Server::Windows) && !files_silently(&Server::Swaync) && !files_silently(&Server::Other(String::new())));
         assert_eq!(describe(&Server::Other("dwl-notify".into()), Some(false)), "can't tell");
         assert_eq!(describe(&Server::Other(String::new()), None), "can't tell");

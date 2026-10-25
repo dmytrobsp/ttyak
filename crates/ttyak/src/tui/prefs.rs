@@ -663,7 +663,7 @@ const TEST_SENT_BELL: &str = "sent a test notification; the bell follows in {sec
 const TEST_SKIPPED: &str = "desktop notifications are off: no bubble sent";
 const TEST_SKIPPED_BELL: &str = "desktop notifications are off: no bubble sent; the bell follows in {secs} s if the terminal is then unfocused";
 const TEST_HELD: &str = "held back by the system's do-not-disturb";
-const TEST_HELD_SILENT: &str = "sent without sound: Windows' do-not-disturb files it in the notification center";
+const TEST_HELD_SILENT: &str = "sent without sound: Windows' do-not-disturb is on";
 const TEST_CLICKED: &str = "the test notification was clicked: that is how a click reaches ttyak here";
 const MACHINE_WORDS: &[&str] = &[PAUSE_ROW, TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_SKIPPED, TEST_SKIPPED_BELL, TEST_HELD, TEST_HELD_SILENT, TEST_CLICKED];
 
@@ -1902,7 +1902,7 @@ mod tests {
     #[test]
     fn the_test_held_back_says_where_it_went() {
         assert_eq!(test_held(false), "held back by the system's do-not-disturb");
-        assert_eq!(test_held(true), "sent without sound: Windows' do-not-disturb files it in the notification center");
+        assert_eq!(test_held(true), "sent without sound: Windows' do-not-disturb is on");
         assert!(super::super::i18n::translatable().iter().any(|w| w == &test_held(true)));
     }
 
