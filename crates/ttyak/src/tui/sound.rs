@@ -231,7 +231,15 @@ mod tests {
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn a_sound_as_a_wav_file() {
-        let dir = std::env::temp_dir().join(format!("ttyak-wav-test-{}", std::process::id()));
+        /// A folder removed with what it holds when the test ends, a failed assertion too.
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let temp = Temp(std::env::temp_dir().join(format!("ttyak-wav-test-{}", std::process::id())));
+        let dir = temp.0.clone();
         let path = wav_file_in(&dir, "chime").expect("the folder is writable");
         let wav = std::fs::read(&path).unwrap();
         assert_eq!((&wav[..4], &wav[8..16]), (&b"RIFF"[..], &b"WAVEfmt "[..]));

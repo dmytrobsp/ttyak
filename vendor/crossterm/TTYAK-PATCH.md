@@ -30,19 +30,23 @@ as one event (Task 9 of 0.12.0).
   BEL or `ESC \`, at most 256 bytes in all. `advance_bytes` (`parse.rs`, shared by the two readers `source/unix/mio.rs`
   and `tty.rs`, which used to have the loop each) gives an OSC up on the first byte that cannot belong to it (anything
   not `99;` right after `ESC ]`, a control byte, space, non-ASCII, an `ESC` not followed by `\`, the 257th byte) and
-  also when the read ends with the OSC incomplete and nothing more to read. Giving up means the `ESC ]` is Alt+] and
-  every byte after it is fed again as ordinary input, so nothing is lost and nothing is swallowed: a stray
-  `ESC ] 9 9 ; h` is Alt+], `9`, `9`, `;`, `h`, and a mouse report or arrow after a stray OSC stays a mouse report or
-  an arrow.
+  also when the read ends with the OSC incomplete and nothing more to read (so `parse_osc` never sees more than 256
+  bytes and has no length check of its own). Giving up means the `ESC ]` is Alt+] and every byte after it is fed
+  again as ordinary input, so nothing is lost and nothing is swallowed: a stray `ESC ] 9 9 ; h` is Alt+], `9`, `9`,
+  `;`, `h`, and a mouse report or arrow after a stray OSC stays a mouse report or an arrow.
 - Known limit: a reply whose first read ends before its end (for instance right after `ESC ]`, or `ESC ] 99 ; i=1`) is
   not read as one; it comes out as Alt+] and typed characters, as before the patch. kitty writes a reply in one go,
   so this is rare. (Reads that fill the 1 KiB buffer are the exception: more is known to wait, so the OSC is held.)
 - Unit tests: `osc_replies_become_events`, `alt_bracket_is_still_a_key`, `an_osc_split_across_reads_waits_for_its_end`,
-  `a_stray_osc_gives_back_what_it_held` (`parse.rs`); `Parser::advance` in `mio.rs`:
-  `esc_bracket_and_a_key_is_alt_bracket_and_the_key`, `an_st_split_between_esc_and_backslash_is_one_osc`,
-  `a_stray_osc_then_typing_loses_nothing`.
+  `a_stray_osc_gives_back_what_it_held`, `the_longest_reply_is_read_and_a_longer_one_given_back` (`parse.rs`);
+  `Parser::advance` in `mio.rs`: `esc_bracket_and_a_key_is_alt_bracket_and_the_key`,
+  `an_st_split_between_esc_and_backslash_is_one_osc`, `a_stray_osc_then_typing_loses_nothing`.
   ttyak ignores the event for now (`an_osc_reply_is_no_key_and_changes_nothing`).
 - A unit test for the SGR sequences: `test_parse_csi_sgr_mouse_side_buttons`.
+- Upstream's colour tests (`src/style/types/colored.rs`) take turns on the process-wide colour switch (a test-only
+  mutex, `colour_switch`), and the ANSI parse test turns colours on for itself: run in parallel, one test turned colours
+  off while another formatted, so `test_parse_ansi_fg`/`_bg` failed about every other run (and with `NO_COLOR` set
+  where they run, they could fail every time). Tests only; the library is as published.
 - `#![allow(unused_parens)]` in `src/lib.rs`: upstream has one needless pair of parentheses
   (`terminal/sys/unix.rs`). cargo hides warnings of registry crates but shows those of path crates, so
   without it every ttyak build would warn. Left the code as published.

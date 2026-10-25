@@ -106,7 +106,8 @@ fn give_up_osc(buffer: &mut Vec<u8>, events: &mut VecDeque<InternalEvent>, pendi
     }
 }
 
-// ttyak: `ESC ] 99 ; …` up to BEL or `ESC \`, as `Event::Osc`. `None` while the end has not come.
+// ttyak: `ESC ] 99 ; …` up to BEL or `ESC \`, as `Event::Osc`. `None` while the end has not come (`advance_bytes`
+// gives up one longer than `OSC_MAX_LEN` before it gets here).
 fn parse_osc(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
     let osc = |payload: &[u8]| {
         Ok(Some(InternalEvent::Event(Event::Osc(
@@ -116,7 +117,6 @@ fn parse_osc(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
     match buffer {
         [.., b'\x07'] => osc(&buffer[2..buffer.len() - 1]),
         [.., b'\x1B', b'\\'] => osc(&buffer[2..buffer.len() - 2]),
-        _ if buffer.len() > OSC_MAX_LEN => Err(could_not_parse_event_error()),
         _ => Ok(None),
     }
 }
@@ -1312,6 +1312,25 @@ mod tests {
             assert_eq!(got.last(), Some(&InternalEvent::Event(ev)), "{seq:?}");
             assert_eq!(got.len(), 1 + 3 + 1, "{seq:?}: Alt+], `99;`, the event");
         }
+    }
+
+    // ttyak: the length cap, through the readers' loop: a reply of `OSC_MAX_LEN` bytes, its end included, is one OSC;
+    // a byte more and it is given back as input (the parser itself never sees a longer one).
+    #[test]
+    fn the_longest_reply_is_read_and_a_longer_one_given_back() {
+        let reply = |len: usize| {
+            let mut bytes = b"\x1B]99;".to_vec();
+            bytes.resize(len - 1, b'a');
+            bytes.push(b'\x07');
+            bytes
+        };
+        let longest = reply(OSC_MAX_LEN);
+        let payload = String::from_utf8(longest[2..longest.len() - 1].to_vec()).unwrap();
+        assert_eq!(run(&[(&longest, false)]), vec![InternalEvent::Event(Event::Osc(payload))]);
+        let got = run(&[(&reply(OSC_MAX_LEN + 1), false)]);
+        assert_eq!(got[0], key(']', KeyModifiers::ALT));
+        assert_eq!(got[1..4], [key('9', KeyModifiers::NONE), key('9', KeyModifiers::NONE), key(';', KeyModifiers::NONE)]);
+        assert!(!got.iter().any(|e| matches!(e, InternalEvent::Event(Event::Osc(_)))), "{got:?}");
     }
 
     // ttyak: the side buttons (SGR 8 and 9) decode as Back and Forward.

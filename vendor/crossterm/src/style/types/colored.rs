@@ -156,7 +156,18 @@ impl fmt::Display for Colored {
 mod tests {
     use crate::style::{Color, Colored};
 
+    // ttyak: the tests that set or rely on the process-wide colour switch (and NO_COLOR, which it starts from) take
+    // turns: run in parallel, one turned colours off while another formatted (flaky upstream).
+    static COLOUR_SWITCH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // ttyak: the colour switch to this test alone until the guard drops (a test that failed holding it does not
+    // block the others).
+    fn colour_switch() -> std::sync::MutexGuard<'static, ()> {
+        COLOUR_SWITCH.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn check_format_color(colored: Colored, expected: &str) {
+        let _turn = colour_switch(); // ttyak
         Colored::set_ansi_color_disabled(true);
         assert_eq!(colored.to_string(), "");
         Colored::set_ansi_color_disabled(false);
@@ -211,6 +222,9 @@ mod tests {
 
     /// Used for test_parse_ansi_fg and test_parse_ansi_bg
     fn test_parse_ansi(bg_or_fg: impl Fn(Color) -> Colored) {
+        // ttyak: colours on for this test alone, whatever NO_COLOR says where the tests run.
+        let _turn = colour_switch();
+        Colored::set_ansi_color_disabled(false);
         /// Formats a re-parses `color` to check the result.
         macro_rules! test {
             ($color:expr) => {
@@ -308,6 +322,7 @@ mod tests {
 
     #[test]
     fn test_no_color() {
+        let _turn = colour_switch(); // ttyak
         std::env::set_var("NO_COLOR", "1");
         assert!(Colored::ansi_color_disabled());
         std::env::set_var("NO_COLOR", "XXX");
