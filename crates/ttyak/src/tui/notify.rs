@@ -893,6 +893,17 @@ struct Inner {
     focus: AtomicU8,
     /// When the window is brought forward after a click the terminal reported, unless it takes focus first.
     raise_at: Mutex<Option<std::time::Instant>>,
+    /// F6's route check is under way ([`Notifier::begin_route_check`]).
+    route_reading: AtomicBool,
+}
+
+/// A route check under way; over when dropped (also when the check panics).
+pub struct RouteCheck(Notifier);
+
+impl Drop for RouteCheck {
+    fn drop(&mut self) {
+        self.0.inner.route_reading.store(false, Ordering::Relaxed);
+    }
 }
 
 /// How long the system's answer about do-not-disturb is reused for the next event (an internal wait: a burst of
@@ -1027,7 +1038,7 @@ impl Notifier {
     }
 
     fn with_waits(backend: Arc<dyn Backend>, reuse: std::time::Duration, retry: std::time::Duration) -> Notifier {
-        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::new(Shared::new(reuse, retry)), focus: AtomicU8::new(TermFocus::Unknown as u8), raise_at: Mutex::new(None) }) }
+        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::new(Shared::new(reuse, retry)), focus: AtomicU8::new(TermFocus::Unknown as u8), raise_at: Mutex::new(None), route_reading: AtomicBool::new(false) }) }
     }
 
     fn send(&self, cmd: Cmd) {
@@ -1118,6 +1129,12 @@ impl Notifier {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         RouteInfo { shown_by: tr(SHOWN_BY_SYSTEM).into_owned(), sound_by, click: tr(CLICK_SYSTEM).into_owned() }
+    }
+
+    /// Starts F6's route check unless one is under way: one at a time in the process, so one that hangs (Windows' toast
+    /// settings, macOS' Launch Services) is not started again, by the page reading again or opened anew, until it is back.
+    pub fn begin_route_check(&self) -> Option<RouteCheck> {
+        (!self.inner.route_reading.swap(true, Ordering::Relaxed)).then(|| RouteCheck(self.clone()))
     }
 
     /// Whether the notification server has been found (until then the sound's route reads "not known yet").

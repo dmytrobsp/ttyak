@@ -3568,18 +3568,16 @@ impl App {
         let Some(p) = self.prefs.as_ref() else { return };
         let machine = p.machine.clone();
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-        // Not read again while this one is under way; a route check that hangs is not started again until it is back.
-        let route_busy = {
-            let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
-            m.read_at = Some(std::time::Instant::now());
-            std::mem::replace(&mut m.route_reading, true)
-        };
+        // Not read again while this one is under way.
+        machine.lock().unwrap_or_else(|e| e.into_inner()).read_at = Some(std::time::Instant::now());
+        let under_way = self.notifier.begin_route_check();
         let shared = machine.clone();
-        let check = move || {
+        let check = move |under_way: super::notify::RouteCheck| {
             let (info, via_terminal, known) = route();
+            drop(under_way);
             let ask_raise = {
                 let mut m = shared.lock().unwrap_or_else(|e| e.into_inner());
-                (m.route, m.via_terminal, m.route_reading) = (Some(info), via_terminal, false);
+                (m.route, m.via_terminal) = (Some(info), via_terminal);
                 // The server is still being looked for: read again soon.
                 if !known {
                     m.read_at = std::time::Instant::now().checked_sub(super::prefs::MACHINE_REREAD - std::time::Duration::from_secs(1));
@@ -3591,8 +3589,8 @@ impl App {
                 shared.lock().unwrap_or_else(|e| e.into_inner()).raise = Some(text);
             }
         };
-        if !route_busy {
-            drop(runtime.spawn_blocking(check));
+        if let Some(under_way) = under_way {
+            drop(runtime.spawn_blocking(move || check(under_way)));
         }
         self.notifier.read_system_dnd(move |text, on| {
             let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
@@ -11628,14 +11626,57 @@ mod tests {
         app.read_machine_with(route(), || "via nothing".into());
         std::thread::sleep(std::time::Duration::from_millis(100));
         assert_eq!(started.load(Ordering::SeqCst), 1, "one route check at a time");
+        // F6 closed and opened again: still the one.
+        let machine = app.prefs.as_ref().unwrap().machine.clone();
+        on_the_notifications_page(&mut app);
+        app.read_machine_with(route(), || "via nothing".into());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(started.load(Ordering::SeqCst), 1, "one route check at a time, whatever page asks");
         // Once it is back, the next one starts.
         release.send(()).unwrap();
-        let machine = app.prefs.as_ref().unwrap().machine.clone();
         assert!(wait_for(&|| machine.lock().unwrap().route.is_some()));
         std::thread::sleep(std::time::Duration::from_millis(50));
         release.send(()).unwrap();
         app.read_machine_with(route(), || "via nothing".into());
         assert!(wait_for(&|| started.load(Ordering::SeqCst) == 2));
+    }
+
+    #[tokio::test]
+    async fn a_route_check_that_panics_lets_the_next_one_start() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        let started = std::sync::Arc::new(AtomicU32::new(0));
+        let count = started.clone();
+        app.read_machine_with(
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                panic!("a route check that fails");
+            },
+            || "via nothing".into(),
+        );
+        for _ in 0..300 {
+            if started.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let count = started.clone();
+        app.read_machine_with(
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                (crate::tui::notify::RouteInfo { shown_by: "fine".into(), sound_by: "ttyak".into(), click: "opens it".into() }, false, true)
+            },
+            || "via nothing".into(),
+        );
+        for _ in 0..300 {
+            if started.load(Ordering::SeqCst) == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(started.load(Ordering::SeqCst), 2, "the failed one is not taken for one under way");
     }
 
     #[tokio::test]

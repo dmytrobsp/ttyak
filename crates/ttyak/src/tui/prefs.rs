@@ -687,8 +687,6 @@ pub struct Machine {
     pub dnd_on: Option<bool>,
     /// When the last read started; None: not read yet.
     pub read_at: Option<Instant>,
-    /// The route is being read (one read at a time: a hung one is not started again).
-    pub route_reading: bool,
 }
 
 /// What Enter does on a row of "On this machine".
@@ -1072,7 +1070,6 @@ impl Prefs {
         }
     }
 
-    /// Whether F6 → Notifications is shown and what it read about this machine is missing or old: it is to be read.
     /// The help of `field` on this page, titled as its row is here (the pause on Notifications).
     fn help_of(&self, field: Field, ws: &Workspace, keys: &Keymap) -> super::prefs_help::Help {
         let mut help = super::prefs_help::help_shown(field, ws, keys, self.machine_value(field).as_deref());
@@ -1083,6 +1080,7 @@ impl Prefs {
         help
     }
 
+    /// Whether F6 → Notifications is shown and what it read about this machine is missing or old: it is to be read.
     pub fn machine_due(&self) -> bool {
         CATEGORIES.get(self.category).is_some_and(|c| c.0 == "Notifications") && self.machine.lock().unwrap_or_else(|e| e.into_inner()).read_at.is_none_or(|at| at.elapsed() >= MACHINE_REREAD)
     }
