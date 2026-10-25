@@ -337,10 +337,11 @@ and `/workspace [name]` lists them or switches by name. The rail on the left sho
 unread messages in the others (checked every 30 s), and their desktop notifications still arrive (titled with the workspace); clicking one switches there.
 
 The terminal's tab title carries a mark: `○ ttyak - <workspace>` with nothing unread, `●` with something unread (in any
-workspace of the profile), `◆` with something for you (a direct message, a mention). When ttyak ends, your terminal's
-own title comes back in terminals that keep a title stack (kitty, …); elsewhere the title is cleared. F6 →
-Notifications → Mark in the tab title (`title_mark` in `settings.toml`) turns it off, and ttyak then never touches the
-title. In tmux this needs `set -g set-titles on`.
+workspace of the profile), `◆` with something for you (a direct message, a mention); a long workspace name is cut to
+keep the title within 80 cells. When ttyak ends, your terminal's own title comes back in terminals that keep a title
+stack (kitty, …); elsewhere the title is cleared. F6 → Notifications → Mark in the tab title (`title_mark` in
+`settings.toml`) turns it off — switched off while ttyak runs, the terminal's own title comes back at once the same
+way — and ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
 
 A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
 instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other

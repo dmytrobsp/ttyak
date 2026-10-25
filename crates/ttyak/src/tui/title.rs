@@ -3,15 +3,24 @@
 
 use std::io::{self, Write};
 
+use unicode_width::UnicodeWidthChar;
+
 use super::attention::State;
 
-/// The longest title written, in characters (the mark and the app name stay, the workspace is cut).
-const MAX_CHARS: usize = 80;
+/// The widest title written, in terminal cells (the mark and the app name stay, the workspace is cut).
+const MAX_WIDTH: usize = 80;
 
 /// The title for `workspace` with the mark of `state`: control characters and bidi marks of the name dropped, cut
-/// to [`MAX_CHARS`].
+/// to [`MAX_WIDTH`] cells (a wide character that would cross it is left out).
 pub fn text(state: State, workspace: &str) -> String {
-    format!("{} ttyak - {}", state.mark(), clean(workspace)).chars().take(MAX_CHARS).collect()
+    let mut width = 0;
+    format!("{} ttyak - {}", state.mark(), clean(workspace))
+        .chars()
+        .take_while(|c| {
+            width += c.width().unwrap_or(0);
+            width <= MAX_WIDTH
+        })
+        .collect()
 }
 
 /// `name` without control characters and bidi marks.
@@ -53,10 +62,15 @@ impl Title {
         self.last.as_deref()
     }
 
-    /// The title for `workspace` and `state`, when `on` (`notifications.title_mark`); with it off the title is never
-    /// touched.
+    /// The title for `workspace` and `state`, when `on` (`notifications.title_mark`); with it off the title is not
+    /// touched, and one ttyak set is put back at once ([`Title::restore`]).
     pub fn sync(&mut self, out: &mut impl Write, on: bool, state: State, workspace: &str) -> io::Result<()> {
-        if on { self.set(out, &text(state, workspace)) } else { Ok(()) }
+        if on {
+            self.set(out, &text(state, workspace))
+        } else {
+            self.restore(out);
+            Ok(())
+        }
     }
 
     /// Puts the terminal's own title back, if ttyak changed it, once: the title is cleared first (for terminals
@@ -116,6 +130,33 @@ mod tests {
         let mut again = Vec::new();
         t.restore(&mut again);
         assert!(again.is_empty(), "the old title is popped only once: {again:?}");
+    }
+
+    #[test]
+    fn cut_by_display_width() {
+        use unicode_width::UnicodeWidthStr;
+        let wide = text(State::Unread, &"界".repeat(100));
+        assert!(wide.width() <= 80, "{} cells", wide.width());
+        assert!(wide.width() >= 79, "filled up to the last wide character: {} cells", wide.width());
+        assert!(wide.starts_with("● ttyak - 界"));
+    }
+
+    #[test]
+    fn switched_off_while_running_puts_the_old_title_back_at_once() {
+        let (mut t, mut out) = (Title::default(), Vec::new());
+        t.sync(&mut out, true, State::Unread, "a").unwrap();
+        let mut off = Vec::new();
+        t.sync(&mut off, false, State::Unread, "a").unwrap();
+        assert_eq!(off, b"\x1b]2;\x07\x1b[23;0t", "cleared, then popped");
+        let mut again = Vec::new();
+        t.sync(&mut again, false, State::ForYou, "a").unwrap();
+        t.restore(&mut again);
+        assert!(again.is_empty(), "once: {again:?}");
+        // On again: the terminal's title pushed anew, the mark back.
+        let mut on = Vec::new();
+        t.sync(&mut on, true, State::ForYou, "a").unwrap();
+        let on = String::from_utf8(on).unwrap();
+        assert!(on.starts_with("\x1b[22;0t") && on.contains("◆ ttyak - a"), "{on:?}");
     }
 
     #[test]
