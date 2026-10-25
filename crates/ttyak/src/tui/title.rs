@@ -11,8 +11,12 @@ const MAX_CHARS: usize = 80;
 /// The title for `workspace` with the mark of `state`: control characters and bidi marks of the name dropped, cut
 /// to [`MAX_CHARS`].
 pub fn text(state: State, workspace: &str) -> String {
-    let name: String = workspace.chars().filter(|c| !c.is_control() && !is_bidi(*c)).collect();
-    format!("{} ttyak - {name}", state.mark()).chars().take(MAX_CHARS).collect()
+    format!("{} ttyak - {}", state.mark(), clean(workspace)).chars().take(MAX_CHARS).collect()
+}
+
+/// `name` without control characters and bidi marks.
+pub fn clean(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control() && !is_bidi(*c)).collect()
 }
 
 /// Characters that reorder or hide text around them.

@@ -698,6 +698,22 @@ preferences, overlay titles and the status-bar hints go through translation so f
 `huddle-media`, `huddles` (the huddles happening now, `--recent` the latest ones, with ids shown as `C1`, `U1`, …)
 and a few research probes (`api`, `get`, `huddle-*`, `huddles --shape`) that redact secrets.
 
+### Status for bars and scripts
+
+`ttyak --profile NAME ctl status` prints what the running ttyak of that profile says, from a small file it keeps up to
+date (`$XDG_RUNTIME_DIR/ttyak/NAME.json`, readable by you only; elsewhere in the cache folder), so it needs no Slack
+session and is cheap to poll every second. The line looks like `◆ acme: 2 for you · paused until 14:00`; the mark is
+`○` all read, `●` unread, `◆` for you, the same as the tab title. `--json` prints the whole object (`state`
+`read`/`unread`/`for_you`, `mark`, `for_you`, `workspaces`, `paused_until`, `huddle`, `update`, `updated_at`, times in
+RFC 3339), `--follow [--every SECS]` prints a new line only when it changes, for bars that read a stream. When no ttyak
+runs the profile it says `ttyak is not running` (`"running": false` in JSON) and exits 0. The file holds no message text
+and no authors, and ttyak removes it when it quits.
+
+```sh
+ttyak --profile default ctl status --json | jq -r '"\(.mark) \(.for_you)"'   # a plain bar line: ◆ 2
+ttyak --profile default ctl status --json | jq -r .mark                      # the mark only
+```
+
 ## Layout
 
 - `crates/slack-core` — session/auth, Web API client, RTM websocket, message formatting.

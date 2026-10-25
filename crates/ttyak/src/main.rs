@@ -7,6 +7,7 @@ mod login_import;
 mod login_watch;
 mod pick;
 mod qr;
+mod status_file;
 mod tui;
 mod uninstall;
 mod update;
@@ -242,6 +243,8 @@ async fn run() -> Result<()> {
             // same profile runs without it.
             let _lock = profiles::lock(&dirs, &profile).ok().flatten();
             tui::notify::use_profile(&profile);
+            // Only the ttyak that holds the profile writes its status file (a second one would take it away).
+            let _status = _lock.as_ref().map(|_| status_file::start(&profile));
             tui::event_loop::run(p, account.as_ref().map(|(t, u)| (t.as_str(), u.as_str())), signed_out).await
         }
     }

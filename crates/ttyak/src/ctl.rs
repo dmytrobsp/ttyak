@@ -32,6 +32,19 @@ pub enum Ctl {
         #[arg(long)]
         url: Option<String>,
     },
+    /// What the running ttyak says: ○ read, ● unread, ◆ for you (from a small file it keeps up to date, no Slack
+    /// needed), for status bars and scripts. Not running: says so, exit 0.
+    Status {
+        /// The whole status as one JSON object.
+        #[arg(long)]
+        json: bool,
+        /// Print again on every change, until the pipe closes.
+        #[arg(long)]
+        follow: bool,
+        /// With --follow: how often the file is looked at, in seconds.
+        #[arg(long, default_value_t = 1)]
+        every: u64,
+    },
     /// List conversations (`-` marks public channels you are not in).
     Channels,
     /// Join a public channel.
@@ -252,14 +265,15 @@ pub async fn run(profile: &str, team: Option<&str>, cmd: Ctl) -> Result<()> {
             println!("installed theme '{name}' at {} — choose it in F6 → Appearance", target.display());
         }
         Ctl::SelfUpdate { url } => self_update(url.as_deref()).await?,
+        Ctl::Status { json, follow, every } => crate::status_file::print(profile, *json, *follow, *every).await?,
         _ => {}
     }
-    if matches!(cmd, Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. }) {
+    if matches!(cmd, Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. }) {
         return Ok(());
     }
     let client = client(profile, team)?;
     match cmd {
-        Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } => unreachable!("handled above"),
+        Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. } => unreachable!("handled above"),
         Ctl::Whoami => {
             let a = client.auth_test().await?;
             println!("{} ({}) in {} ({}) — {}", a.user, a.user_id, a.team, a.team_id, a.url);

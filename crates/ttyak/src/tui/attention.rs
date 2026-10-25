@@ -127,7 +127,6 @@ impl State {
     }
 
     /// The name in `ttyak ctl status`.
-    #[allow(dead_code)] // read by `ctl status`, wired in after this
     pub fn name(self) -> &'static str {
         match self {
             State::Read => "read",

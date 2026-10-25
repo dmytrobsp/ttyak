@@ -5381,6 +5381,13 @@ async fn run_workspace(
         // The tab title follows what is unread, written only when it changes.
         let badge = super::attention::state(&app.ws, &app.others.lock().unwrap_or_else(|e| e.into_inner()));
         let _ = title.lock().unwrap_or_else(|e| e.into_inner()).sync(&mut std::io::stdout(), app.ws.settings.notifications.title_mark, badge, &app.client.session.team_name);
+        // So does the status file `ctl status` reads.
+        {
+            let (call, update) = (app.call.as_ref().map(|c| app.ws.channel_label(&c.channel)), app.update_available.as_ref().map(|l| l.version.to_string()));
+            if let Some(s) = crate::status_file::snapshot(&app.ws, &app.workspaces, app.workspace, &app.others.lock().unwrap_or_else(|e| e.into_inner()), call, update) {
+                crate::status_file::publish(s);
+            }
+        }
         write_notifications(&app.notifier, &mut std::io::stdout());
         ring_bell(&app.notifier, &mut std::io::stdout());
         app.request_thumbs();
