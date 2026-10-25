@@ -572,8 +572,10 @@ mod tests {
                 std::thread::spawn(move || (0..40).map(|_| write_private(&path, &[c; 1 << 16]).map_err(|e| format!("{e:#}"))).collect::<Result<Vec<()>, String>>())
             })
             .collect();
-        for w in writers {
-            w.join().unwrap().expect("every write is written");
+        // (All joined before any assertion: a writer still going would put files back as the folder is removed.)
+        let results: Vec<_> = writers.into_iter().map(|w| w.join().unwrap()).collect();
+        for r in results {
+            r.expect("every write is written");
         }
         assert!(whole(&std::fs::read(&path).unwrap()), "one whole write");
         let names: Vec<_> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name()).collect();
