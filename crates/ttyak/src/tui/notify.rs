@@ -262,7 +262,10 @@ impl Backend for System {
                 let (shown, setting) = tokio::task::spawn_blocking(move || toast::show(&bubble.title, &bubble.body, sound, bubble.tag.as_deref(), &toast::own_group()).map(|t| (t, toast::setting()))).await??;
                 // (Kept as shown either way: withdrawing a toast Windows dropped does no harm, and the setting may read
                 // wrongly where no one is signed in at the desktop.)
-                tracing::debug!(?tag, "{}", windows_shown_log(setting));
+                match windows_shown_log(setting) {
+                    (tracing::Level::INFO, line) => tracing::info!(?tag, "{line}"),
+                    (_, line) => tracing::debug!(?tag, "{line}"),
+                }
                 Ok(Arc::new(shown) as Arc<dyn Shown>)
             }
         })
@@ -1257,20 +1260,20 @@ fn windows_route(setting: Option<i32>) -> (String, String) {
     (tr(WIN_SHOWN).into_owned(), tr(WIN_CLICK).into_owned())
 }
 
-/// The log line for a toast handed to Windows, given Windows' notification setting for PowerShell's app id (None: not
-/// known): Windows drops it without a word when that setting is not Enabled.
+/// The log line for a toast handed to Windows and its level, given Windows' notification setting for PowerShell's app id
+/// (None: not known): Windows drops it without a word when that setting is not Enabled (logged at info, the default).
 #[cfg(any(windows, test))]
-fn windows_shown_log(setting: Option<i32>) -> String {
+fn windows_shown_log(setting: Option<i32>) -> (tracing::Level, String) {
     let why = match setting {
-        Some(0) => return "notification shown by Windows".into(),
-        None => return "notification handed to Windows (its notification setting could not be read)".into(),
+        Some(0) => return (tracing::Level::DEBUG, "notification shown by Windows".into()),
+        None => return (tracing::Level::DEBUG, "notification handed to Windows (its notification setting could not be read)".into()),
         Some(1) => WIN_OFF_APP,
         Some(2) => WIN_OFF_USER,
         Some(3) => WIN_OFF_POLICY,
         Some(4) => WIN_OFF_MANIFEST,
         Some(_) => "Windows' notification setting is not Enabled",
     };
-    format!("{why}: not shown")
+    (tracing::Level::INFO, format!("{why}: not shown"))
 }
 
 /// macOS's route for F6: who shows the bubbles, sent as app `sender`, and what a click does (`clicks`: ttyak hears
@@ -1972,10 +1975,13 @@ mod tests {
 
     #[test]
     fn a_toast_windows_drops_is_logged_as_not_shown() {
-        assert_eq!(windows_shown_log(Some(0)), "notification shown by Windows");
-        assert_eq!(windows_shown_log(None), "notification handed to Windows (its notification setting could not be read)");
+        use tracing::Level;
+        assert_eq!(windows_shown_log(Some(0)), (Level::DEBUG, "notification shown by Windows".to_string()));
+        assert_eq!(windows_shown_log(None), (Level::DEBUG, "notification handed to Windows (its notification setting could not be read)".to_string()));
+        // Dropped: in the log at its default level (ttyak=info), as the README says.
         for (setting, why) in [(1, "Windows PowerShell's notifications are turned off"), (2, "for this user"), (3, "group policy"), (4, "manifest")] {
-            let line = windows_shown_log(Some(setting));
+            let (level, line) = windows_shown_log(Some(setting));
+            assert_eq!(level, Level::INFO, "{setting}");
             assert!(line.contains(why) && line.ends_with(": not shown") && !line.contains("shown by"), "{setting}: {line}");
         }
     }
