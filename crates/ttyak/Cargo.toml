@@ -73,8 +73,9 @@ objc2 = "0.6.5"
 
 [target.'cfg(windows)'.dependencies]
 # The user PATH in the registry and the broadcast that it changed (`ttyak uninstall`); already in the tree.
-# Also: the console's window brought forward after a click (`tui::raise`), Focus Assist read (`tui::system_dnd`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# Also: the console's window brought forward after a click (`tui::raise`), Windows' notification state and Focus
+# Assist's profile read (`tui::system_dnd`; ntdll's function looked up at run time).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # Windows' toasts with a tag, replaced and withdrawn by it, and their clicks (notify-rust gives them no tag); the
 # version tauri-winrt-notification, notify-rust's backend, already brings.
 windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "Foundation_Collections", "UI_Notifications"] }

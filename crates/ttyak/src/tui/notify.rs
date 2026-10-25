@@ -199,7 +199,7 @@ trait Shown: Send + Sync {
 
 /// The system's notifier: freedesktop's notification server through notify-rust (replacing, closing, clicks), macOS's
 /// notification centre ([`mac`]: clicks while the main thread runs its run loop), or Windows' toasts ([`toast`]: replaced
-/// and withdrawn by their tag, clicks while ttyak holds them).
+/// and withdrawn by their tag, clicks on screen).
 struct System;
 
 impl Backend for System {
@@ -247,7 +247,7 @@ impl Backend for System {
                 // (Replaced in place by its tag: a newer toast with it takes the older one's place.)
                 let sound = bubble.sound.as_deref() == Some("system") && bubble.by == SoundBy::Notification;
                 let tag = bubble.tag.clone();
-                let shown = tokio::task::spawn_blocking(move || toast::show(&bubble.title, &bubble.body, sound, bubble.tag.as_deref())).await??;
+                let shown = tokio::task::spawn_blocking(move || toast::show(&bubble.title, &bubble.body, sound, bubble.tag.as_deref(), &toast::own_group())).await??;
                 tracing::debug!(?tag, "notification shown by Windows");
                 Ok(Arc::new(shown) as Arc<dyn Shown>)
             }
@@ -551,18 +551,31 @@ pub mod mac {
 
 /// Windows' toasts, sent with the `windows` crate itself: notify-rust gives a toast no tag, so a newer one could neither
 /// replace it nor a read withdraw it. They go out as Windows PowerShell's, the app id a plain program can use without
-/// registering one of its own (an installer's job: ttyak stays a plain program); a click reaches ttyak while it holds the
-/// toast.
+/// registering one of its own (an installer's job: ttyak stays a plain program); a click on the toast on screen reaches
+/// ttyak (one in the notification centre likely not: no COM activator is registered for it).
 #[cfg(any(windows, test))]
 pub mod toast {
     /// Windows PowerShell's app id (notify-rust's too).
     #[cfg_attr(not(windows), allow(dead_code))]
     pub const APP_ID: &str = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
-    /// The group of every ttyak toast (a tag names one within its group).
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub const GROUP: &str = "ttyak";
-    /// Windows' longest tag.
+    /// What every ttyak toast's group starts with.
+    const GROUP: &str = "ttyak";
+    /// Windows' longest tag and group.
     const TAG_MAX: usize = 64;
+
+    /// The group of profile `profile`'s toasts (a tag names a toast within its group): two ttyaks on other profiles
+    /// neither replace nor withdraw each other's.
+    pub fn group(profile: &str) -> String {
+        let name: String = profile.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')).collect();
+        let group = if name.is_empty() { GROUP.to_string() } else { format!("{GROUP}-{name}") };
+        group.chars().take(TAG_MAX).collect()
+    }
+
+    /// The group of this process's toasts: its profile's ([`super::use_profile`]).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn own_group() -> String {
+        group(super::PROFILE.get().map_or("", String::as_str))
+    }
 
     /// The tag of conversation `id`'s toasts ([`super::osc99::id`]): a newer one with it replaces the older in place, a
     /// read withdraws it by it.
@@ -597,15 +610,15 @@ pub mod toast {
     #[cfg(windows)]
     use windows::{Data::Xml::Dom::XmlDocument, UI::Notifications::*, core::HSTRING};
 
-    /// The toast for `title` and `body` (see [`xml`]), in ttyak's group under `tag` when it has one.
+    /// The toast for `title` and `body` (see [`xml`]), under `tag` in `group` when it has one.
     #[cfg(windows)]
-    pub fn build(title: &str, body: &str, sound: bool, tag: Option<&str>) -> windows::core::Result<ToastNotification> {
+    pub fn build(title: &str, body: &str, sound: bool, tag: Option<&str>, group: &str) -> windows::core::Result<ToastNotification> {
         let doc = XmlDocument::new()?;
         doc.LoadXml(&HSTRING::from(xml(title, body, sound)))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
         if let Some(id) = tag {
             toast.SetTag(&HSTRING::from(self::tag(id)))?;
-            toast.SetGroup(&HSTRING::from(GROUP))?;
+            toast.SetGroup(&HSTRING::from(group))?;
         }
         Ok(toast)
     }
@@ -626,14 +639,15 @@ pub mod toast {
     pub struct Toast {
         toast: ToastNotification,
         tag: Option<String>,
+        group: String,
         events: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<Event>>>,
     }
 
     /// Show `title` and `body` (see [`build`]), heard of until it is clicked or gone.
     #[cfg(windows)]
-    pub fn show(title: &str, body: &str, sound: bool, tag: Option<&str>) -> windows::core::Result<Toast> {
+    pub fn show(title: &str, body: &str, sound: bool, tag: Option<&str>, group: &str) -> windows::core::Result<Toast> {
         use windows::Foundation::TypedEventHandler;
-        let toast = build(title, body, sound, tag)?;
+        let toast = build(title, body, sound, tag, group)?;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let clicked = tx.clone();
         toast.Activated(&TypedEventHandler::new(move |_, _| {
@@ -647,12 +661,12 @@ pub mod toast {
             Ok(())
         }))?;
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID))?.Show(&toast)?;
-        Ok(Toast { toast, tag: tag.map(self::tag), events: std::sync::Mutex::new(Some(rx)) })
+        Ok(Toast { toast, tag: tag.map(self::tag), group: group.to_string(), events: std::sync::Mutex::new(Some(rx)) })
     }
 
-    /// Take `toast` off the screen and the toast tagged `tag` out of the notification centre.
+    /// Take `toast` off the screen and the toast tagged `tag` in `group` out of the notification centre.
     #[cfg(windows)]
-    pub fn withdraw(toast: Option<&ToastNotification>, tag: Option<&str>) -> windows::core::Result<()> {
+    pub fn withdraw(toast: Option<&ToastNotification>, tag: Option<&str>, group: &str) -> windows::core::Result<()> {
         if let Some(toast) = toast {
             // (Fails for one off the screen already; the notification centre's copy goes below.)
             if let Err(e) = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).and_then(|n| n.Hide(toast)) {
@@ -660,9 +674,16 @@ pub mod toast {
             }
         }
         match tag {
-            Some(tag) => ToastNotificationManager::History()?.RemoveGroupedTagWithId(&HSTRING::from(tag), &HSTRING::from(GROUP), &HSTRING::from(APP_ID)),
+            Some(tag) => ToastNotificationManager::History()?.RemoveGroupedTagWithId(&HSTRING::from(tag), &HSTRING::from(group), &HSTRING::from(APP_ID)),
             None => Ok(()),
         }
+    }
+
+    /// Windows' notification setting for PowerShell's app id (`NotificationSetting`: 0 enabled, else why not); None when
+    /// it can't be read.
+    #[cfg(windows)]
+    pub fn setting() -> Option<i32> {
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).and_then(|n| n.Setting()).map(|s| s.0).ok()
     }
 
     #[cfg(windows)]
@@ -672,7 +693,7 @@ pub mod toast {
             0
         }
 
-        /// A click on it on screen, or in the notification centre while ttyak holds it (not tried); gone: not clicked.
+        /// A click on it on screen (in the notification centre: not tried, likely never heard); gone: not clicked.
         fn clicked(&self) -> super::Fut<'_, bool> {
             let events = self.events.lock().unwrap_or_else(|e| e.into_inner()).take();
             Box::pin(async move {
@@ -689,9 +710,9 @@ pub mod toast {
         }
 
         fn close(&self) -> super::Fut<'_, ()> {
-            let (toast, tag) = (self.toast.clone(), self.tag.clone());
+            let (toast, tag, group) = (self.toast.clone(), self.tag.clone(), self.group.clone());
             Box::pin(async move {
-                let done = tokio::task::spawn_blocking(move || withdraw(Some(&toast), tag.as_deref())).await;
+                let done = tokio::task::spawn_blocking(move || withdraw(Some(&toast), tag.as_deref(), &group)).await;
                 match done {
                     Ok(Ok(())) => tracing::debug!("toast withdrawn"),
                     Ok(Err(e)) => tracing::debug!("toast not withdrawn: {e}"),
@@ -706,6 +727,14 @@ pub mod toast {
 /// the terminal's report carries only the id, and a bubble dismissed just as a newer one went out is closed for good,
 /// so the newer one shows on its own).
 const CLOSE_GUARD: std::time::Duration = if cfg!(test) { std::time::Duration::ZERO } else { std::time::Duration::from_secs(1) };
+
+/// The profile this ttyak runs (Windows: its toasts' group).
+static PROFILE: OnceLock<String> = OnceLock::new();
+
+/// This ttyak runs profile `name` (said once, at start).
+pub fn use_profile(name: &str) {
+    let _ = PROFILE.set(name.to_string());
+}
 
 /// Bubbles through the terminal itself (OSC 99): their sequences wait for the run loop to write them between draws, and
 /// the terminal's reports end their waiters (a click focuses the terminal's window and tab).
@@ -1063,8 +1092,7 @@ impl Notifier {
         #[cfg(windows)]
         {
             let _ = click;
-            let shown_by = "Windows' notifications, as Windows PowerShell's (ttyak has no app id of its own)".into();
-            let click = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification centre: not tried)".into();
+            let (shown_by, click) = windows_route(toast::setting());
             return RouteInfo { shown_by, sound_by: sound_by.into(), click };
         }
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1132,6 +1160,25 @@ impl Notifier {
             None => std::future::pending().await,
         }
     }
+}
+
+/// Windows' route for F6, given Windows' notification setting for PowerShell's app id (`ToastNotifier.Setting`; None:
+/// not known): who shows the toasts and what a click does.
+#[cfg(any(windows, test))]
+fn windows_route(setting: Option<i32>) -> (String, String) {
+    let off = match setting {
+        Some(1) => Some("Windows PowerShell's notifications are turned off (Settings → System → Notifications)"),
+        Some(2) => Some("notifications are turned off for this user (Settings → System → Notifications)"),
+        Some(3) => Some("notifications are turned off by group policy"),
+        Some(4) => Some("Windows PowerShell's app manifest turns notifications off"),
+        _ => None,
+    };
+    if let Some(why) = off {
+        return (format!("nothing: {why}"), "nothing to click".into());
+    }
+    let shown_by = "Windows' notifications, as Windows PowerShell's (ttyak has no app id of its own)".into();
+    let click = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification centre: not tried; likely not)".into();
+    (shown_by, click)
 }
 
 /// macOS's route for F6: who shows the bubbles, sent as app `sender`, and what a click does (`clicks`: ttyak hears
@@ -1709,6 +1756,11 @@ mod tests {
         let toast = |title: &str, body: &str, audio: &str| format!(r#"<toast><visual><binding template="ToastGeneric"><text>{title}</text><text>{body}</text></binding></visual>{audio}</toast>"#);
         assert_eq!(toast::xml("Bob", "hi", false), toast("Bob", "hi", r#"<audio silent="true"/>"#));
         assert_eq!(toast::xml("Bob", "hi", true), toast("Bob", "hi", ""), "the desktop's own sound");
+        // Each profile's toasts in a group of their own: two ttyaks don't replace or withdraw each other's.
+        assert_eq!((toast::group("default"), toast::group("b")), ("ttyak-default".to_string(), "ttyak-b".to_string()));
+        assert_eq!(toast::group("a b/ü_-1"), "ttyak-ab_-1", "only what a tag may hold");
+        assert_eq!(toast::group(""), "ttyak");
+        assert_eq!(toast::group(&"p".repeat(100)).len(), 64, "Windows' longest group");
         assert_eq!(toast::xml("<A&B>", "\"x\" 'y'\u{1}\tz\n2", false), toast("&lt;A&amp;B&gt;", "&quot;x&quot; &apos;y&apos;\tz\n2", r#"<audio silent="true"/>"#), "escaped; control characters XML forbids left out");
     }
 
@@ -1716,12 +1768,14 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_toast_is_named_by_its_tag() {
-        let t = toast::build("Bob", "a <b> & c", false, Some("w0-C1")).unwrap();
-        assert_eq!((t.Tag().unwrap().to_string(), t.Group().unwrap().to_string()), ("w0-C1".to_string(), "ttyak".to_string()));
+        let t = toast::build("Bob", "a <b> & c", false, Some("w0-C1"), &toast::group("b")).unwrap();
+        assert_eq!((t.Tag().unwrap().to_string(), t.Group().unwrap().to_string()), ("w0-C1".to_string(), "ttyak-b".to_string()));
         assert_eq!(t.Content().unwrap().GetXml().unwrap().to_string(), toast::xml("Bob", "a <b> & c", false));
-        let untagged = toast::build("t", "b", true, None).unwrap();
+        let untagged = toast::build("t", "b", true, None, "ttyak-b").unwrap();
         assert_eq!(untagged.Tag().unwrap().to_string(), "");
-        toast::withdraw(None, Some("w0-ttyak-test-none")).unwrap();
+        toast::withdraw(None, Some("w0-ttyak-test-none"), "ttyak-b").unwrap();
+        println!("Windows' notification setting for PowerShell's app id: {:?}", toast::setting());
+        assert!(toast::setting().is_some());
     }
 
     /// A toast reaches the notification centre under its tag, and withdrawing takes it out by it. Shown without its popup,
@@ -1730,24 +1784,45 @@ mod tests {
     #[test]
     #[ignore = "puts a toast (without its popup) into the notification centre, and takes it out"]
     fn live_toast_history() {
-        use windows::UI::Notifications::ToastNotificationManager;
+        use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
         use windows::core::HSTRING;
-        let tagged = |tag: &str| -> usize {
+        const TAG: &str = "w9-TTYAKTEST";
+        let (ours, theirs) = (toast::group("ttyaktest"), toast::group("ttyaktest2"));
+        let in_centre = |group: &str| -> usize {
             let history = ToastNotificationManager::History().unwrap().GetHistoryWithId(&HSTRING::from(toast::APP_ID)).unwrap();
-            history.into_iter().filter(|t| t.Tag().is_ok_and(|t| t == tag) && t.Group().is_ok_and(|g| g == toast::GROUP)).count()
+            history.into_iter().filter(|t| t.Tag().is_ok_and(|t| t == TAG) && t.Group().is_ok_and(|g| g == group)).count()
         };
-        let t = toast::build("ttyak test", "taken out at once", false, Some("w9-TTYAKTEST")).unwrap();
-        t.SetSuppressPopup(true).unwrap();
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast::APP_ID)).unwrap().Show(&t).unwrap();
-        let shown = tagged("w9-TTYAKTEST");
-        let again = toast::build("ttyak test", "the same tag", false, Some("w9-TTYAKTEST")).unwrap();
-        again.SetSuppressPopup(true).unwrap();
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast::APP_ID)).unwrap().Show(&again).unwrap();
-        let replaced = tagged("w9-TTYAKTEST");
-        toast::withdraw(Some(&again), Some("w9-TTYAKTEST")).unwrap();
-        let left = tagged("w9-TTYAKTEST");
-        println!("in the notification centre: shown {shown}, after a second with its tag {replaced}, withdrawn {left}");
-        assert_eq!((shown, replaced, left), (1, 1, 0));
+        let show = |body: &str, group: &str| -> ToastNotification {
+            let t = toast::build("ttyak test", body, false, Some(TAG), group).unwrap();
+            t.SetSuppressPopup(true).unwrap();
+            ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast::APP_ID)).unwrap().Show(&t).unwrap();
+            t
+        };
+        show("another profile's, the same tag", &theirs);
+        show("taken out at once", &ours);
+        let shown = in_centre(&ours);
+        let again = show("the same tag", &ours);
+        let replaced = in_centre(&ours);
+        toast::withdraw(Some(&again), Some(TAG), &ours).unwrap();
+        let (left, other) = (in_centre(&ours), in_centre(&theirs));
+        toast::withdraw(None, Some(TAG), &theirs).unwrap();
+        let other_left = in_centre(&theirs);
+        println!("in the notification centre: shown {shown}, after a second with its tag {replaced}, withdrawn {left}; the other profile's {other}, then {other_left}");
+        assert_eq!((shown, replaced, left, other, other_left), (1, 1, 0, 1, 0));
+    }
+
+    #[test]
+    fn what_windows_shows() {
+        // Enabled, or the setting can't be read: shown as Windows PowerShell's.
+        for setting in [Some(0), None] {
+            let (shown_by, click) = windows_route(setting);
+            assert!(shown_by.contains("as Windows PowerShell's") && click.starts_with("opens it in ttyak"), "{setting:?}: {shown_by} / {click}");
+        }
+        // Turned off in Windows: toasts would vanish without a trace, so F6 says why.
+        for (setting, why) in [(1, "Windows PowerShell"), (2, "for this user"), (3, "group policy"), (4, "manifest")] {
+            let (shown_by, click) = windows_route(Some(setting));
+            assert!(shown_by.starts_with("nothing: ") && shown_by.contains(why) && click == "nothing to click", "{setting}: {shown_by} / {click}");
+        }
     }
 
     #[test]

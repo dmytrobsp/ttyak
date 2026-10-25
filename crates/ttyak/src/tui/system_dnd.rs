@@ -44,7 +44,8 @@ pub enum Server {
     Dunst,
     Gnome,
     Kde,
-    /// Windows' notifications (Focus Assist, Do not disturb).
+    /// Windows: Focus Assist's profile (Windows 11's Do not disturb), read through an undocumented state, and the
+    /// documented notification state (presentation, full screen, quiet time).
     #[cfg_attr(not(windows), allow(dead_code))]
     Windows,
     /// Any other, by the name it gave.
@@ -147,7 +148,8 @@ async fn ask(server: &Server) -> Option<bool> {
         Server::Dunst => run("dunstctl", &["is-paused"]).await.and_then(|o| dunst_paused(&o)),
         Server::Gnome => run("gsettings", &["get", "org.gnome.desktop.notifications", "show-banners"]).await.and_then(|o| gnome_banners_off(&o)),
         Server::Kde => kde().await,
-        Server::Windows => windows_state().and_then(windows_quiet),
+        // (On the blocking pool, so `ASK_WAIT` bounds it.)
+        Server::Windows => tokio::task::spawn_blocking(windows_ask).await.ok().flatten(),
         Server::Other(_) => None,
     }
 }
@@ -171,30 +173,99 @@ fn gnome_banners_off(out: &str) -> Option<bool> {
     dunst_paused(out).map(|banners| !banners)
 }
 
-/// Whether Windows' notification state `state` (`SHQueryUserNotificationState`'s `QUNS_*`) holds notifications back;
-/// None: a state it doesn't document.
-fn windows_quiet(state: i32) -> Option<bool> {
+/// Whether Windows' notification state `state` (`SHQueryUserNotificationState`'s `QUNS_*`) holds notifications back,
+/// `other_in_front`: the window in front is not ttyak's own console's; None: a state it doesn't document.
+fn windows_quiet(state: i32, other_in_front: bool) -> Option<bool> {
     match state {
-        // Busy (a full-screen app, presentation settings), Direct3D full screen, presentation mode, quiet time.
-        2 | 3 | 4 | 6 => Some(true),
+        // Busy: a full-screen app or presentation settings — not when that app is ttyak's own full-screen terminal.
+        2 => Some(other_in_front),
+        // Direct3D full screen, presentation mode, quiet time (the first hour after a first sign-in, an install or an
+        // upgrade; not Focus Assist's quiet hours).
+        3 | 4 | 6 => Some(true),
         // Not present (locked, the screen saver: the toast waits in the notification centre), accepting, a Store app.
         1 | 5 | 7 => Some(false),
         _ => None,
     }
 }
 
-/// Windows' notification state now (`SHQueryUserNotificationState`), None when it can't be read.
+/// Whether Focus Assist's profile `profile` holds ttyak's notifications back: off (0), priority only (1: ttyak can't
+/// be on the priority list), alarms only (2); None: a profile it doesn't know.
+fn focus_assist(profile: u32) -> Option<bool> {
+    match profile {
+        0 => Some(false),
+        1 | 2 => Some(true),
+        _ => None,
+    }
+}
+
+/// Windows' answer from Focus Assist's (`focus`) and the notification state's (`state`): either holding back is enough.
+fn windows_answer(focus: Option<bool>, state: Option<bool>) -> Option<bool> {
+    match (focus, state) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (None, None) => None,
+        _ => Some(false),
+    }
+}
+
+/// Whether Windows holds notifications back now (blocking: a few system calls).
+fn windows_ask() -> Option<bool> {
+    let focus = focus_assist_profile().and_then(focus_assist);
+    let state = windows_state().and_then(|(state, other_in_front)| windows_quiet(state, other_in_front));
+    windows_answer(focus, state)
+}
+
+/// Windows' notification state now (`SHQueryUserNotificationState`), and whether the window in front is another
+/// program's than ttyak's console's; None when it can't be read.
 #[cfg(windows)]
-fn windows_state() -> Option<i32> {
+fn windows_state() -> Option<(i32, bool)> {
     let mut state = 0;
     // SAFETY: the function writes one QUERY_USER_NOTIFICATION_STATE (an i32) to the pointer it is given.
     let hr = unsafe { windows_sys::Win32::UI::Shell::SHQueryUserNotificationState(&mut state) };
-    tracing::debug!(hr, state, "Windows' notification state");
-    (hr >= 0).then_some(state)
+    // SAFETY: no arguments; the handle is only compared.
+    let front = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } as u64;
+    let own = super::raise::console_root();
+    let other_in_front = own.is_none_or(|own| own != front);
+    tracing::debug!(hr, state, other_in_front, "Windows' notification state");
+    (hr >= 0).then_some((state, other_in_front))
 }
 
 #[cfg(not(windows))]
-fn windows_state() -> Option<i32> {
+fn windows_state() -> Option<(i32, bool)> {
+    None
+}
+
+/// `WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED`: the Windows Notification Facility state holding Focus Assist's profile
+/// (Windows 11's Do not disturb). Undocumented: not in Windows' SDK, known from reverse engineering; if Windows changes
+/// it, the read fails or says something else, and ttyak can't tell (it then plays its own sound).
+#[cfg(windows)]
+const QUIET_HOURS_PROFILE: u64 = 0x0D83_063E_A3BF_1C75;
+
+/// Focus Assist's profile now (see [`QUIET_HOURS_PROFILE`]), by ntdll's `NtQueryWnfStateData`, looked up when asked
+/// (no link to it); None on any failure.
+#[cfg(windows)]
+fn focus_assist_profile() -> Option<u32> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    type Query = unsafe extern "system" fn(state: *const u64, type_id: *const c_void, scope: *const c_void, stamp: *mut u32, buffer: *mut c_void, size: *mut u32) -> i32;
+    let ntdll: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
+    // SAFETY: ntdll is in every process; the function is called with the signature it has had since Windows 8 (a
+    // state name, no type or scope, out: the change stamp and at most `size` bytes of data); a missing one is None.
+    unsafe {
+        let module = GetModuleHandleW(ntdll.as_ptr());
+        if module.is_null() {
+            return None;
+        }
+        let found = GetProcAddress(module, c"NtQueryWnfStateData".as_ptr().cast())?;
+        let query: Query = std::mem::transmute(found);
+        let (mut stamp, mut profile, mut size) = (0u32, 0u32, 4u32);
+        let status = query(&QUIET_HOURS_PROFILE, std::ptr::null(), std::ptr::null(), &mut stamp, (&raw mut profile).cast(), &mut size);
+        tracing::debug!(status, profile, size, "Focus Assist's profile");
+        (status >= 0 && size == 4).then_some(profile)
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_assist_profile() -> Option<u32> {
     None
 }
 
@@ -296,11 +367,29 @@ mod tests {
     #[test]
     fn windows_quiet_states() {
         // QUNS_NOT_PRESENT (locked, screen saver), BUSY (a full-screen app, presentation settings), RUNNING_D3D_FULL_SCREEN,
-        // PRESENTATION_MODE, ACCEPTS_NOTIFICATIONS, QUIET_TIME, APP (a Store app in front).
-        let states = [(1, Some(false)), (2, Some(true)), (3, Some(true)), (4, Some(true)), (5, Some(false)), (6, Some(true)), (7, Some(false)), (0, None), (8, None)];
+        // PRESENTATION_MODE, ACCEPTS_NOTIFICATIONS, QUIET_TIME (the first hour after a first sign-in, an install or an
+        // upgrade), APP (a Store app in front).
+        let states = [(1, Some(false)), (3, Some(true)), (4, Some(true)), (5, Some(false)), (6, Some(true)), (7, Some(false)), (0, None), (8, None)];
         for (state, quiet) in states {
-            assert_eq!(windows_quiet(state), quiet, "QUNS {state}");
+            assert_eq!(windows_quiet(state, true), quiet, "QUNS {state}");
+            assert_eq!(windows_quiet(state, false), quiet, "QUNS {state}, ttyak's own window in front");
         }
+        // Busy holds back only while another program is full screen, not ttyak's own full-screen terminal.
+        assert_eq!(windows_quiet(2, true), Some(true));
+        assert_eq!(windows_quiet(2, false), Some(false));
+    }
+
+    #[test]
+    fn focus_assist_profiles() {
+        // Off, priority only (ttyak can't be on the priority list), alarms only; any other is unknown.
+        assert_eq!((focus_assist(0), focus_assist(1), focus_assist(2), focus_assist(3)), (Some(false), Some(true), Some(true), None));
+        // Either one holding back is enough; one that can't tell leaves it to the other.
+        assert_eq!(windows_answer(Some(true), Some(false)), Some(true));
+        assert_eq!(windows_answer(Some(false), Some(true)), Some(true));
+        assert_eq!(windows_answer(None, Some(true)), Some(true));
+        assert_eq!(windows_answer(Some(false), None), Some(false));
+        assert_eq!(windows_answer(None, Some(false)), Some(false));
+        assert_eq!(windows_answer(None, None), None);
     }
 
     /// The values above are Windows' own; on Windows the system is asked (what it says over ssh is printed).
@@ -313,7 +402,7 @@ mod tests {
         let found = discover().await.unwrap();
         assert_eq!(found.server, Server::Windows);
         let answer = suppressed(&found.server).await;
-        println!("Windows: suppressed {answer:?}");
+        println!("Windows: Focus Assist's profile {:?}, notification state {:?} -> suppressed {answer:?}", focus_assist_profile(), windows_state());
         assert!(answer.is_some(), "Windows answers");
     }
 

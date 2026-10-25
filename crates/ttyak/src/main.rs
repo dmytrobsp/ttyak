@@ -241,6 +241,7 @@ async fn run() -> Result<()> {
             // Held while ttyak runs so the profile is not removed under it; a second ttyak on the
             // same profile runs without it.
             let _lock = profiles::lock(&dirs, &profile).ok().flatten();
+            tui::notify::use_profile(&profile);
             tui::event_loop::run(p, account.as_ref().map(|(t, u)| (t.as_str(), u.as_str())), signed_out).await
         }
     }

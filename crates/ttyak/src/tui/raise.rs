@@ -168,21 +168,39 @@ fn console_moves(console: u64, root: u64, state: WindowState) -> Vec<Move> {
     restore.into_iter().chain([Move::Foreground(root)]).collect()
 }
 
-/// Bring the console's window forward (best effort: Windows lets only the program the user last used take the
-/// foreground; otherwise the taskbar button flashes). Every move logged.
+/// ttyak's console window and its root owner (Windows Terminal's window for its pseudoconsole's; conhost's own), as
+/// handles; 0: none.
 #[cfg(windows)]
-fn console_forward() {
+fn console_windows() -> (u64, u64) {
     use windows_sys::Win32::System::Console::GetConsoleWindow;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GA_ROOTOWNER, GetAncestor, IsIconic, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow};
-    // SAFETY: plain window queries and requests on handles Windows gave; a stale handle only makes them fail.
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GA_ROOTOWNER, GetAncestor};
+    // SAFETY: plain window queries; a stale handle only makes them fail.
     unsafe {
         let console = GetConsoleWindow();
         let root = if console.is_null() { console } else { GetAncestor(console, GA_ROOTOWNER) };
         let root = if root.is_null() { console } else { root };
-        let state = WindowState { visible: !root.is_null() && IsWindowVisible(root) != 0, minimised: !root.is_null() && IsIconic(root) != 0 };
-        let moves = console_moves(console as u64, root as u64, state);
+        (console as u64, root as u64)
+    }
+}
+
+/// The window ttyak's console is shown in (see [`console_windows`]), if any.
+#[cfg(windows)]
+pub fn console_root() -> Option<u64> {
+    Some(console_windows().1).filter(|&root| root != 0)
+}
+
+/// Bring the console's window forward (best effort: Windows lets only the program the user last used take the
+/// foreground; otherwise the taskbar button flashes). Every move logged.
+#[cfg(windows)]
+fn console_forward() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow};
+    let (console, root) = console_windows();
+    // SAFETY: plain window queries and requests on handles Windows gave; a stale handle only makes them fail.
+    unsafe {
+        let state = WindowState { visible: root != 0 && IsWindowVisible(root as _) != 0, minimised: root != 0 && IsIconic(root as _) != 0 };
+        let moves = console_moves(console, root, state);
         if moves.is_empty() {
-            tracing::debug!(console = console as u64, root = root as u64, ?state, "raise: no console window to bring forward");
+            tracing::debug!(console, root, ?state, "raise: no console window to bring forward");
         }
         for m in moves {
             match m {

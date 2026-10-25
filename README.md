@@ -340,10 +340,11 @@ and then brings ttyak's window forward by the first of these that works here:
 - macOS: Terminal.app's tab running ttyak (by its tty) is selected and its window brought to the front, and iTerm2's
   session (`ITERM_SESSION_ID`) in its tab and window, by AppleScript (`osascript`); after kitty's or WezTerm's remote
   control, and for Ghostty, the terminal app is brought forward with its own front window (`open -b`);
-- Windows: the console's window — Windows Terminal's window (it owns the hidden window of the console it gives ttyak),
-  conhost's own window — is restored when minimised and brought to the foreground; after WezTerm's `activate-pane`
-  too. Windows lets a program take the foreground only in some cases (the user's last input went to it, or the program
-  in front allows it); otherwise the window's taskbar button flashes instead.
+- Windows: the console's window — Windows Terminal's window (Windows Terminal 1.14 and newer own the hidden window of
+  the console they give ttyak; older ones not tried), conhost's own window — is restored when minimised and brought to
+  the foreground; after WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the
+  foreground only in some cases (the user's last input went to it, or the program in front allows it); otherwise the
+  window's taskbar button flashes instead. Not tried yet on a desktop.
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the notification centre's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -366,17 +367,23 @@ nothing to ask — macOS itself holds the notification and the `system` sound ba
 inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
 
 **On Windows** ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu
-shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before. Each carries its
-conversation as its tag: a newer one replaces it in place, and reading takes it off the screen and out of the
-notification centre (tried in the notification centre's list; on screen not tried yet). A click on the toast while it is
-on screen opens what it showed in ttyak, in NORMAL, and brings the console's window forward as above (in Windows
-Terminal on the tab last used); ttyak keeps each toast for 30 minutes, so a click on it in the notification centre may
-reach ttyak too (not tried). Only the `system` sound goes with the toast (Windows' own, silenced with it); ttyak plays
-its own sounds itself. Follow the system's do-not-disturb asks Windows' notification state
-(`SHQueryUserNotificationState`): busy (a full-screen app, presentation settings), full-screen Direct3D, presentation
-mode and quiet time hold everything back; whether Windows 11's Do not disturb and Focus Assist show there is not tried
-yet. Can't do on Windows: picking Windows Terminal's tab; a click after ttyak let go of the toast (ttyak ended, or 30
-minutes passed) does not reach ttyak.
+shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before; F6 says when
+Windows has PowerShell's notifications turned off (they would vanish without a trace). Each carries its conversation as
+its tag, in a group of its profile's own (two ttyaks on other profiles leave each other's alone): a newer one replaces
+it in place, and reading takes it off the screen and out of the notification centre (tried in the notification centre's
+list; on screen not tried yet). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
+brings the console's window forward as above (in Windows Terminal on the tab last used). A click on it later in the
+notification centre most likely does not reach ttyak (it has no COM activator registered, which takes an installer) and
+may start Windows PowerShell instead — not tried. Only the `system` sound goes with the toast (Windows' own, silenced
+with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
+profile — Windows 11's Do not disturb — read through an undocumented Windows state
+(`WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED`; priority only and alarms only hold everything back, since ttyak can't be
+on the priority list; if Windows changes that state, ttyak can't tell and plays its own sound), and the documented
+notification state (`SHQueryUserNotificationState`): presentation mode and full-screen Direct3D hold everything back,
+busy (a full-screen app, presentation settings) only while that app is not ttyak's own terminal, and quiet time — the
+first hour after the first sign-in on a new install or after an upgrade — too. Tried over ssh only (no desktop session:
+Focus Assist reads off, the state busy); Do not disturb switched on at the desktop is not tried yet. Can't do on
+Windows: picking Windows Terminal's tab; a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
 
 Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
 one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it
