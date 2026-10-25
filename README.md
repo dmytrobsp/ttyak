@@ -117,7 +117,7 @@ look for empty boxes or misaligned columns.
 **Windows**
 
 - needs: Windows 10 or 11, 64-bit
-- Windows Terminal is recommended: the old console window (conhost) draws emoji as boxes and shows no pictures
+- Windows Terminal is recommended; the classic console (conhost) is expected to show emoji as boxes and no pictures (not tried yet)
 - toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
   says when it can't tell
 - optional: `ffmpeg` for video and cameras

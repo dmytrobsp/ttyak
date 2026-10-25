@@ -84,6 +84,12 @@ fn mode(reply: &[u8], mode: u32) -> Option<bool> {
     }
 }
 
+/// Whether `reply` holds the terminal's answer to DA1 (`CSI ? … c`), which ends the answers it gives: without it the
+/// terminal answered nothing, so nothing it did not answer is known.
+fn answered(reply: &[u8]) -> bool {
+    reply.windows(3).any(|w| w == b"\x1b[?") && reply.ends_with(b"c")
+}
+
 /// 24-bit colour from `$COLORTERM`: a terminal that does not say may still have it.
 fn true_colour(colorterm: Option<&str>) -> Option<bool> {
     colorterm.filter(|c| matches!(c.trim(), "truecolor" | "24bit")).map(|_| true)
@@ -123,11 +129,11 @@ fn found(name: &str) -> String {
 }
 
 /// What the terminal answers: queried in raw mode for a moment, before anything else reads the input.
-fn terminal() -> (Vec<(String, Option<bool>)>, bool) {
+fn terminal() -> (Vec<(String, Option<bool>)>, Option<bool>) {
     use crate::tui::i18n::tr;
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return (Vec::new(), false);
+        return (Vec::new(), None);
     }
     let var = |n: &str| std::env::var(n).ok();
     let mut rows = vec![(tr(UTF8).into_owned(), utf8(&[var("LC_ALL").as_deref(), var("LC_CTYPE").as_deref(), var("LANG").as_deref()]))];
@@ -142,10 +148,13 @@ fn terminal() -> (Vec<(String, Option<bool>)>, bool) {
     rows.push((tr(FOCUS).into_owned(), mode(&modes, 1004)));
     rows.push((tr(PASTE).into_owned(), mode(&modes, 2004)));
     rows.push((tr(LINKS).into_owned(), None));
-    rows.push((tr(OSC99).into_owned(), graphics.map(|_| osc99)));
+    let heard = answered(&modes);
+    let (graphics, osc99) = (graphics.filter(|_| heard), heard.then_some(osc99));
+    rows.push((tr(OSC99).into_owned(), osc99));
     let pictures = match graphics {
         Some(true) => crate::tui::media::drawable().iter().filter(|m| **m != "auto" && **m != "halfblocks").copied().collect::<Vec<_>>().join(", "),
-        _ => tr(NO_PICTURES).into_owned(),
+        Some(false) => tr(NO_PICTURES).into_owned(),
+        None => tr(NOT_KNOWN).into_owned(),
     };
     rows.push((tr(PICTURES).replace("{modes}", &pictures), graphics));
     let (cols, rows_n) = crossterm::terminal::size().unwrap_or((0, 0));
@@ -211,7 +220,7 @@ pub fn findings() -> Findings {
     let mut system = Vec::new();
     let opener = if cfg!(windows) { tr(BUILT_IN).into_owned() } else { found(if cfg!(target_os = "macos") { "open" } else { "xdg-open" }) };
     system.push((tr(OPENER).into_owned(), Some(opener)));
-    system.extend(notifications((osc99_answered && osc99::wanted()).then(osc99::terminal_name)));
+    system.extend(notifications((osc99_answered == Some(true) && osc99::wanted()).then(osc99::terminal_name)));
     system.push((tr(RAISE).into_owned(), Some(raise::describe(&raise::detect(&raise::env())))));
     let ffmpeg = if on_path("ffmpeg") && on_path("ffprobe") { tr(FOUND).into_owned() } else { tr(MISSING).into_owned() };
     system.push((tr(FFMPEG).into_owned(), Some(ffmpeg)));
@@ -324,6 +333,13 @@ mod tests {
         assert_eq!(mode(b"\x1b[?1004;4$y", 1004), Some(false));
         assert_eq!(mode(b"\x1b[?1006;2$y", 1004), None);
         assert_eq!(mode(b"\x1b[?62;c", 1004), None);
+    }
+
+    #[test]
+    fn a_terminal_that_answered_nothing_is_not_known() {
+        assert!(answered(b"\x1b[?1004;2$y\x1b[?62;c"));
+        assert!(!answered(b""));
+        assert!(!answered(b"\x1b[?1004;2$y"));
     }
 
     #[test]
