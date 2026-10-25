@@ -1329,8 +1329,8 @@ mod tests {
     #[test]
     fn sent_using_an_app() {
         let mut ws = Workspace::default();
-        // As in a real message sent through the Claude app, and its bot user (`users.list`).
-        let mut bot = slack_core::types::User { id: "U0AENR65H46".into(), name: "claude".into(), real_name: Some("Claude".into()), is_bot: true, ..Default::default() };
+        // As in a real message sent through the Claude app, and its bot user (`users.list`; the user's id replaced).
+        let mut bot = slack_core::types::User { id: "U0TEST00001".into(), name: "claude".into(), real_name: Some("Claude".into()), is_bot: true, ..Default::default() };
         bot.profile.real_name = "Claude".into();
         bot.profile.api_app_id = Some("A08SF47R6P4".into());
         ws.users.insert(bot.id.clone(), bot);

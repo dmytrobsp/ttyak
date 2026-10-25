@@ -315,10 +315,10 @@ mod tests {
 
     #[test]
     fn badges_from_counts() {
-        // Trimmed from a real `client.counts` answer (B's account).
+        // Trimmed from a real `client.counts` answer (B's account; ids replaced).
         let v = serde_json::json!({"ok":true,
-            "channels":[{"id":"C0CA2V1L12A","has_unreads":false,"mention_count":0}],
-            "ims":[{"id":"D0CA2V3DES2","has_unreads":true,"mention_count":0}], "mpims":[],
+            "channels":[{"id":"C0TEST00003","has_unreads":false,"mention_count":0}],
+            "ims":[{"id":"D0TEST00002","has_unreads":true,"mention_count":0}], "mpims":[],
             "channel_badges":{"app_dms":0,"channels":0,"dms":7,"thread_mentions":0,"thread_unreads":2}});
         assert_eq!(badge(&v), Badge { attention: 7, unread: true });
         let quiet = serde_json::json!({"channels":[{"has_unreads":false}],"channel_badges":{"dms":0,"channels":0,"thread_mentions":0,"thread_unreads":0}});

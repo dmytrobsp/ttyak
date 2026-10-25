@@ -78,9 +78,9 @@ mod tests {
         let mut c = super::super::composer::Composer::default();
         c.set("héllo @bob 👋");
         let mut drafts = Drafts::new();
-        drafts.insert("D0CA2V8G8CE".into(), c.take_draft().unwrap());
+        drafts.insert("D0TEST00001".into(), c.take_draft().unwrap());
         c.set("in a thread");
-        drafts.insert("C0CA2V1L12A/1792360258.578039".into(), c.take_draft().unwrap());
+        drafts.insert("C0TEST00003/1792360258.578039".into(), c.take_draft().unwrap());
         let text = serde_json::to_string(&drafts).unwrap();
         assert!(text.contains("\"text\":\"héllo @bob 👋\""), "the text is kept as a string: {text}");
         assert_eq!(parse(&text).unwrap(), drafts);

@@ -650,11 +650,11 @@ mod tests {
     #[test]
     fn huddle_invitations() {
         let mut w = ws();
-        // Captured with `ctl listen` (the Chime credentials in `free_willy` left out).
-        let fx = apply(&mut w, &json!({"call_id":"R0CB0UP0BJL","channel_id":"D0CA2V8G8CE","event_ts":"1792357509.005400","is_guest":false,"sender_user_id":"U0BOB000001","team_id":"T0TEST00001","type":"huddle_invite"}), None, true);
-        assert_eq!(fx.huddle_invite, Some(("D0CA2V8G8CE".into(), "R0CB0UP0BJL".into(), "U0BOB000001".into())));
-        let fx = apply(&mut w, &json!({"channel_id":"D0CA2V8G8CE","event_ts":"1792357516.005500","team_id":"T0TEST00001","type":"huddle_invite_cancel"}), None, true);
-        assert_eq!(fx.invite_cancelled.as_deref(), Some("D0CA2V8G8CE"));
+        // Captured with `ctl listen` (the Chime credentials in `free_willy` left out; ids replaced).
+        let fx = apply(&mut w, &json!({"call_id":"R0TEST00001","channel_id":"D0TEST00001","event_ts":"1792357509.005400","is_guest":false,"sender_user_id":"U0BOB000001","team_id":"T0TEST00001","type":"huddle_invite"}), None, true);
+        assert_eq!(fx.huddle_invite, Some(("D0TEST00001".into(), "R0TEST00001".into(), "U0BOB000001".into())));
+        let fx = apply(&mut w, &json!({"channel_id":"D0TEST00001","event_ts":"1792357516.005500","team_id":"T0TEST00001","type":"huddle_invite_cancel"}), None, true);
+        assert_eq!(fx.invite_cancelled.as_deref(), Some("D0TEST00001"));
     }
 
     #[test]
@@ -851,10 +851,10 @@ mod tests {
         assert!(!w.unread["C1"].has_unreads);
         apply(&mut w, &json!({"type":"user_typing","channel":"C1","user":"U2"}), None, true);
         assert_eq!(w.typing_in("C1"), vec!["U2".to_string()]);
-        // Captured from Slack (B typing in a thread, the web client's frame).
-        apply(&mut w, &json!({"channel":"C0CA5R2EX1Q","id":3,"thread_ts":"1792344539.206299","type":"user_typing","user":"U3"}), None, true);
-        assert_eq!(w.typing_in("C0CA5R2EX1Q"), Vec::<String>::new(), "thread typing is not channel typing");
-        assert_eq!(w.typing_in("C0CA5R2EX1Q/1792344539.206299"), vec!["U3".to_string()]);
+        // Captured from Slack (B typing in a thread, the web client's frame; ids replaced).
+        apply(&mut w, &json!({"channel":"C0TEST00001","id":3,"thread_ts":"1792344539.206299","type":"user_typing","user":"U3"}), None, true);
+        assert_eq!(w.typing_in("C0TEST00001"), Vec::<String>::new(), "thread typing is not channel typing");
+        assert_eq!(w.typing_in("C0TEST00001/1792344539.206299"), vec!["U3".to_string()]);
     }
 
     #[test]

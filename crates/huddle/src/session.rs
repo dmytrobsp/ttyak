@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn user_id_from_external_id() {
-        let p = Participant { attendee_id: "a".into(), external_user_id: "T0TEST00001-R0CA8VAPS76-U0ANN000001".into(), muted: false };
+        let p = Participant { attendee_id: "a".into(), external_user_id: "T0TEST00001-R0TEST00003-U0ANN000001".into(), muted: false };
         assert_eq!(p.user_id(), "U0ANN000001");
     }
 
