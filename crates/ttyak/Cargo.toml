@@ -86,3 +86,7 @@ windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "Foundat
 # The keyring holding Chrome's cookie key (Secret Service, for `auth login --from-browser chrome`).
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 x11rb = "0.13"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# A connection between two ends of a socket pair, no bus (`tui::system_dnd`'s tests of a closed connection).
+zbus = { version = "5.19", default-features = false, features = ["tokio", "p2p"] }

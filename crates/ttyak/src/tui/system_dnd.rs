@@ -132,18 +132,28 @@ pub struct Environment {
 pub const ASK_WAIT: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 1000 });
 
 /// The session bus, connected once and kept (every question would otherwise connect anew); forgotten when a call on it
-/// says the connection is gone ([`connection_gone`]), so the next question connects again.
+/// says the connection is gone ([`connection_gone`]) or it has closed, so the next question connects again.
 #[cfg(target_os = "linux")]
 static BUS: std::sync::Mutex<Option<zbus::Connection>> = std::sync::Mutex::new(None);
 
 #[cfg(target_os = "linux")]
 async fn bus() -> zbus::Result<zbus::Connection> {
-    if let Some(conn) = BUS.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+    if let Some(conn) = kept_bus() {
         return Ok(conn);
     }
     let conn = zbus::Connection::session().await?;
     *BUS.lock().unwrap_or_else(|e| e.into_inner()) = Some(conn.clone());
     Ok(conn)
+}
+
+/// The kept connection, unless it has closed (zbus stops reading on any error, whatever its kind): then forgotten.
+#[cfg(target_os = "linux")]
+fn kept_bus() -> Option<zbus::Connection> {
+    let mut kept = BUS.lock().unwrap_or_else(|e| e.into_inner());
+    if kept.as_ref().is_some_and(zbus::Connection::is_closed) {
+        *kept = None;
+    }
+    kept.clone()
 }
 
 #[cfg(target_os = "linux")]
@@ -168,12 +178,13 @@ fn connection_gone(e: &zbus::Error) -> bool {
     }
 }
 
-/// `ask`'s answer on the kept bus connection; None on any error, and the connection forgotten when the error says it is
-/// gone (the next question connects again).
+/// `ask`'s answer on the kept bus connection; None on any error, and the connection forgotten when it has closed or the
+/// error says it is gone (the next question connects again).
 #[cfg(target_os = "linux")]
 async fn on_bus<T, F: std::future::Future<Output = zbus::Result<T>>>(ask: impl FnOnce(zbus::Connection) -> F) -> Option<T> {
-    let answer = ask(bus().await.ok()?).await;
-    if answer.as_ref().is_err_and(connection_gone) {
+    let conn = bus().await.ok()?;
+    let answer = ask(conn.clone()).await;
+    if answer.as_ref().is_err_and(|e| conn.is_closed() || connection_gone(e)) {
         forget_bus();
     }
     answer.ok()
@@ -505,6 +516,23 @@ mod tests {
         for kept in [zbus::Error::InterfaceNotFound, zbus::Error::InvalidReply, zbus::Error::Failure("x".into()), zbus::Error::FDO(Box::new(fdo::Error::ServiceUnknown("x".into()))), zbus::Error::FDO(Box::new(fdo::Error::UnknownMethod("x".into())))] {
             assert!(!connection_gone(&kept), "{kept:?}");
         }
+    }
+
+    /// A connection whose reader stopped (any error reading: the peer gone, a message it can't read) is closed for good.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_closed_connection_is_not_kept() {
+        let (a, b) = tokio::net::UnixStream::pair().unwrap();
+        let server = zbus::connection::Builder::unix_stream(a).server(zbus::Guid::generate()).unwrap().p2p().build();
+        let client = zbus::connection::Builder::unix_stream(b).p2p().build();
+        let (server, client) = tokio::join!(server, client);
+        let (server, client) = (server.unwrap(), client.unwrap());
+        *BUS.lock().unwrap() = Some(client.clone());
+        assert!(kept_bus().is_some(), "open: kept");
+        server.close().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), client.closed()).await.unwrap();
+        assert!(kept_bus().is_none(), "closed: not kept");
+        assert!(BUS.lock().unwrap().is_none(), "and forgotten");
     }
 
     #[tokio::test]
