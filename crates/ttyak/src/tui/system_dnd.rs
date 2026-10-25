@@ -52,6 +52,12 @@ pub enum Server {
     Other(String),
 }
 
+/// Whether `server`'s do-not-disturb files a notification away silently (Windows: the notification center), so ttyak
+/// still sends it, without sound or bell; elsewhere nothing is fired.
+pub fn files_silently(server: &Server) -> bool {
+    *server == Server::Windows
+}
+
 /// The server called `name` in its `GetServerInformation`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // only Linux asks
 pub fn server(name: &str) -> Server {
@@ -74,10 +80,11 @@ pub fn server(name: &str) -> Server {
 /// F6's words for what the system says about do-not-disturb.
 const DND_STATE: &str = "{server}: {state}";
 const DND_STATE_WINDOWS: &str = "{server}: {state} (undocumented state)";
+const DND_STATE_WINDOWS_ON: &str = "{server}: {state} (undocumented state): the toast goes to the notification center silently";
 const DND_ON: &str = "on";
 const DND_OFF: &str = "off";
 const DND_CANT_TELL: &str = "can't tell";
-pub const WORDS: &[&str] = &[DND_STATE, DND_STATE_WINDOWS, DND_ON, DND_OFF, DND_CANT_TELL];
+pub const WORDS: &[&str] = &[DND_STATE, DND_STATE_WINDOWS, DND_STATE_WINDOWS_ON, DND_ON, DND_OFF, DND_CANT_TELL];
 
 /// The server's name as people know it: "swaync", "GNOME", or the name it gave.
 pub fn name(server: &Server) -> String {
@@ -93,7 +100,7 @@ pub fn name(server: &Server) -> String {
 }
 
 /// What was read from `server`, for F6: "swaync: off", "Focus Assist: off (undocumented state)", "can't tell" (`answer`
-/// None; a server that can't be asked is no name at all).
+/// None; a server that can't be asked is no name at all); Windows' on says where the toast goes.
 pub fn describe(server: &Server, answer: Option<bool>) -> String {
     use super::i18n::tr;
     if let Server::Other(_) = server {
@@ -105,7 +112,11 @@ pub fn describe(server: &Server, answer: Option<bool>) -> String {
         Some(false) => tr(DND_OFF),
         None => tr(DND_CANT_TELL),
     };
-    let words = if *server == Server::Windows { DND_STATE_WINDOWS } else { DND_STATE };
+    let words = match (server, answer) {
+        (Server::Windows, Some(true)) => DND_STATE_WINDOWS_ON,
+        (Server::Windows, _) => DND_STATE_WINDOWS,
+        _ => DND_STATE,
+    };
     tr(words).replace("{server}", &name).replace("{state}", &state)
 }
 
@@ -220,7 +231,7 @@ fn windows_quiet(state: i32, other_in_front: bool) -> Option<bool> {
         // Direct3D full screen, presentation mode, quiet time (the first hour after a first sign-in, an install or an
         // upgrade; not Focus Assist's quiet hours).
         3 | 4 | 6 => Some(true),
-        // Not present (locked, the screen saver: the toast waits in the notification centre), accepting, a Store app.
+        // Not present (locked, the screen saver: the toast waits in the notification center), accepting, a Store app.
         1 | 5 | 7 => Some(false),
         _ => None,
     }
@@ -369,6 +380,8 @@ mod tests {
         assert_eq!(describe(&Server::Mako, Some(true)), "mako: on");
         assert_eq!(describe(&Server::Gnome, None), "GNOME: can't tell");
         assert_eq!(describe(&Server::Windows, Some(false)), "Focus Assist: off (undocumented state)");
+        assert_eq!(describe(&Server::Windows, Some(true)), "Focus Assist: on (undocumented state): the toast goes to the notification center silently");
+        assert!(files_silently(&Server::Windows) && !files_silently(&Server::Swaync) && !files_silently(&Server::Other(String::new())));
         assert_eq!(describe(&Server::Other("dwl-notify".into()), Some(false)), "can't tell");
         assert_eq!(describe(&Server::Other(String::new()), None), "can't tell");
     }

@@ -663,8 +663,9 @@ const TEST_SENT_BELL: &str = "sent a test notification; the bell follows in {sec
 const TEST_SKIPPED: &str = "desktop notifications are off: no bubble sent";
 const TEST_SKIPPED_BELL: &str = "desktop notifications are off: no bubble sent; the bell follows in {secs} s if the terminal is then unfocused";
 const TEST_HELD: &str = "held back by the system's do-not-disturb";
+const TEST_HELD_SILENT: &str = "sent without sound: Windows' do-not-disturb files it in the notification center";
 const TEST_CLICKED: &str = "the test notification was clicked: that is how a click reaches ttyak here";
-const MACHINE_WORDS: &[&str] = &[PAUSE_ROW, TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_SKIPPED, TEST_SKIPPED_BELL, TEST_HELD, TEST_CLICKED];
+const MACHINE_WORDS: &[&str] = &[PAUSE_ROW, TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_SKIPPED, TEST_SKIPPED_BELL, TEST_HELD, TEST_HELD_SILENT, TEST_CLICKED];
 
 /// How long what F6 → Notifications read about this machine stands before it is read again (an internal wait: the system's
 /// do-not-disturb changes while the page is open).
@@ -713,9 +714,9 @@ pub fn test_skipped(bell: bool) -> String {
     super::i18n::tr(if bell { TEST_SKIPPED_BELL } else { TEST_SKIPPED }).replace("{secs}", &super::notify::TEST_BELL_AFTER.as_secs().to_string())
 }
 
-/// The status line when the system's do-not-disturb holds the test back.
-pub fn test_held() -> String {
-    super::i18n::tr(TEST_HELD).into_owned()
+/// The status line when the system's do-not-disturb holds the test back (`silently`: Windows, which still gets the toast).
+pub fn test_held(silently: bool) -> String {
+    super::i18n::tr(if silently { TEST_HELD_SILENT } else { TEST_HELD }).into_owned()
 }
 
 pub fn test_clicked() -> String {
@@ -1896,6 +1897,13 @@ mod tests {
         assert_eq!(page_label(notifications, Field::Notifications), "Pause notifications");
         assert_eq!(page_label(notifications, Field::Schedule), "Notification schedule");
         assert!(super::super::i18n::translatable().iter().any(|w| w == "Pause notifications"));
+    }
+
+    #[test]
+    fn the_test_held_back_says_where_it_went() {
+        assert_eq!(test_held(false), "held back by the system's do-not-disturb");
+        assert_eq!(test_held(true), "sent without sound: Windows' do-not-disturb files it in the notification center");
+        assert!(super::super::i18n::translatable().iter().any(|w| w == &test_held(true)));
     }
 
     #[test]

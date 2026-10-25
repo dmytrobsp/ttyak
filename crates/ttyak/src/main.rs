@@ -169,7 +169,7 @@ fn main() -> Result<()> {
         libc::mallopt(libc::M_ARENA_MAX, 2);
     }
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    // macOS: the main thread runs its run loop instead, which the notification centre answers through (clicks).
+    // macOS: the main thread runs its run loop instead, which the Notification Center answers through (clicks).
     #[cfg(target_os = "macos")]
     return tui::notify::mac::with_run_loop(move || runtime.block_on(run()))?;
     #[cfg(not(target_os = "macos"))]

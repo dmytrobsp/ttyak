@@ -124,7 +124,7 @@ fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy, file: Optio
     n
 }
 
-/// How long a click on a notification still counts (the notification centre keeps them).
+/// How long a click on a notification still counts (the notification center keeps them).
 const CLICK_WAIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// How long the worker waits for the server to show or close a bubble before it goes on with the next (an internal
@@ -186,7 +186,8 @@ impl Sound {
 /// What holds back an interruption in the worker, asked there so the run loop never waits for the system.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Guard {
-    /// Ask the system whether notifications are suppressed first; if so, nothing happens at all.
+    /// Ask the system whether notifications are suppressed first; if so, nothing happens at all (Windows: the toast
+    /// still goes out, without sound or bell).
     pub dnd: bool,
     /// Ring the bell (after that question).
     pub bell: bool,
@@ -209,7 +210,7 @@ trait Shown: Send + Sync {
 }
 
 /// The system's notifier: freedesktop's notification server through notify-rust (replacing, closing, clicks), macOS's
-/// notification centre ([`mac`]: clicks while the main thread runs its run loop), or Windows' toasts ([`toast`]: replaced
+/// Notification Center ([`mac`]: clicks while the main thread runs its run loop), or Windows' toasts ([`toast`]: replaced
 /// and withdrawn by their tag, clicks on screen).
 struct System;
 
@@ -238,7 +239,7 @@ impl Backend for System {
                 if bubble.clickable && mac::may_wait() {
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     // A thread of its own, not the runtime's blocking pool: it waits until the bubble is clicked or leaves
-                    // the notification centre (taken off by ttyak, or by the user).
+                    // the Notification Center (taken off by ttyak, or by the user).
                     let waiter = std::thread::Builder::new().name("notification".into()).spawn(move || {
                         let _ = tx.send(mac::send(&title, &body, sound, true));
                         mac::done_waiting();
@@ -311,7 +312,7 @@ impl Shown for Xdg {
     }
 }
 
-/// A bubble of macOS's notification centre, known by what it shows (the older API gives it no name ttyak can choose).
+/// A bubble of macOS's Notification Center, known by what it shows (the older API gives it no name ttyak can choose).
 #[cfg(target_os = "macos")]
 struct MacBubble {
     title: String,
@@ -337,12 +338,12 @@ impl Shown for MacBubble {
         })
     }
 
-    /// Out of the notification centre (which ends its click's thread).
+    /// Out of the Notification Center (which ends its click's thread).
     fn close(&self) -> Fut<'_, ()> {
         let (title, body) = (self.title.clone(), self.body.clone());
         Box::pin(async move {
             let removed = tokio::task::spawn_blocking(move || mac::remove(&title, &body)).await.unwrap_or(0);
-            tracing::debug!(removed, "notification taken out of the notification centre");
+            tracing::debug!(removed, "notification taken out of the Notification Center");
         })
     }
 
@@ -364,7 +365,7 @@ fn take_place(count: &std::sync::atomic::AtomicUsize, max: usize) -> bool {
     count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < max).then_some(n + 1)).is_ok()
 }
 
-/// macOS's notification centre through its older API, the one a program outside an app bundle can use: bubbles are sent
+/// macOS's Notification Center through its older API, the one a program outside an app bundle can use: bubbles are sent
 /// as the terminal's app (macOS 26 refuses them as apps that use the newer API, kitty's and Finder's among them), and
 /// its answers — that a bubble was shown, clicked, dismissed — come through the main thread's run loop only.
 #[cfg(target_os = "macos")]
@@ -373,7 +374,7 @@ pub mod mac {
     use std::time::Duration;
 
     /// How many bubbles a click is waited for at once (internal: each holds a thread until it is clicked or leaves the
-    /// notification centre; any more are shown without).
+    /// Notification Center; any more are shown without).
     const WAITERS: usize = 32;
 
     /// How long the main thread's run loop runs before it looks whether ttyak ended (internal).
@@ -396,7 +397,7 @@ pub mod mac {
     const FINISHED: i32 = 1;
 
     /// Run `main` on a thread of its own (with the main thread's stack size) while this, the main thread, runs its run
-    /// loop for the notification centre; `main`'s result once it ends (a panic in it goes on here).
+    /// loop for the Notification Center; `main`'s result once it ends (a panic in it goes on here).
     pub fn with_run_loop<T: Send + 'static>(main: impl FnOnce() -> T + Send + 'static) -> std::io::Result<T> {
         /// Wakes the main thread when `main` ends, returned or panicked.
         struct Wake(std::thread::Thread);
@@ -443,12 +444,12 @@ pub mod mac {
         }
         let free = super::take_place(&WAITING, WAITERS);
         if !free {
-            tracing::info!("notifications: {WAITERS} wait for a click already; this one is shown without (clear the notification centre)");
+            tracing::info!("notifications: {WAITERS} wait for a click already; this one is shown without (clear the Notification Center)");
         }
         free
     }
 
-    /// The main thread runs its run loop: the notification centre's answers arrive.
+    /// The main thread runs its run loop: the Notification Center's answers arrive.
     pub fn listening() -> bool {
         RUN_LOOP.load(Ordering::Relaxed)
     }
@@ -484,12 +485,12 @@ pub mod mac {
         })
     }
 
-    /// Take every bubble of this process titled `title` saying `body` out of the notification centre (the older API names
+    /// Take every bubble of this process titled `title` saying `body` out of the Notification Center (the older API names
     /// them only by what they show); a click waited for on one then ends. How many were taken out.
     pub fn remove(title: &str, body: &str) -> usize {
         use objc2::msg_send;
         use objc2::runtime::{AnyClass, AnyObject};
-        // (The bundle swizzle comes first: without it the centre is none.)
+        // (The bundle swizzle comes first: without it the Notification Center is none.)
         let _ = sender();
         /// The text of NSString `s`.
         fn text(s: *mut AnyObject) -> Option<String> {
@@ -540,7 +541,7 @@ pub mod mac {
         } else {
             n.asynchronous(true);
         }
-        tracing::debug!(wait, "notification handed to the notification centre");
+        tracing::debug!(wait, "notification handed to the Notification Center");
         let started = std::time::Instant::now();
         match mac_notification_sys::send_notification(title, None, body, Some(&n)) {
             Ok(NotificationResponse::Click) => {
@@ -563,7 +564,7 @@ pub mod mac {
 /// Windows' toasts, sent with the `windows` crate itself: notify-rust gives a toast no tag, so a newer one could neither
 /// replace it nor a read withdraw it. They go out as Windows PowerShell's, the app id a plain program can use without
 /// registering one of its own (an installer's job: ttyak stays a plain program); a click on the toast on screen reaches
-/// ttyak (one in the notification centre likely not: no COM activator is registered for it).
+/// ttyak (one in the notification center does not: tried, nothing happens; no COM activator is registered for it).
 #[cfg(any(windows, test))]
 pub mod toast {
     /// Windows PowerShell's app id (notify-rust's too).
@@ -639,13 +640,13 @@ pub mod toast {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Event {
         Clicked,
-        /// Off the screen (its time is up, or the user dismissed it): maybe still in the notification centre.
+        /// Off the screen (its time is up, or the user dismissed it): maybe still in the notification center.
         OffScreen,
         /// Taken away by ttyak.
         Gone,
     }
 
-    /// A toast on screen or in the notification centre.
+    /// A toast on screen or in the notification center.
     #[cfg(windows)]
     pub struct Toast {
         toast: ToastNotification,
@@ -675,11 +676,11 @@ pub mod toast {
         Ok(Toast { toast, tag: tag.map(self::tag), group: group.to_string(), events: std::sync::Mutex::new(Some(rx)) })
     }
 
-    /// Take `toast` off the screen and the toast tagged `tag` in `group` out of the notification centre.
+    /// Take `toast` off the screen and the toast tagged `tag` in `group` out of the notification center.
     #[cfg(windows)]
     pub fn withdraw(toast: Option<&ToastNotification>, tag: Option<&str>, group: &str) -> windows::core::Result<()> {
         if let Some(toast) = toast {
-            // (Fails for one off the screen already; the notification centre's copy goes below.)
+            // (Fails for one off the screen already; the notification center's copy goes below.)
             if let Err(e) = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).and_then(|n| n.Hide(toast)) {
                 tracing::debug!("toast not hidden: {e}");
             }
@@ -704,7 +705,7 @@ pub mod toast {
             0
         }
 
-        /// A click on it on screen (in the notification centre: not tried, likely never heard); gone: not clicked.
+        /// A click on it on screen (in the notification center: never heard, tried); gone: not clicked.
         fn clicked(&self) -> super::Fut<'_, bool> {
             let events = self.events.lock().unwrap_or_else(|e| e.into_inner()).take();
             Box::pin(async move {
@@ -712,7 +713,7 @@ pub mod toast {
                 loop {
                     match events.recv().await {
                         Some(Event::Clicked) => return true,
-                        // (Kept: a read still takes it out of the notification centre, a newer one still replaces it.)
+                        // (Kept: a read still takes it out of the notification center, a newer one still replaces it.)
                         Some(Event::OffScreen) => continue,
                         Some(Event::Gone) | None => return false,
                     }
@@ -1298,7 +1299,7 @@ const WIN_OFF_USER: &str = "notifications are turned off for this user (Settings
 const WIN_OFF_POLICY: &str = "notifications are turned off by group policy";
 const WIN_OFF_MANIFEST: &str = "Windows PowerShell's app manifest turns notifications off";
 const WIN_SHOWN: &str = "Windows' notifications, as Windows PowerShell's (ttyak has no app id of its own)";
-const WIN_CLICK: &str = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification centre: not tried; likely not)";
+const WIN_CLICK: &str = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification center: nothing happens)";
 const MAC_OFF_FINDER: &str = "the terminal's app isn't known, and macOS 26 refuses notifications sent as Finder (macOS's default)";
 const MAC_OFF_KITTY: &str = "macOS 26 refuses notifications sent as kitty (in kitty itself ttyak uses kitty's own)";
 const MAC_NOT_TRIED: &str = "; not tried: macOS 26 may refuse them";
@@ -1319,13 +1320,19 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
     while let Some(cmd) = queue.recv().await {
         match cmd {
             Cmd::Show { key, at, mut bubble, own, guard, on_click } => {
-                // The system's do-not-disturb holds back all of it; else the bell, and the sound where the server will
-                // not play it.
+                // The system's do-not-disturb holds back all of it (Windows': all but the toast, which it files in the
+                // notification center silently); else the bell, and the sound where the server will not play it.
                 let environment = if bubble.sound.is_some() || guard.dnd { Some(environment(&backend, &shared).await) } else { None };
-                if guard.dnd && held_back(&backend, &shared, environment.as_ref()).await {
-                    continue;
+                let quiet = guard.dnd && held_back(&backend, &shared, environment.as_ref()).await;
+                if quiet {
+                    if !environment.as_ref().is_some_and(|e| system_dnd::files_silently(&e.server)) {
+                        tracing::debug!("the system's do-not-disturb is on: nothing fired");
+                        continue;
+                    }
+                    tracing::debug!("the system's do-not-disturb is on: the toast goes out without sound or bell");
+                    bubble.sound = None;
                 }
-                if guard.bell {
+                if guard.bell && !quiet {
                     ring_in(&shared, guard.epoch);
                 }
                 let terminal = shared.terminal.get().cloned();
@@ -1476,7 +1483,7 @@ async fn held_back(backend: &Arc<dyn Backend>, shared: &Shared, environment: Opt
         }
     };
     if answer == Some(true) {
-        tracing::debug!(server = ?environment.server, "the system's do-not-disturb is on: nothing fired");
+        tracing::debug!(server = ?environment.server, "the system's do-not-disturb is on");
     }
     answer == Some(true)
 }
@@ -1490,7 +1497,7 @@ async fn wait(shown: Arc<dyn Shown>, on: ClickedOn, on_click: OnClick, ended: Op
             true
         }
         Ok(false) => true,
-        // Maybe still in the notification centre: kept for replacing and withdrawing.
+        // Maybe still in the notification center: kept for replacing and withdrawing.
         Err(_) => false,
     };
     if let Some((back, key, generation)) = ended {
@@ -1501,7 +1508,8 @@ async fn wait(shown: Arc<dyn Shown>, on: ClickedOn, on_click: OnClick, ended: Op
 }
 
 /// Fire what `out` lets through for `note`: the bubble (replacing its conversation's) with its sound, and the bell.
-/// With `follow_system_dnd` the worker asks the system first and fires nothing while it is not to be disturbed.
+/// With `follow_system_dnd` the worker asks the system first and fires nothing while it is not to be disturbed (on
+/// Windows only the toast, silently).
 pub fn interrupt(notifier: &Notifier, note: Note, out: &Outputs, settings: &super::settings::Settings, on_click: OnClick) {
     let dnd = settings.notifications.follow_system_dnd;
     if out.bubble {
@@ -1897,17 +1905,17 @@ mod tests {
         assert!(toast::setting().is_some());
     }
 
-    /// A toast reaches the notification centre under its tag, and withdrawing takes it out by it. Shown without its popup,
+    /// A toast reaches the notification center under its tag, and withdrawing takes it out by it. Shown without its popup,
     /// so nothing comes on screen: `ttyak.exe live_toast_history --ignored --nocapture` (Windows).
     #[cfg(windows)]
     #[test]
-    #[ignore = "puts a toast (without its popup) into the notification centre, and takes it out"]
+    #[ignore = "puts a toast (without its popup) into the notification center, and takes it out"]
     fn live_toast_history() {
         use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
         use windows::core::HSTRING;
         const TAG: &str = "w9-TTYAKTEST";
         let (ours, theirs) = (toast::group("ttyaktest"), toast::group("ttyaktest2"));
-        let in_centre = |group: &str| -> usize {
+        let in_center = |group: &str| -> usize {
             let history = ToastNotificationManager::History().unwrap().GetHistoryWithId(&HSTRING::from(toast::APP_ID)).unwrap();
             history.into_iter().filter(|t| t.Tag().is_ok_and(|t| t == TAG) && t.Group().is_ok_and(|g| g == group)).count()
         };
@@ -1919,14 +1927,14 @@ mod tests {
         };
         show("another profile's, the same tag", &theirs);
         show("taken out at once", &ours);
-        let shown = in_centre(&ours);
+        let shown = in_center(&ours);
         let again = show("the same tag", &ours);
-        let replaced = in_centre(&ours);
+        let replaced = in_center(&ours);
         toast::withdraw(Some(&again), Some(TAG), &ours).unwrap();
-        let (left, other) = (in_centre(&ours), in_centre(&theirs));
+        let (left, other) = (in_center(&ours), in_center(&theirs));
         toast::withdraw(None, Some(TAG), &theirs).unwrap();
-        let other_left = in_centre(&theirs);
-        println!("in the notification centre: shown {shown}, after a second with its tag {replaced}, withdrawn {left}; the other profile's {other}, then {other_left}");
+        let other_left = in_center(&theirs);
+        println!("in the notification center: shown {shown}, after a second with its tag {replaced}, withdrawn {left}; the other profile's {other}, then {other_left}");
         assert_eq!((shown, replaced, left, other, other_left), (1, 1, 0, 1, 0));
     }
 
@@ -2167,6 +2175,30 @@ mod tests {
         }
     }
 
+    /// Windows' do-not-disturb files toasts in the notification center silently: the toast still goes out, without any
+    /// sound (neither ttyak's nor Windows') and without the bell.
+    #[tokio::test]
+    async fn windows_do_not_disturb_sends_the_toast_silently() {
+        let (n, server) = Notifier::fake();
+        server.set_server(system_dnd::Server::Windows);
+        server.set_capabilities(&["sound"]);
+        server.set_suppressed(Some(true));
+        let guard = Guard { dnd: true, bell: true, ..Guard::default() };
+        n.show_guarded(note("D1", "1.0", None, "one"), sound("chime"), guard, Box::new(|_| {}));
+        n.show_guarded(note("D2", "2.0", None, "two"), sound("system"), guard, Box::new(|_| {}));
+        n.ring_unless_quiet();
+        n.settled().await;
+        let calls = server.calls();
+        assert!(matches!(calls.as_slice(), [fake::Call::Show { sound: None, by: SoundBy::None, .. }, fake::Call::Show { sound: None, by: SoundBy::None, .. }]), "two silent toasts, nothing played: {calls:?}");
+        assert!(!n.take_bell(), "no bell");
+        // Not following the system's do-not-disturb: the sound plays.
+        n.show_guarded(note("D3", "3.0", None, "three"), sound("chime"), Guard { dnd: false, bell: true, ..Guard::default() }, Box::new(|_| {}));
+        n.settled().await;
+        let calls = server.calls();
+        let sounded = calls.iter().any(|c| matches!(c, fake::Call::Play(_) | fake::Call::Show { by: SoundBy::Notification, .. }));
+        assert!(sounded && n.take_bell(), "{calls:?}");
+    }
+
     #[test]
     fn huddle_starts_in_dms_only() {
         let w = ws();
@@ -2236,7 +2268,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_server_that_cannot_replace_closes_the_older_bubble_first() {
-        // macOS's older API: the older bubble is taken out of the notification centre, then the newer one shown.
+        // macOS's older API: the older bubble is taken out of the Notification Center, then the newer one shown.
         let (n, server) = Notifier::fake();
         server.set_closes_to_replace(true);
         let (clicked, on_click) = recorder();

@@ -3179,7 +3179,8 @@ impl App {
             }
             return;
         }
-        if ring.last_ring.is_none_or(|t| t.elapsed() >= RING_EVERY) {
+        let quiet = *ring.quiet.lock().unwrap_or_else(|e| e.into_inner());
+        if ring_sounds(quiet, ring.started.elapsed()) && ring.last_ring.is_none_or(|t| t.elapsed() >= RING_EVERY) {
             ring.last_ring = Some(std::time::Instant::now());
             let s = &self.ws.settings;
             super::sound::play(&s.huddle.ring_sound, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
@@ -3536,7 +3537,7 @@ impl App {
         if n.bell {
             self.notifier.test_bell(n.follow_system_dnd);
         }
-        self.status = if held { super::prefs::test_held() } else { super::prefs::test_sent(n.bell) };
+        self.status = if held { super::prefs::test_held(cfg!(windows)) } else { super::prefs::test_sent(n.bell) };
     }
 
     /// Read what F6 → Notifications shows about this machine, in the background: the route (at once), how the window is
@@ -4642,6 +4643,20 @@ struct Ring {
     user: String,
     started: std::time::Instant,
     last_ring: Option<std::time::Instant>,
+    /// The system's do-not-disturb holds its sound back (Windows, following it; None: the answer is awaited).
+    quiet: std::sync::Arc<std::sync::Mutex<Option<bool>>>,
+}
+
+/// How long a ring waits for the system's answer about do-not-disturb before it sounds anyway (an internal wait).
+const RING_ASK_WAIT: Duration = Duration::from_secs(2);
+
+/// Whether the ring sounds now: not while the system's do-not-disturb holds it back (`quiet` Some(true)), nor while
+/// that answer is awaited (`quiet` None), for at most [`RING_ASK_WAIT`] after it began ringing (`since`).
+fn ring_sounds(quiet: Option<bool>, since: Duration) -> bool {
+    match quiet {
+        Some(quiet) => !quiet,
+        None => since >= RING_ASK_WAIT,
+    }
 }
 
 /// How often the ring sound repeats.
@@ -6761,7 +6776,14 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
                 if super::notify::huddle_notification(&app.ws, &channel, &user, in_it, now, "").is_some() && app.call.is_none() {
                     tracing::debug!(channel, room, user, "huddle invitation rings");
-                    app.ringing = Some(Ring { channel, room, user, started: std::time::Instant::now(), last_ring: None });
+                    // Windows' do-not-disturb (followed): the toast goes out silently, and the ring keeps quiet too.
+                    let quiet = std::sync::Arc::new(std::sync::Mutex::new(Some(false)));
+                    if cfg!(windows) && app.ws.settings.notifications.follow_system_dnd {
+                        *quiet.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                        let answer = quiet.clone();
+                        app.notifier.read_system_dnd(move |_, on| *answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(on == Some(true)));
+                    }
+                    app.ringing = Some(Ring { channel, room, user, started: std::time::Instant::now(), last_ring: None, quiet });
                 }
             }
             if let Some(channel) = fx.invite_cancelled {
@@ -11581,6 +11603,15 @@ mod tests {
         assert_eq!(p.machine_value(super::super::prefs::Field::ShownBy).as_deref(), Some("slow · sound played by ttyak"));
     }
 
+    #[test]
+    fn the_ring_waits_for_the_systems_answer_and_keeps_quiet_under_it() {
+        use std::time::Duration;
+        assert!(super::ring_sounds(Some(false), Duration::ZERO), "not held back: at once");
+        assert!(!super::ring_sounds(Some(true), Duration::from_secs(60)), "held back: never");
+        assert!(!super::ring_sounds(None, Duration::ZERO), "the answer awaited");
+        assert!(super::ring_sounds(None, super::RING_ASK_WAIT), "no answer in time: it rings");
+    }
+
     #[tokio::test]
     async fn the_test_notification_says_when_the_system_holds_it_back() {
         let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
@@ -11588,7 +11619,8 @@ mod tests {
         app.prefs.as_ref().unwrap().machine.lock().unwrap().dnd_on = Some(true);
         app.ws.settings.notifications.follow_system_dnd = true;
         app.send_test_notification();
-        assert!(app.status.contains("held back by the system's do-not-disturb"), "{}", app.status);
+        let held = if cfg!(windows) { "sent without sound: Windows' do-not-disturb files it in the notification center" } else { "held back by the system's do-not-disturb" };
+        assert!(app.status.contains(held), "{}", app.status);
         // Not followed, or not on: sent.
         app.ws.settings.notifications.follow_system_dnd = false;
         app.send_test_notification();
