@@ -11546,11 +11546,18 @@ mod tests {
         let p = app.prefs.as_ref().unwrap();
         assert!(p.machine_due());
         assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("reading…"));
-        app.read_machine();
+        // The route is this platform's (kitty's, the system's, macOS' or Windows' texts): what the notifier says once its
+        // server is found; how the window comes forward is given here.
+        let (notifier, sound) = (app.notifier.clone(), app.ws.settings.notifications.sound.clone());
+        drop(notifier.route(&sound));
+        notifier.settled().await;
+        let route = notifier.route(&sound);
+        let read = notifier.clone();
+        app.read_machine_with(move || (read.route(&sound), read.via_terminal(), read.route_known()), || "via test".into());
         // Read off the loop's thread: it is there a moment later.
         for _ in 0..500 {
             let m = app.prefs.as_ref().unwrap().machine.lock().unwrap();
-            if m.route.is_some() && m.dnd.is_some() {
+            if m.route.is_some() && m.dnd.is_some() && m.raise.is_some() {
                 break;
             }
             drop(m);
@@ -11559,8 +11566,8 @@ mod tests {
         let p = app.prefs.as_ref().unwrap();
         assert!(!p.machine_due(), "just read");
         assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("can't tell"), "the fake server can't be asked");
-        assert!(p.machine_value(Field::ShownBy).unwrap().contains("sound played by"), "{:?}", p.machine_value(Field::ShownBy));
-        assert!(p.machine_value(Field::ClickResult).unwrap().starts_with("opens it in ttyak"), "{:?}", p.machine_value(Field::ClickResult));
+        assert_eq!(p.machine_value(Field::ShownBy), Some(format!("{} · sound played by {}", route.shown_by, route.sound_by)));
+        assert_eq!(p.machine_value(Field::ClickResult), Some(format!("{}; bringing the window forward: via test", route.click)));
         // Enter on a shown row says so; on the test row it sends one.
         let mut p = app.prefs.take().unwrap();
         for (field, test) in [(Field::ShownBy, false), (Field::ClickResult, false), (Field::SystemDnd, false), (Field::TestNotification, true)] {
