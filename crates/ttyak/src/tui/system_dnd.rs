@@ -44,6 +44,9 @@ pub enum Server {
     Dunst,
     Gnome,
     Kde,
+    /// Windows' notifications (Focus Assist, Do not disturb).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Windows,
     /// Any other, by the name it gave.
     Other(String),
 }
@@ -98,8 +101,8 @@ fn forget_bus() {
     *BUS.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// The server answering on the session bus. (Windows and macOS: their toasts carry the sound, which [`sound_route`]
-/// narrows to the desktop's own; nothing to ask.)
+/// The server answering on the session bus; Windows' own on Windows. (Windows and macOS: their toasts carry the sound,
+/// which [`sound_route`] narrows to the desktop's own.)
 pub async fn discover() -> anyhow::Result<Environment> {
     #[cfg(target_os = "linux")]
     {
@@ -111,7 +114,8 @@ pub async fn discover() -> anyhow::Result<Environment> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        Ok(Environment { server: Server::Other(String::new()), capabilities: vec!["sound".into()] })
+        let server = if cfg!(windows) { Server::Windows } else { Server::Other(String::new()) };
+        Ok(Environment { server, capabilities: vec!["sound".into()] })
     }
 }
 
@@ -125,8 +129,8 @@ async fn discover_on_bus() -> anyhow::Result<Environment> {
 }
 
 /// Whether `server` holds notifications back right now; None: it cannot be told (unknown server, not answering in
-/// [`ASK_WAIT`], an answer that makes no sense; macOS's Focus, which has no unprivileged way to be read, and
-/// Windows'). Asked per for-you event.
+/// [`ASK_WAIT`], an answer that makes no sense; macOS's Focus, which has no unprivileged way to be read). Asked per
+/// for-you event.
 pub async fn suppressed(server: &Server) -> Option<bool> {
     within(ASK_WAIT, ask(server)).await
 }
@@ -143,6 +147,7 @@ async fn ask(server: &Server) -> Option<bool> {
         Server::Dunst => run("dunstctl", &["is-paused"]).await.and_then(|o| dunst_paused(&o)),
         Server::Gnome => run("gsettings", &["get", "org.gnome.desktop.notifications", "show-banners"]).await.and_then(|o| gnome_banners_off(&o)),
         Server::Kde => kde().await,
+        Server::Windows => windows_state().and_then(windows_quiet),
         Server::Other(_) => None,
     }
 }
@@ -164,6 +169,33 @@ fn dunst_paused(out: &str) -> Option<bool> {
 /// `gsettings get … show-banners` prints `true` or `false`; banners off is do-not-disturb.
 fn gnome_banners_off(out: &str) -> Option<bool> {
     dunst_paused(out).map(|banners| !banners)
+}
+
+/// Whether Windows' notification state `state` (`SHQueryUserNotificationState`'s `QUNS_*`) holds notifications back;
+/// None: a state it doesn't document.
+fn windows_quiet(state: i32) -> Option<bool> {
+    match state {
+        // Busy (a full-screen app, presentation settings), Direct3D full screen, presentation mode, quiet time.
+        2 | 3 | 4 | 6 => Some(true),
+        // Not present (locked, the screen saver: the toast waits in the notification centre), accepting, a Store app.
+        1 | 5 | 7 => Some(false),
+        _ => None,
+    }
+}
+
+/// Windows' notification state now (`SHQueryUserNotificationState`), None when it can't be read.
+#[cfg(windows)]
+fn windows_state() -> Option<i32> {
+    let mut state = 0;
+    // SAFETY: the function writes one QUERY_USER_NOTIFICATION_STATE (an i32) to the pointer it is given.
+    let hr = unsafe { windows_sys::Win32::UI::Shell::SHQueryUserNotificationState(&mut state) };
+    tracing::debug!(hr, state, "Windows' notification state");
+    (hr >= 0).then_some(state)
+}
+
+#[cfg(not(windows))]
+fn windows_state() -> Option<i32> {
+    None
 }
 
 /// The command's stdout when it ran and succeeded (killed when the question times out).
@@ -259,6 +291,30 @@ mod tests {
         // Only freedesktop servers play a built-in sound as a file; macOS and Windows play ttyak's.
         let chime = if cfg!(all(unix, not(target_os = "macos"))) { SoundBy::Notification } else { SoundBy::Ttyak };
         assert_eq!(sound_route(&sound, "chime"), chime);
+    }
+
+    #[test]
+    fn windows_quiet_states() {
+        // QUNS_NOT_PRESENT (locked, screen saver), BUSY (a full-screen app, presentation settings), RUNNING_D3D_FULL_SCREEN,
+        // PRESENTATION_MODE, ACCEPTS_NOTIFICATIONS, QUIET_TIME, APP (a Store app in front).
+        let states = [(1, Some(false)), (2, Some(true)), (3, Some(true)), (4, Some(true)), (5, Some(false)), (6, Some(true)), (7, Some(false)), (0, None), (8, None)];
+        for (state, quiet) in states {
+            assert_eq!(windows_quiet(state), quiet, "QUNS {state}");
+        }
+    }
+
+    /// The values above are Windows' own; on Windows the system is asked (what it says over ssh is printed).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_is_asked() {
+        use windows_sys::Win32::UI::Shell::*;
+        let names = [QUNS_NOT_PRESENT, QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE, QUNS_ACCEPTS_NOTIFICATIONS, QUNS_QUIET_TIME, QUNS_APP];
+        assert_eq!(names, [1, 2, 3, 4, 5, 6, 7]);
+        let found = discover().await.unwrap();
+        assert_eq!(found.server, Server::Windows);
+        let answer = suppressed(&found.server).await;
+        println!("Windows: suppressed {answer:?}");
+        assert!(answer.is_some(), "Windows answers");
     }
 
     #[tokio::test]

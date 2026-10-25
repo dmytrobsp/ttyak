@@ -1,7 +1,7 @@
 //! Bringing the terminal's window forward after a click on the system notifier's bubble (the terminal's own bubbles,
 //! OSC 99, bring it forward themselves): tmux's window, pane and client, the terminal's remote control (kitty, WezTerm),
 //! the window manager (Hyprland, sway, niri, KDE's KWin, X11), on macOS the terminal app (Terminal.app's and iTerm2's
-//! tab by AppleScript). Where nothing can (GNOME on Wayland), nothing happens.
+//! tab by AppleScript), on Windows the console's window. Where nothing can (GNOME on Wayland), nothing happens.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -100,6 +100,8 @@ pub enum Raise {
     /// EWMH `_NET_ACTIVE_WINDOW`.
     X11 { window: Pick },
     Mac(MacRaise),
+    /// Windows: the console's window (Windows Terminal's, which owns its pseudoconsole's) brought to the foreground.
+    Windows,
     None,
 }
 
@@ -136,7 +138,63 @@ enum Step {
     Kwin { pids: Vec<u32>, title: Option<String>, plasma6: bool, vars: Vec<(String, String)> },
     /// `osascript` with these arguments, for at most [`SCRIPT_WAIT`].
     Script(Vec<String>),
+    /// Windows: the console's window to the foreground ([`console_moves`]).
+    Console,
 }
+
+/// A window as Windows tells it: shown at all, and minimised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowState {
+    visible: bool,
+    minimised: bool,
+}
+
+/// One move of the console's window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Move {
+    Restore(u64),
+    Foreground(u64),
+}
+
+/// What brings console window `console` (0: none) forward: its root owner `root` — Windows Terminal owns its
+/// pseudoconsole's hidden window, conhost's is its own — restored first when minimised. Nothing when that isn't shown
+/// (a pseudoconsole nobody owns: bringing it forward would only take the focus away).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn console_moves(console: u64, root: u64, state: WindowState) -> Vec<Move> {
+    if console == 0 || root == 0 || !state.visible {
+        return Vec::new();
+    }
+    let restore = state.minimised.then_some(Move::Restore(root));
+    restore.into_iter().chain([Move::Foreground(root)]).collect()
+}
+
+/// Bring the console's window forward (best effort: Windows lets only the program the user last used take the
+/// foreground; otherwise the taskbar button flashes). Every move logged.
+#[cfg(windows)]
+fn console_forward() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GA_ROOTOWNER, GetAncestor, IsIconic, IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow};
+    // SAFETY: plain window queries and requests on handles Windows gave; a stale handle only makes them fail.
+    unsafe {
+        let console = GetConsoleWindow();
+        let root = if console.is_null() { console } else { GetAncestor(console, GA_ROOTOWNER) };
+        let root = if root.is_null() { console } else { root };
+        let state = WindowState { visible: !root.is_null() && IsWindowVisible(root) != 0, minimised: !root.is_null() && IsIconic(root) != 0 };
+        let moves = console_moves(console as u64, root as u64, state);
+        if moves.is_empty() {
+            tracing::debug!(console = console as u64, root = root as u64, ?state, "raise: no console window to bring forward");
+        }
+        for m in moves {
+            match m {
+                Move::Restore(w) => tracing::debug!(window = w, done = ShowWindow(w as _, SW_RESTORE) != 0, "raise: console window restored"),
+                Move::Foreground(w) => tracing::debug!(window = w, done = SetForegroundWindow(w as _) != 0, "raise: console window to the foreground"),
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn console_forward() {}
 
 /// The AppleScript selecting Terminal.app's tab whose tty is the script's argument.
 const TERMINAL_SCRIPT: &[&str] = &[
@@ -233,7 +291,8 @@ pub fn env() -> Env {
     Env { tty: tty(), ..probed(vars, ancestors, std::process::id()) }
 }
 
-/// The best raise for `env`, in the order: tmux, kitty, WezTerm, then the window manager (macOS: the terminal app).
+/// The best raise for `env`, in the order: tmux, kitty, WezTerm, then the window manager (macOS: the terminal app;
+/// Windows: the console's window).
 pub fn detect(env: &Env) -> Raise {
     let var = |name: &str| var(&env.vars, name).map(String::from);
     if let (Some(_), Some(pane)) = (var("TMUX"), var("TMUX_PANE")) {
@@ -252,11 +311,17 @@ pub fn detect(env: &Env) -> Raise {
         return Raise::Kitty { window, to, then: Box::new(then) };
     }
     if let Some(pane) = var("WEZTERM_PANE") {
-        let then = if env.os == "macos" { app("com.github.wez.wezterm") } else { window_manager(env, env.title.as_deref(), true) };
+        let then = match env.os {
+            "macos" => app("com.github.wez.wezterm"),
+            "windows" => Raise::Windows,
+            _ => window_manager(env, env.title.as_deref(), true),
+        };
         return Raise::Wezterm { pane, socket: var("WEZTERM_UNIX_SOCKET"), then: Box::new(then) };
     }
-    if env.os == "macos" {
-        return mac(env);
+    match env.os {
+        "macos" => return mac(env),
+        "windows" => return Raise::Windows,
+        _ => {}
     }
     window_manager(env, env.title.as_deref(), false)
 }
@@ -422,6 +487,7 @@ pub fn raise(r: &Raise) {
             }
             Step::Kwin { pids, title, plasma6, vars } => kwin(&pids, title.as_deref(), plasma6, &vars),
             Step::Script(args) => script(&args),
+            Step::Console => console_forward(),
         }
     }
 }
@@ -481,6 +547,7 @@ pub fn describe(r: &Raise) -> String {
             Raise::Mac(MacRaise::Iterm2 { .. }) => ("iTerm2", None),
             Raise::Mac(MacRaise::Terminal { .. }) => ("Terminal", None),
             Raise::Mac(MacRaise::App { .. }) => ("macOS", None),
+            Raise::Windows => ("Windows", None),
             Raise::None => break,
         };
         names.push(name);
@@ -520,6 +587,7 @@ fn steps(r: &Raise, vars: &[(String, String)]) -> Vec<Step> {
         Raise::Mac(MacRaise::Iterm2 { session }) => vec![Step::Script(osascript(ITERM2_SCRIPT, session))],
         Raise::Mac(MacRaise::Terminal { tty }) => vec![Step::Script(osascript(TERMINAL_SCRIPT, tty))],
         Raise::Mac(MacRaise::App { bundle }) => vec![run(&["open", "-b", bundle])],
+        Raise::Windows => vec![Step::Console],
         Raise::None => Vec::new(),
     }
 }
@@ -1120,6 +1188,26 @@ mod tests {
             let _ = std::fs::remove_file(&out);
             println!("{needs}: {} {}", compiled.status, String::from_utf8_lossy(&compiled.stderr).trim());
         }
+    }
+
+    #[test]
+    fn windows_brings_the_console_window_forward() {
+        let win = |vars: &[(&str, &str)]| Env { os: "windows", ..at(vars, &[300], &[]) };
+        assert_eq!(detect(&win(&[("WT_SESSION", "8a3f")])), Raise::Windows, "Windows Terminal");
+        assert_eq!(detect(&win(&[])), Raise::Windows, "conhost");
+        assert_eq!(detect(&win(&[("DISPLAY", ":0"), ("WINDOWID", "7")])), Raise::Windows, "no X11 on Windows");
+        let wezterm = detect(&win(&[("WEZTERM_PANE", "2")]));
+        assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(Raise::Windows) });
+        assert_eq!(steps(&Raise::Windows, &[]), vec![Step::Console]);
+        assert_eq!(describe(&Raise::Windows), "via Windows");
+        assert_eq!(describe(&wezterm), "via WezTerm and Windows");
+        // conhost: the console's window is its own root; Windows Terminal owns its pseudoconsole's hidden window.
+        let shown = WindowState { visible: true, minimised: false };
+        assert_eq!(console_moves(0x10, 0x10, shown), vec![Move::Foreground(0x10)]);
+        assert_eq!(console_moves(0x10, 0x20, shown), vec![Move::Foreground(0x20)]);
+        assert_eq!(console_moves(0x10, 0x20, WindowState { minimised: true, ..shown }), vec![Move::Restore(0x20), Move::Foreground(0x20)]);
+        assert_eq!(console_moves(0, 0, shown), vec![], "no console");
+        assert_eq!(console_moves(0x10, 0x10, WindowState { visible: false, minimised: false }), vec![], "a pseudoconsole nobody owns: nothing to bring forward");
     }
 
     #[test]

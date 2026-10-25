@@ -283,9 +283,9 @@ ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
 
 A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
 instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
-workspaces, by their next 30-second check — where the notification server allows it (Linux desktops and macOS;
-on Windows each one stays). A thread reply's notification stays until that thread is read (reading the
-conversation does not take it away).
+workspaces, by their next 30-second check — where the notification server allows it (Linux desktops, macOS and
+Windows). A thread reply's notification stays until that thread is read (reading the conversation does not take it
+away).
 
 F6 → Notifications → Bell when not focused (`bell` in `settings.toml`, off by default) also rings the terminal's bell
 with such a notification while the terminal is not focused. Terminals turn it into an urgent mark (the window manager
@@ -300,10 +300,10 @@ do-not-disturb silences both; ttyak's volume and speaker setting then do not app
 the sound itself — except `system`, the desktop's own sound, which then stays silent because there is none to play. With
 Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before every
 interruption, whoever plays the sound: SwayNotificationCenter, mako (a `do-not-disturb` or `dnd` mode), dunst (paused),
-GNOME (banners off) and KDE (notifications inhibited) can be asked, and while the answer is yes ttyak fires nothing: no
-notification, no sound, no bell. With any other server, or when it does not answer within a second, notifications go
-through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in `settings.toml`, on by
-default) turns this off; ttyak's own pause and schedule always hold notifications back.
+GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
+fires nothing: no notification, no sound, no bell. With any other server, or when it does not answer within a second,
+notifications go through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in
+`settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
 
 **Notifications through the terminal.** In a terminal that shows notifications itself — kitty (0.36 or newer; tried),
 and other terminals that answer the query (foot 1.18 or newer, Konsole 24.12 or newer, Contour, by the protocol — not
@@ -321,7 +321,7 @@ manager may only mark it urgent. `TTYAK_NOTIFY_ROUTE=system` (for debugging) kee
 
 **A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
 does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above,
-and then brings ttyak's window forward by the first of these that works here (Linux and macOS; Windows comes later):
+and then brings ttyak's window forward by the first of these that works here:
 - inside tmux: ttyak's tmux window and pane are selected and the client last active on its session is switched to
   them (one `tmux` call); then the terminal around that client is brought forward as below, found from that client's
   environment — its desktop's variables (`DISPLAY`, `XAUTHORITY`, `HYPRLAND_INSTANCE_SIGNATURE`, `SWAYSOCK`, …) are
@@ -339,7 +339,11 @@ and then brings ttyak's window forward by the first of these that works here (Li
   manager is left out rather than raising the wrong window;
 - macOS: Terminal.app's tab running ttyak (by its tty) is selected and its window brought to the front, and iTerm2's
   session (`ITERM_SESSION_ID`) in its tab and window, by AppleScript (`osascript`); after kitty's or WezTerm's remote
-  control, and for Ghostty, the terminal app is brought forward with its own front window (`open -b`).
+  control, and for Ghostty, the terminal app is brought forward with its own front window (`open -b`);
+- Windows: the console's window — Windows Terminal's window (it owns the hidden window of the console it gives ttyak),
+  conhost's own window — is restored when minimised and brought to the foreground; after WezTerm's `activate-pane`
+  too. Windows lets a program take the foreground only in some cases (the user's last input went to it, or the program
+  in front allows it); otherwise the window's taskbar button flashes instead.
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the notification centre's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -360,6 +364,19 @@ out (the older interface knows a notification only by its title and text, so two
 on macOS: the Focus modes (no program can read them without extra rights, so Follow the system's do-not-disturb has
 nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own sounds still play); and
 inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
+
+**On Windows** ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu
+shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before. Each carries its
+conversation as its tag: a newer one replaces it in place, and reading takes it off the screen and out of the
+notification centre (tried in the notification centre's list; on screen not tried yet). A click on the toast while it is
+on screen opens what it showed in ttyak, in NORMAL, and brings the console's window forward as above (in Windows
+Terminal on the tab last used); ttyak keeps each toast for 30 minutes, so a click on it in the notification centre may
+reach ttyak too (not tried). Only the `system` sound goes with the toast (Windows' own, silenced with it); ttyak plays
+its own sounds itself. Follow the system's do-not-disturb asks Windows' notification state
+(`SHQueryUserNotificationState`): busy (a full-screen app, presentation settings), full-screen Direct3D, presentation
+mode and quiet time hold everything back; whether Windows 11's Do not disturb and Focus Assist show there is not tried
+yet. Can't do on Windows: picking Windows Terminal's tab; a click after ttyak let go of the toast (ttyak ended, or 30
+minutes passed) does not reach ttyak.
 
 Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
 one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it
@@ -556,8 +573,8 @@ removed), when the very first join fails, after three tries in a row that do not
 (0, 2 and 4 s apart), or after more than ten reconnects within an hour. In those last two cases ttyak tells
 Slack it left, as when you leave, and the status line says "huddle connection lost — left the huddle".
 
-Clicking a desktop notification (Linux desktops with an XDG notification server; macOS: see "On macOS") opens its
-conversation in ttyak — a thread reply opens the thread with the reply selected — for 30
+Clicking a desktop notification (Linux desktops with an XDG notification server; macOS and Windows: see "On macOS" and
+"On Windows") opens its conversation in ttyak — a thread reply opens the thread with the reply selected — for 30
 minutes after it was shown, and brings the window forward where it can (see "A click brings the window forward").
 
 Under the hood a huddle is an Amazon Chime SDK meeting: `rooms.join` hands out the meeting
