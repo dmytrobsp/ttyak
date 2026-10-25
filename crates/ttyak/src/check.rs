@@ -98,6 +98,13 @@ fn true_colour(colorterm: Option<&str>, wt_session: Option<&str>, multiplexer: b
     (said || (!multiplexer && wt_session.is_some_and(|s| !s.is_empty()))).then_some(true)
 }
 
+/// Whether ttyak runs inside tmux (`$TMUX`) or screen (`$STY`); set but empty says nothing (as [`osc99::in_tmux`]).
+///
+/// [`osc99::in_tmux`]: crate::tui::osc99::in_tmux
+fn multiplexer(tmux: Option<&str>, sty: Option<&str>) -> bool {
+    [tmux, sty].into_iter().flatten().any(|v| !v.is_empty())
+}
+
 /// UTF-8: yes on Windows (`windows`; a console takes ttyak's text as UTF-16 whatever its code page, and a pty such as
 /// mintty's or msys's gets UTF-8, mintty's default — the locale variables say nothing there); elsewhere from the locale
 /// variables (`$LC_ALL`, `$LC_CTYPE`, `$LANG`, the first one set decides); None when none is set.
@@ -186,7 +193,7 @@ fn terminal(escapes: bool) -> (Vec<(String, Option<bool>)>, Option<bool>) {
     }
     let var = |n: &str| std::env::var(n).ok();
     let mut rows = vec![(tr(UTF8).into_owned(), utf8(&[var("LC_ALL").as_deref(), var("LC_CTYPE").as_deref(), var("LANG").as_deref()], cfg!(windows)))];
-    rows.push((tr(TRUE_COLOUR).into_owned(), true_colour(var("COLORTERM").as_deref(), var("WT_SESSION").as_deref(), var("TMUX").is_some() || var("STY").is_some())));
+    rows.push((tr(TRUE_COLOUR).into_owned(), true_colour(var("COLORTERM").as_deref(), var("WT_SESSION").as_deref(), multiplexer(var("TMUX").as_deref(), var("STY").as_deref()))));
     let (mut graphics, mut osc99, mut modes) = (None, false, Vec::new());
     if let Some(_raw) = escapes.then(Raw::on).flatten() {
         let media = crate::tui::media::Media::detect("auto");
@@ -437,6 +444,8 @@ mod tests {
         assert_eq!(true_colour(None, Some(""), false), None, "an empty WT_SESSION says nothing");
         // tmux or screen inside Windows Terminal inherit WT_SESSION, but draw for themselves.
         assert_eq!(true_colour(None, Some("8a3f"), true), None);
+        assert!(multiplexer(Some("/tmp/tmux-1000/default,1234,0"), None) && multiplexer(None, Some("1234.pts-0.host")));
+        assert!(!multiplexer(None, None) && !multiplexer(Some(""), Some("")), "set but empty says nothing (as osc99::in_tmux)");
     }
 
     #[test]
