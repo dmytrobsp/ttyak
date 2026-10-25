@@ -419,8 +419,10 @@ and then brings ttyak's window forward by the first of these that works here:
   the console they give ttyak; older ones not tried), conhost's own window — is restored when minimised and brought to
   the foreground; after WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the
   foreground only in some cases (the user's last input went to it, or the program in front allows it); otherwise the
-  window's taskbar button flashes instead. Tried at the desktop after a toast click: Windows Terminal 1.24's window and
-  conhost's came forward.
+  window's taskbar button flashes instead. In Windows Terminal (`WT_SESSION`) ttyak's tab is then selected through UI
+  Automation: the tab titled as ttyak titled it (Mark in the tab title on; the read/unread mark may differ); when no
+  tab or several carry that title (two ttyaks of one workspace), the tab is left as it is. Tried at the desktop after a
+  toast click: Windows Terminal 1.24's window and conhost's came forward; selecting the tab is not tried yet.
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the Notification Center's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -450,10 +452,10 @@ profiles leave each other's alone — tried: two profiles in two Windows Termina
 notification-center entry): a newer one replaces it in place (tried: one entry in the notification center; Windows
 shows the newer one as a new popup), and reading takes it off the screen and out of the notification center (tried in
 the notification center). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
-brings the console's window forward as above — tried at the desktop in Windows Terminal and in conhost. Windows
-Terminal keeps showing the tab that was in front: with two profiles in two of its tabs, a click on one's toast brings
-the window forward and that profile opens the message, but its tab is not picked (ttyak can't pick Windows Terminal's
-tab). A click on it later in the notification center does nothing — tried: no click reaches ttyak and no Windows
+brings the console's window forward as above — tried at the desktop in Windows Terminal and in conhost — and in
+Windows Terminal selects ttyak's tab by its title (not tried yet; before that change Windows Terminal kept showing the
+tab that was in front). Two profiles of one workspace in two tabs carry the same title, so neither tab is selected
+there. A click on it later in the notification center does nothing — tried: no click reaches ttyak and no Windows
 PowerShell opens (it has no COM activator registered, which takes an installer). Only the `system` sound goes with the
 toast (Windows' own, silenced with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
 profile — Windows 11's Do not disturb — read through an undocumented Windows state
@@ -467,7 +469,7 @@ notification center, as it does other apps' toasts — though in a busy state wi
 may still show a banner. Tried at the desktop: Do not disturb switched on reads as on (profile 1), and so does Windows
 11's automatic one for a full-screen app (profile 2, Windows Terminal full screen); the toast sent without sound in the
 notification center under it is not tried yet. Can't do on
-Windows: picking Windows Terminal's tab; a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
+Windows: picking Windows Terminal's tab when another tab carries the same title; a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
 
 Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
 one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it

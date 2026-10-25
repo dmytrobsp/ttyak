@@ -100,8 +100,9 @@ pub enum Raise {
     /// EWMH `_NET_ACTIVE_WINDOW`.
     X11 { window: Pick },
     Mac(MacRaise),
-    /// Windows: the console's window (Windows Terminal's, which owns its pseudoconsole's) brought to the foreground.
-    Windows,
+    /// Windows: the console's window (Windows Terminal's, which owns its pseudoconsole's) brought to the foreground;
+    /// in Windows Terminal then ttyak's tab selected, the one titled `tab` (what ttyak last put into the title).
+    Windows { tab: Option<String> },
     None,
 }
 
@@ -138,8 +139,9 @@ enum Step {
     Kwin { pids: Vec<u32>, title: Option<String>, plasma6: bool, vars: Vec<(String, String)> },
     /// `osascript` with these arguments, for at most [`SCRIPT_WAIT`].
     Script(Vec<String>),
-    /// Windows: the console's window to the foreground ([`console_moves`]).
-    Console,
+    /// Windows: the console's window to the foreground ([`console_moves`]), then Windows Terminal's tab titled `tab`
+    /// selected ([`tab_of`]).
+    Console { tab: Option<String> },
 }
 
 /// A window as Windows tells it: shown at all, and minimised.
@@ -166,6 +168,38 @@ fn console_moves(console: u64, root: u64, state: WindowState) -> Vec<Move> {
     }
     let restore = state.minimised.then_some(Move::Restore(root));
     restore.into_iter().chain([Move::Foreground(root)]).collect()
+}
+
+/// Which of Windows Terminal's tabs is ttyak's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tab {
+    At(usize),
+    Missing,
+    /// Several carry ttyak's title (two ttyaks of one workspace): none is picked.
+    Several(usize),
+}
+
+/// Which of the tabs named `names` is titled `title`, the read/unread mark in front aside (it may have changed since
+/// the click: the message is read by then).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn tab_of(names: &[String], title: &str) -> Tab {
+    let same = |name: &str| name == title || matches!((unmarked(name), unmarked(title)), (Some(a), Some(b)) if a == b);
+    let ours: Vec<usize> = names.iter().enumerate().filter(|(_, name)| same(name)).map(|(i, _)| i).collect();
+    match ours[..] {
+        [] => Tab::Missing,
+        [one] => Tab::At(one),
+        _ => Tab::Several(ours.len()),
+    }
+}
+
+/// Title `title` after its read/unread mark and the space after it, when it starts with one.
+fn unmarked(title: &str) -> Option<&str> {
+    use super::attention::State;
+    let mut chars = title.chars();
+    match (chars.next(), chars.next()) {
+        (Some(mark), Some(' ')) if [State::Read, State::Unread, State::ForYou].iter().any(|s| s.mark() == mark) => Some(chars.as_str()),
+        _ => None,
+    }
 }
 
 /// ttyak's console window and its root owner (Windows Terminal's window for its pseudoconsole's; conhost's own), as
@@ -213,6 +247,79 @@ fn console_forward() {
 
 #[cfg(not(windows))]
 fn console_forward() {}
+
+/// The class of Windows Terminal's window.
+#[cfg_attr(not(windows), allow(dead_code))]
+const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
+
+/// Select Windows Terminal's tab titled `title` in the console's window, when that is Windows Terminal's: UI
+/// Automation, at most [`COMMAND_WAIT`] (left behind if it hangs). Logged; nothing else happens when it can't.
+#[cfg(windows)]
+fn select_tab(title: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let root = console_windows().1;
+    let mut class = [0u16; 64];
+    // SAFETY: the buffer's length is passed; a stale handle only makes it fail (0).
+    let len = if root == 0 { 0 } else { unsafe { GetClassNameW(root as _, class.as_mut_ptr(), class.len() as i32) } };
+    let class = String::from_utf16_lossy(&class[..len.max(0) as usize]);
+    if class != TERMINAL_CLASS {
+        tracing::debug!(root, class, "raise: not Windows Terminal's window: no tab to select");
+        return;
+    }
+    let title = title.to_string();
+    if bounded(move || Some(select_tab_in(root, &title))).is_none() {
+        tracing::debug!("raise: Windows Terminal's tabs: no answer within {} s", COMMAND_WAIT.as_secs());
+    }
+}
+
+/// [`select_tab`]'s work in window `root`, on its own thread (COM initialised for it).
+#[cfg(windows)]
+fn select_tab_in(root: u64, title: &str) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern, TreeScope_Descendants, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId};
+    // SAFETY: COM initialised on this thread for the calls below and uninitialised after them (their objects are
+    // dropped first); the window handle is Windows', a stale one only makes UI Automation fail.
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let select = || -> windows::core::Result<()> {
+            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+            let window = automation.ElementFromHandle(HWND(root as _))?;
+            let all = window.FindAll(TreeScope_Descendants, &automation.CreateTrueCondition()?)?;
+            let mut tabs: Vec<IUIAutomationElement> = Vec::new();
+            for i in 0..all.Length()? {
+                let element = all.GetElement(i)?;
+                if element.CurrentControlType()? == UIA_TabItemControlTypeId {
+                    tabs.push(element);
+                }
+            }
+            let names: Vec<String> = tabs.iter().map(|t| t.CurrentName().map(|n| n.to_string()).unwrap_or_default()).collect();
+            match tab_of(&names, title) {
+                Tab::At(i) => {
+                    let item: IUIAutomationSelectionItemPattern = tabs[i].GetCurrentPatternAs(UIA_SelectionItemPatternId)?;
+                    if item.CurrentIsSelected()?.as_bool() {
+                        tracing::debug!(tab = i, tabs = tabs.len(), "raise: Windows Terminal's tab already selected");
+                    } else {
+                        item.Select()?;
+                        tracing::debug!(tab = i, tabs = tabs.len(), "raise: Windows Terminal's tab selected");
+                    }
+                }
+                Tab::Missing => tracing::debug!(tabs = tabs.len(), "raise: no Windows Terminal tab carries ttyak's title: left"),
+                Tab::Several(n) => tracing::debug!(tabs = tabs.len(), of_title = n, "raise: several Windows Terminal tabs carry ttyak's title: none selected"),
+            }
+            Ok(())
+        };
+        if let Err(e) = select() {
+            tracing::debug!("raise: Windows Terminal's tabs: {e}");
+        }
+        if init.is_ok() {
+            CoUninitialize();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn select_tab(_title: &str) {}
 
 /// The AppleScript selecting Terminal.app's tab whose tty is the script's argument.
 const TERMINAL_SCRIPT: &[&str] = &[
@@ -331,14 +438,15 @@ pub fn detect(env: &Env) -> Raise {
     if let Some(pane) = var("WEZTERM_PANE") {
         let then = match env.os {
             "macos" => app("com.github.wez.wezterm"),
-            "windows" => Raise::Windows,
+            "windows" => Raise::Windows { tab: None },
             _ => window_manager(env, env.title.as_deref(), true),
         };
         return Raise::Wezterm { pane, socket: var("WEZTERM_UNIX_SOCKET"), then: Box::new(then) };
     }
     match env.os {
         "macos" => return mac(env),
-        "windows" => return Raise::Windows,
+        // (Windows Terminal says so in `WT_SESSION`; conhost has no tabs.)
+        "windows" => return Raise::Windows { tab: var("WT_SESSION").and(env.title.clone()) },
         _ => {}
     }
     window_manager(env, env.title.as_deref(), false)
@@ -505,7 +613,12 @@ pub fn raise(r: &Raise) {
             }
             Step::Kwin { pids, title, plasma6, vars } => kwin(&pids, title.as_deref(), plasma6, &vars),
             Step::Script(args) => script(&args),
-            Step::Console => console_forward(),
+            Step::Console { tab } => {
+                console_forward();
+                if let Some(title) = tab {
+                    select_tab(&title);
+                }
+            }
         }
     }
 }
@@ -565,7 +678,7 @@ pub fn describe(r: &Raise) -> String {
             Raise::Mac(MacRaise::Iterm2 { .. }) => ("iTerm2", None),
             Raise::Mac(MacRaise::Terminal { .. }) => ("Terminal", None),
             Raise::Mac(MacRaise::App { .. }) => ("macOS", None),
-            Raise::Windows => ("Windows", None),
+            Raise::Windows { .. } => ("Windows", None),
             Raise::None => break,
         };
         names.push(name);
@@ -605,7 +718,7 @@ fn steps(r: &Raise, vars: &[(String, String)]) -> Vec<Step> {
         Raise::Mac(MacRaise::Iterm2 { session }) => vec![Step::Script(osascript(ITERM2_SCRIPT, session))],
         Raise::Mac(MacRaise::Terminal { tty }) => vec![Step::Script(osascript(TERMINAL_SCRIPT, tty))],
         Raise::Mac(MacRaise::App { bundle }) => vec![run(&["open", "-b", bundle])],
-        Raise::Windows => vec![Step::Console],
+        Raise::Windows { tab } => vec![Step::Console { tab: tab.clone() }],
         Raise::None => Vec::new(),
     }
 }
@@ -682,7 +795,7 @@ fn output_within(argv: &[String], vars: &[(String, String)], wait: Duration) -> 
 }
 
 /// Run `job` for at most [`COMMAND_WAIT`] (it is left behind if it hangs).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn bounded<T: Send + 'static>(job: impl FnOnce() -> Option<T> + Send + 'static) -> Option<T> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || drop(tx.send(job())));
@@ -1211,13 +1324,14 @@ mod tests {
     #[test]
     fn windows_brings_the_console_window_forward() {
         let win = |vars: &[(&str, &str)]| Env { os: "windows", ..at(vars, &[300], &[]) };
-        assert_eq!(detect(&win(&[("WT_SESSION", "8a3f")])), Raise::Windows, "Windows Terminal");
-        assert_eq!(detect(&win(&[])), Raise::Windows, "conhost");
-        assert_eq!(detect(&win(&[("DISPLAY", ":0"), ("WINDOWID", "7")])), Raise::Windows, "no X11 on Windows");
+        let console = Raise::Windows { tab: None };
+        assert_eq!(detect(&win(&[("WT_SESSION", "8a3f")])), console, "Windows Terminal, no title known: the window alone");
+        assert_eq!(detect(&win(&[])), console, "conhost");
+        assert_eq!(detect(&win(&[("DISPLAY", ":0"), ("WINDOWID", "7")])), console, "no X11 on Windows");
         let wezterm = detect(&win(&[("WEZTERM_PANE", "2")]));
-        assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(Raise::Windows) });
-        assert_eq!(steps(&Raise::Windows, &[]), vec![Step::Console]);
-        assert_eq!(describe(&Raise::Windows), "via Windows");
+        assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(console.clone()) });
+        assert_eq!(steps(&console, &[]), vec![Step::Console { tab: None }]);
+        assert_eq!(describe(&console), "via Windows");
         assert_eq!(describe(&wezterm), "via WezTerm and Windows");
         // conhost: the console's window is its own root; Windows Terminal owns its pseudoconsole's hidden window.
         let shown = WindowState { visible: true, minimised: false };
@@ -1226,6 +1340,32 @@ mod tests {
         assert_eq!(console_moves(0x10, 0x20, WindowState { minimised: true, ..shown }), vec![Move::Restore(0x20), Move::Foreground(0x20)]);
         assert_eq!(console_moves(0, 0, shown), vec![], "no console");
         assert_eq!(console_moves(0x10, 0x10, WindowState { visible: false, minimised: false }), vec![], "a pseudoconsole nobody owns: nothing to bring forward");
+    }
+
+    #[test]
+    fn windows_terminal_selects_ttyaks_tab() {
+        let win = |vars: &[(&str, &str)], title: Option<&str>| Env { os: "windows", title: title.map(String::from), ..at(vars, &[300], &[]) };
+        let tab = Raise::Windows { tab: Some("◆ ttyak - w".into()) };
+        assert_eq!(detect(&win(&[("WT_SESSION", "8a3f")], Some("◆ ttyak - w"))), tab, "the tab titled as ttyak last titled it");
+        assert_eq!(detect(&win(&[], Some("◆ ttyak - w"))), Raise::Windows { tab: None }, "conhost has no tabs");
+        let wezterm = detect(&win(&[("WEZTERM_PANE", "2"), ("WT_SESSION", "8a3f")], Some("◆ ttyak - w")));
+        assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(Raise::Windows { tab: None }) }, "WezTerm picks its own pane");
+        assert_eq!(steps(&tab, &[]), vec![Step::Console { tab: Some("◆ ttyak - w".into()) }]);
+        assert_eq!(describe(&tab), "via Windows");
+    }
+
+    #[test]
+    fn the_tab_is_told_by_its_title_whatever_the_mark() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let title = "◆ ttyak - rslack-testbed";
+        assert_eq!(tab_of(&names(&["Command Prompt", "◆ ttyak - rslack-testbed"]), title), Tab::At(1));
+        assert_eq!(tab_of(&names(&["○ ttyak - rslack-testbed", "Command Prompt"]), title), Tab::At(0), "the mark changed since (the message was read)");
+        assert_eq!(tab_of(&names(&["Command Prompt", "Windows PowerShell"]), title), Tab::Missing);
+        assert_eq!(tab_of(&names(&[]), title), Tab::Missing);
+        assert_eq!(tab_of(&names(&["○ ttyak - w", "● ttyak - w"]), "○ ttyak - w"), Tab::Several(2), "two ttyaks of one workspace: neither");
+        assert_eq!(tab_of(&names(&["○ ttyak - w2", "○ ttyak - w"]), "● ttyak - w"), Tab::At(1), "another workspace's ttyak isn't it");
+        assert_eq!(tab_of(&names(&["x ttyak - w", "ttyak - w"]), "○ ttyak - w"), Tab::Missing, "only ttyak's marks are passed over");
+        assert_eq!(tab_of(&names(&["vim ○ ttyak - w"]), "○ ttyak - w"), Tab::Missing, "the whole name, not a part");
     }
 
     #[test]
