@@ -385,7 +385,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("This ttyak's version and how it was installed: the install script, a package manager (Homebrew, Scoop, winget, Chocolatey, the Arch package, a .deb or .rpm package), or manual download — a copy downloaded by hand. How it was installed decides how it is updated.");
         }
         Field::UpdateCheck => {
-            b.text("Looks for a new version of ttyak now and then: a plain request for the site's latest.json, which sends nothing about you but ttyak's name and version. A new version is told once: a desktop notification (when they are on) and ⬆ in the status line. A later run has the ⬆ and the Update row from its start, until you open the update screen or that version is installed. Off: no check at all, unless you ask for one (Check now); a version found before is still offered, even one no longer out, until Check now says otherwise.");
+            b.text("Looks for a new version of ttyak now and then: a plain request for the site's latest.json, which sends nothing about you but ttyak's name and version. A new version is told once: a desktop notification (when they are on) and ⬆ in the status line. A later run has the ⬆ from its start until you open the update screen or that version is installed, and the Update row while the version is known. Off: no check at all, unless you ask for one (Check now); a version found before is still offered, even one no longer out, until Check now says otherwise.");
         }
         Field::UpdateEvery => {
             b.text("How often the check runs at most, in seconds; a check that got no answer counts too. Less than an hour (written by hand in settings.toml) counts as an hour.").blank();
