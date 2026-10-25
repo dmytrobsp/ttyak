@@ -68,6 +68,60 @@ Unzip it and put `ttyak` somewhere on your PATH. (Releases before 0.11.0 are not
 Optional everywhere: `ffmpeg` / `ffprobe` on PATH for video, cameras and screen sharing; a terminal
 with graphics for real pictures (see below). To build it yourself instead, see below.
 
+## Requirements
+
+What ttyak needs, and what makes it better. `ttyak --profile default ctl check` reports what your terminal and system
+offer (no Slack, no network; run it in your terminal) and prints one line of each kind of glyph for you to judge:
+look for empty boxes or misaligned columns.
+
+**The terminal** (any system)
+
+- needs: UTF-8, and 80 × 24 cells (the thread opens beside the conversation from 100 columns; narrower, it takes the
+  conversation's place)
+- works best with: mouse reporting; true colour for the built-in themes (otherwise choose the `terminal` theme in F6 →
+  Appearance, which uses your terminal's own palette); focus reporting (the bell, the tab-title badge and read marks
+  need it); OSC 8 links; pictures (kitty, WezTerm, Ghostty, iTerm2, foot or any sixel terminal; others get half blocks)
+- macOS Terminal.app: 24-bit colour came with macOS 26 (Apple's WWDC25 announcement; not verified on a Mac here, and
+  Terminal.app sets no `COLORTERM`, so `ctl check` says "not known"). Before macOS 26 use the `terminal` theme.
+
+**Fonts** (the terminal draws with what your system has)
+
+- an emoji font: Noto Color Emoji (Debian/Ubuntu `fonts-noto-color-emoji`, Fedora `google-noto-color-emoji-fonts`, Arch
+  `noto-fonts-emoji`); macOS has Apple Color Emoji; Windows has Segoe UI Emoji
+- a symbol font for `● ○ ◆ ★ ⏎ ↪ ⬆ ✕` and the box and block characters: DejaVu Sans (`fonts-dejavu-core`, Fedora
+  `dejavu-sans-fonts`, Arch `ttf-dejavu`) or Noto Sans Symbols (`fonts-noto-core`, `google-noto-sans-symbols-fonts`,
+  `noto-fonts`); macOS and Windows have them
+- optional: CJK for Chinese, Japanese and Korean names and text (`fonts-noto-cjk`, Fedora `google-noto-sans-cjk-fonts`,
+  Arch `noto-fonts-cjk`); macOS and Windows have them
+- emoji drawn as boxes: install the font above, or F6 → "Emoji as names" shows `:smile:` instead; rows that
+  look misaligned mean the terminal measures an emoji's width differently from ttyak (the same setting is the way out)
+
+**Linux**
+
+- needs: ALSA (`libasound.so.2`), glibc 2.34
+- works best with: a notification server for the bubbles (swaync, mako, dunst, GNOME or KDE's own) — without one there
+  are none, and ttyak's bell and title badge still work; `xdg-open` (xdg-utils) to open links and files; a Wayland
+  compositor with the data-control protocol (or X11) for the clipboard, else ttyak copies through the terminal (OSC
+  52); a browser for the browser sign-in; `ffmpeg` / `ffprobe` for video, cameras and screen sharing, and GStreamer
+  (with the PipeWire plugin) for screen sharing on Wayland
+
+**macOS**
+
+- needs: macOS 11 or newer
+- notifications: macOS shows them as the host terminal's (Terminal's in Terminal.app, tested on macOS 26), and only if
+  that app's notifications are allowed in System Settings → Notifications; while the screen is shared or mirrored macOS
+  keeps them in the Notification Centre without a banner, unless "Allow notifications when mirroring or sharing the
+  display" is on. A click on one brings the tab forward in Terminal.app (proven); kitty uses its own protocol
+- optional: `ffmpeg` for video and cameras
+
+**Windows**
+
+- needs: Windows 10 or 11, 64-bit
+- Windows Terminal is recommended: the old console window (conhost) draws emoji as boxes and shows no pictures
+- toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
+  says when it can't tell
+- optional: `ffmpeg` for video and cameras
+
 ## Verify
 
 Every file of a release from 0.11.0 on (the zips, the `.deb` and `.rpm`, the recipes zip) has its line in the

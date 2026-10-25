@@ -1,6 +1,7 @@
 //! ttyak — a native Slack client for the terminal.
 
 mod auth;
+mod check;
 mod ctl;
 mod install;
 mod login_import;

@@ -45,6 +45,9 @@ pub enum Ctl {
         #[arg(long, default_value_t = 1)]
         every: u64,
     },
+    /// What this terminal and system offer (colours, pictures, focus reporting, fonts to judge by eye, the notification
+    /// service, ffmpeg …), and what is missing. No Slack, no network; run it in your terminal.
+    Check,
     /// List conversations (`-` marks public channels you are not in).
     Channels,
     /// Join a public channel.
@@ -266,14 +269,15 @@ pub async fn run(profile: &str, team: Option<&str>, cmd: Ctl) -> Result<()> {
         }
         Ctl::SelfUpdate { url } => self_update(url.as_deref()).await?,
         Ctl::Status { json, follow, every } => crate::status_file::print(profile, *json, *follow, *every).await?,
+        Ctl::Check => crate::check::run(),
         _ => {}
     }
-    if matches!(cmd, Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. }) {
+    if matches!(cmd, Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. } | Ctl::Check) {
         return Ok(());
     }
     let client = client(profile, team)?;
     match cmd {
-        Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. } => unreachable!("handled above"),
+        Ctl::LocaleTemplate | Ctl::KeysTemplate | Ctl::ThemeTemplate { .. } | Ctl::ThemeImport { .. } | Ctl::SelfUpdate { .. } | Ctl::Status { .. } | Ctl::Check => unreachable!("handled above"),
         Ctl::Whoami => {
             let a = client.auth_test().await?;
             println!("{} ({}) in {} ({}) — {}", a.user, a.user_id, a.team, a.team_id, a.url);

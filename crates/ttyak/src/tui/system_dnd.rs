@@ -79,26 +79,34 @@ const DND_OFF: &str = "off";
 const DND_CANT_TELL: &str = "can't tell";
 pub const WORDS: &[&str] = &[DND_STATE, DND_STATE_WINDOWS, DND_ON, DND_OFF, DND_CANT_TELL];
 
+/// The server's name as people know it: "swaync", "GNOME", or the name it gave.
+pub fn name(server: &Server) -> String {
+    match server {
+        Server::Swaync => "swaync".into(),
+        Server::Mako => "mako".into(),
+        Server::Dunst => "dunst".into(),
+        Server::Gnome => "GNOME".into(),
+        Server::Kde => "KDE".into(),
+        Server::Windows => "Focus Assist".into(),
+        Server::Other(name) => name.clone(),
+    }
+}
+
 /// What was read from `server`, for F6: "swaync: off", "Focus Assist: off (undocumented state)", "can't tell" (`answer`
 /// None; a server that can't be asked is no name at all).
 pub fn describe(server: &Server, answer: Option<bool>) -> String {
     use super::i18n::tr;
-    let name = match server {
-        Server::Swaync => "swaync",
-        Server::Mako => "mako",
-        Server::Dunst => "dunst",
-        Server::Gnome => "GNOME",
-        Server::Kde => "KDE",
-        Server::Windows => "Focus Assist",
-        Server::Other(_) => return tr(DND_CANT_TELL).into_owned(),
-    };
+    if let Server::Other(_) = server {
+        return tr(DND_CANT_TELL).into_owned();
+    }
+    let name = name(server);
     let state = match answer {
         Some(true) => tr(DND_ON),
         Some(false) => tr(DND_OFF),
         None => tr(DND_CANT_TELL),
     };
     let words = if *server == Server::Windows { DND_STATE_WINDOWS } else { DND_STATE };
-    tr(words).replace("{server}", name).replace("{state}", &state)
+    tr(words).replace("{server}", &name).replace("{state}", &state)
 }
 
 /// What the notification server is and can do.

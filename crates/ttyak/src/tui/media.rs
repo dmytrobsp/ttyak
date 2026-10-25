@@ -268,7 +268,7 @@ fn da1_has_sixel(reply: &[u8]) -> bool {
 /// Ask the terminal `before` and then for its device attributes (in raw mode), and give back all it answered: the
 /// answers come in the order asked, so DA1's ends them; gives up after a short wait.
 #[cfg(unix)]
-fn device_attributes(before: &str) -> Vec<u8> {
+pub fn device_attributes(before: &str) -> Vec<u8> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use std::io::Write;
     let mut out = std::io::stdout();
@@ -298,7 +298,7 @@ fn device_attributes(before: &str) -> Vec<u8> {
 }
 
 #[cfg(not(unix))]
-fn device_attributes(_before: &str) -> Vec<u8> {
+pub fn device_attributes(_before: &str) -> Vec<u8> {
     Vec::new()
 }
 

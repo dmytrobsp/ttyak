@@ -73,6 +73,7 @@ pub fn translatable() -> Vec<String> {
     out.extend(super::raise::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::notify::ROUTE_WORDS.iter().map(|w| w.to_string()));
     out.extend(super::system_dnd::WORDS.iter().map(|w| w.to_string()));
+    out.extend(crate::check::WORDS.iter().map(|w| w.to_string()));
     out.extend(crate::status_file::WORDS.iter().map(|w| w.to_string()));
     let mut seen = std::collections::HashSet::new();
     out.retain(|s| !s.is_empty() && seen.insert(s.clone()));
