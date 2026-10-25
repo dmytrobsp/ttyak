@@ -11,6 +11,7 @@ use slack_core::types::Message;
 use tokio::sync::mpsc;
 
 use super::attention::{self, Decision, Key, Note, Outputs, TermFocus};
+use super::osc99;
 use super::state::Workspace;
 use super::system_dnd::{self, Environment, Server, SoundBy};
 
@@ -277,6 +278,101 @@ impl Shown for Unwatched {
     }
 }
 
+/// Bubbles through the terminal itself (OSC 99): their sequences wait for the run loop to write them between draws, and
+/// the terminal's reports end their waiters (a click focuses the terminal's window and tab).
+struct Terminal {
+    /// What the terminal is called, for F6.
+    name: String,
+    /// ttyak's tmux pane, inside tmux: the terminal is used only while tmux lets a bubble out.
+    tmux: Option<String>,
+    /// The sequences not written yet.
+    out: Mutex<Vec<String>>,
+    /// Wakes the run loop to write them.
+    due: tokio::sync::Notify,
+    /// The click waiter of each bubble on screen, by its id: true clicked, false closed.
+    waiting: Mutex<HashMap<String, mpsc::UnboundedSender<bool>>>,
+}
+
+impl Terminal {
+    fn new(name: String, tmux: Option<String>) -> Terminal {
+        Terminal { name, tmux, out: Mutex::default(), due: tokio::sync::Notify::new(), waiting: Mutex::default() }
+    }
+
+    /// Whether a bubble goes through the terminal now (inside tmux: while tmux lets it out).
+    async fn usable(&self) -> bool {
+        match &self.tmux {
+            None => true,
+            Some(pane) => osc99::tmux_lets_out(pane).await,
+        }
+    }
+
+    /// Hand `seq` to the run loop.
+    fn write(&self, seq: String) {
+        let seq = if self.tmux.is_some() { osc99::wrap_for_tmux(&seq) } else { seq };
+        self.out.lock().unwrap_or_else(|e| e.into_inner()).push(seq);
+        self.due.notify_one();
+    }
+
+    /// Show `bubble` as `id` (the same id replaces it on screen); the waiter of the one it replaces ends.
+    fn show(self: &Arc<Self>, id: String, bubble: &Bubble) -> Arc<dyn Shown> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.waiting.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), tx);
+        self.write(osc99::show(&id, &bubble.title, &bubble.body, Some(osc99::sound_name(bubble.by))));
+        tracing::debug!(id, "notification shown by the terminal");
+        Arc::new(OnTerminal { id, terminal: self.clone(), answers: Mutex::new(Some(rx)) })
+    }
+
+    /// The terminal reported a click on a bubble, or its closing.
+    fn report(&self, report: osc99::Report) {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        match report {
+            osc99::Report::Clicked(id) => {
+                tracing::debug!(id, "notification clicked in the terminal");
+                if let Some(tx) = waiting.remove(&id) {
+                    let _ = tx.send(true);
+                }
+            }
+            osc99::Report::Closed(id) => {
+                if let Some(tx) = waiting.remove(&id) {
+                    let _ = tx.send(false);
+                }
+            }
+        }
+    }
+}
+
+/// A bubble the terminal shows.
+struct OnTerminal {
+    id: String,
+    terminal: Arc<Terminal>,
+    /// What the terminal reports about it (taken by the one waiter).
+    answers: Mutex<Option<mpsc::UnboundedReceiver<bool>>>,
+}
+
+impl Shown for OnTerminal {
+    /// (The terminal replaces by the bubble's own id, not the server's.)
+    fn id(&self) -> u32 {
+        0
+    }
+
+    fn clicked(&self) -> Fut<'_, bool> {
+        let answers = self.answers.lock().unwrap_or_else(|e| e.into_inner()).take();
+        Box::pin(async move {
+            match answers {
+                // A newer bubble with its id ends it (its sender is dropped): not clicked.
+                Some(mut answers) => answers.recv().await.unwrap_or(false),
+                None => false,
+            }
+        })
+    }
+
+    fn close(&self) -> Fut<'_, ()> {
+        self.terminal.waiting.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.id);
+        self.terminal.write(osc99::close(&self.id));
+        Box::pin(async {})
+    }
+}
+
 /// The process's notifications, for every workspace: one bubble per conversation (a newer one replaces it), withdrawn
 /// once what it shows is read, one click waiter per bubble; and the bell, rung from any workspace and written by the run
 /// loop between draws. Bubbles are shown, replaced and closed in order by one worker.
@@ -320,11 +416,13 @@ struct Shared {
     /// [`DND_REUSE`] and [`DISCOVERY_RETRY`] (tests shorten them).
     reuse: std::time::Duration,
     retry: std::time::Duration,
+    /// The terminal, once it said at start that it shows notifications itself.
+    terminal: OnceLock<Arc<Terminal>>,
 }
 
 impl Shared {
     fn new(reuse: std::time::Duration, retry: std::time::Duration) -> Shared {
-        Shared { bell: AtomicU64::new(0), epoch: AtomicU64::new(0), environment: Mutex::default(), discovery_failed: Mutex::default(), dnd: Mutex::default(), probed: AtomicBool::new(false), reuse, retry }
+        Shared { bell: AtomicU64::new(0), epoch: AtomicU64::new(0), environment: Mutex::default(), discovery_failed: Mutex::default(), dnd: Mutex::default(), probed: AtomicBool::new(false), reuse, retry, terminal: OnceLock::new() }
     }
 }
 
@@ -389,6 +487,8 @@ fn ts_order(ts: &str) -> Option<(u64, u64)> {
 /// A bubble on screen.
 struct Live {
     shown: Arc<dyn Shown>,
+    /// The terminal shows it (else the system's notifier).
+    on_terminal: bool,
     /// The message it shows (None: a huddle's start).
     at: Option<Place>,
     generation: u64,
@@ -483,13 +583,19 @@ impl Notifier {
         if environment.is_none() && !self.inner.shared.probed.swap(true, Ordering::Relaxed) {
             self.send(Cmd::Probe);
         }
-        let sound_by = match environment.map(|e| system_dnd::sound_route(&e.capabilities, sound)) {
+        let terminal = self.inner.shared.terminal.get();
+        let sound_by = match environment.map(|e| if terminal.is_some() { osc99::sound_by(&e.capabilities, sound) } else { system_dnd::sound_route(&e.capabilities, sound) }) {
             None => "not known yet",
             Some(SoundBy::Notification) => "the notification",
             Some(SoundBy::Ttyak) if sound == "system" => "nobody (the server has no sound of its own to play)",
             Some(SoundBy::Ttyak) => "ttyak",
             Some(SoundBy::None) => "nobody (the sound is off)",
         };
+        if let Some(terminal) = terminal {
+            let shown_by = if terminal.tmux.is_some() { format!("{} (through tmux while ttyak's pane is shown, else the system's notifications)", terminal.name) } else { terminal.name.clone() };
+            let click = format!("opens it in ttyak; {} brings its window and tab forward", terminal.name);
+            return RouteInfo { shown_by, sound_by: sound_by.into(), click };
+        }
         RouteInfo { shown_by: "the system's notifications".into(), sound_by: sound_by.into(), click: click.into() }
     }
 
@@ -523,6 +629,34 @@ impl Notifier {
             _ => TermFocus::Unknown,
         }
     }
+
+    /// From now on bubbles go through the terminal, `name`, itself (it answered the OSC 99 probe at start); inside tmux
+    /// (`tmux`: ttyak's pane) only while tmux lets them out, else through the system's notifier.
+    pub fn use_terminal(&self, name: String, tmux: Option<String>) {
+        tracing::info!(terminal = name, tmux = tmux.is_some(), "notifications shown by the terminal");
+        let _ = self.inner.shared.terminal.set(Arc::new(Terminal::new(name, tmux)));
+    }
+
+    /// An OSC reply from the terminal: a click on one of its bubbles (the bubble's click runs, as for the system's) or
+    /// its closing.
+    pub fn report(&self, osc: &str) {
+        if let (Some(terminal), Some(report)) = (self.inner.shared.terminal.get(), osc99::report(osc)) {
+            terminal.report(report);
+        }
+    }
+
+    /// The sequences the terminal's bubbles wait to have written (the run loop writes them between draws).
+    pub fn take_output(&self) -> Vec<String> {
+        self.inner.shared.terminal.get().map(|t| std::mem::take(&mut *t.out.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
+    }
+
+    /// Once a sequence waits to be written (never without the terminal's bubbles).
+    pub async fn output_due(&self) {
+        match self.inner.shared.terminal.get() {
+            Some(terminal) => terminal.due.notified().await,
+            None => std::future::pending().await,
+        }
+    }
 }
 
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
@@ -541,7 +675,13 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 if guard.bell {
                     ring_in(&shared, guard.epoch);
                 }
-                if let (Some(sound), Some(environment)) = (&bubble.sound, &environment) {
+                let terminal = match shared.terminal.get() {
+                    Some(t) if t.usable().await => Some(t.clone()),
+                    _ => None,
+                };
+                if let (Some(sound), Some(environment), Some(_)) = (&bubble.sound, &environment, &terminal) {
+                    bubble.by = osc99::sound_by(&environment.capabilities, sound);
+                } else if let (Some(sound), Some(environment)) = (&bubble.sound, &environment) {
                     bubble.by = system_dnd::sound_route(&environment.capabilities, sound);
                     if bubble.by == SoundBy::Notification && sound != "system" {
                         bubble.file = backend.sound_file(sound);
@@ -554,8 +694,15 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 if let (SoundBy::Ttyak, Some(own)) = (bubble.by, own) {
                     backend.play(own);
                 }
-                bubble.replaces = key.as_ref().and_then(|k| live.get(k)).map(|o| o.shown.id());
-                let shown = match tokio::time::timeout(SERVER_WAIT, backend.show(bubble)).await {
+                // The bubble before it is replaced on the same route, and closed once this one is up on the other.
+                let before = key.as_ref().and_then(|k| live.get(k));
+                let elsewhere = before.is_some_and(|o| o.on_terminal != terminal.is_some());
+                bubble.replaces = before.filter(|_| !elsewhere).map(|o| o.shown.id());
+                let shown = match &terminal {
+                    Some(t) => Ok(Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble))),
+                    None => tokio::time::timeout(SERVER_WAIT, backend.show(bubble)).await,
+                };
+                let shown = match shown {
                     Ok(Ok(shown)) => shown,
                     // The bubble it would replace stays as it was (still withdrawn and clicked as before).
                     Ok(Err(e)) => {
@@ -571,14 +718,19 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 };
                 // The replaced bubble's waiter ends: the server keeps its id for the new one. (A click on the old one
                 // that came in just now is lost with it.)
-                if let Some(w) = key.as_ref().and_then(|k| live.remove(k)).and_then(|o| o.waiter) {
-                    w.abort();
+                if let Some(old) = key.as_ref().and_then(|k| live.remove(k)) {
+                    if let Some(w) = old.waiter {
+                        w.abort();
+                    }
+                    if elsewhere && tokio::time::timeout(SERVER_WAIT, old.shown.close()).await.is_err() {
+                        tracing::warn!("withdrawing a notification: the notification server did not answer");
+                    }
                 }
                 generation += 1;
                 let ended = key.clone().map(|k| (back.clone(), k, generation));
                 let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), f, ended)).abort_handle());
                 if let Some(key) = key {
-                    live.insert(key, Live { shown, at, generation, waiter });
+                    live.insert(key, Live { shown, on_terminal: terminal.is_some(), at, generation, waiter });
                 }
             }
             Cmd::Bell { dnd, epoch } => {
@@ -1310,6 +1462,98 @@ mod tests {
         bell(&mut out).unwrap();
         assert_eq!(out, b"\x07", "the bell still rings");
         assert!(!n.take_bell(), "once");
+    }
+
+    /// A notifier whose bubbles kitty shows, on a server in memory (for the system's do-not-disturb and sound).
+    fn on_terminal() -> (Notifier, Arc<fake::Server>) {
+        let (n, server) = Notifier::fake();
+        n.use_terminal("kitty".into(), None);
+        (n, server)
+    }
+
+    #[tokio::test]
+    async fn the_terminal_replaces_and_closes_by_the_conversations_id() {
+        let (n, server) = on_terminal();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|| {}));
+        n.settled().await;
+        let out = n.take_output();
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(out.iter().all(|s| s.contains("i=w0-D1:") && s.contains("a=focus,report")), "{out:?}");
+        assert!(n.take_output().is_empty(), "written once");
+        assert!(server.calls().is_empty(), "not through the system's notifier: {:?}", server.calls());
+        n.read(&key, None, "1.0");
+        n.settled().await;
+        assert!(n.take_output().is_empty(), "the read does not cover what it shows");
+        n.read(&key, None, "2.0");
+        n.read(&key, None, "2.0");
+        n.settled().await;
+        assert_eq!(n.take_output(), [osc99::close("w0-D1")], "closed once");
+        // The update notice: an id of its own each time.
+        n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);
+        n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);
+        n.settled().await;
+        let out = n.take_output();
+        assert!(out[0].contains("i=ttyak-") && out[1].contains("i=ttyak-") && out[0][..30] != out[1][..30], "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn the_terminals_report_runs_the_click() {
+        let (n, _server) = on_terminal();
+        let (clicked, on_click) = recorder();
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.show(note("D2", "2.0", None, "two"), None, on_click("two"));
+        n.settled().await;
+        n.report("99;i=w0-D9;");
+        n.report("99;i=ttyak-probe:p=?;a=focus,report:p=title,body");
+        n.report("99;i=w0-D2;");
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert_eq!(*clicked.lock().unwrap(), ["two"]);
+        // kitty says the clicked bubble closed too: nothing more.
+        n.report("99;i=w0-D2:p=close;");
+        // Closed by the user: gone, so a read has nothing to take away, and a click on it later does nothing.
+        let _ = n.take_output();
+        n.report("99;i=w0-D1:p=close;");
+        // (The waiter's end reaches the worker on its own.)
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        n.settled().await;
+        n.report("99;i=w0-D1;");
+        n.read(&Key { workspace: 0, channel: "D1".into() }, None, "9.0");
+        n.read(&Key { workspace: 0, channel: "D2".into() }, None, "9.0");
+        n.settled().await;
+        assert_eq!(*clicked.lock().unwrap(), ["two"]);
+        assert!(n.take_output().is_empty(), "nothing left to close: {:?}", n.take_output());
+        // A replaced bubble's waiter has ended: the click goes to the newer one.
+        n.show(note("D1", "3.0", None, "three"), None, on_click("three"));
+        n.show(note("D1", "4.0", None, "four"), None, on_click("four"));
+        n.settled().await;
+        n.report("99;i=w0-D1;1");
+        n.settled_after(|| clicked.lock().unwrap().len() == 2).await;
+        assert_eq!(*clicked.lock().unwrap(), ["two", "four"]);
+    }
+
+    #[tokio::test]
+    async fn the_terminal_carries_only_the_desktops_sound() {
+        let (n, server) = on_terminal();
+        server.set_capabilities(&["sound"]);
+        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|| {}));
+        n.settled().await;
+        assert_eq!(server.calls(), [fake::Call::Play("chime".into())], "kitty cannot play ttyak's sounds: ttyak does");
+        assert!(n.take_output()[0].contains(&format!("s={}", super::super::clipboard::base64(b"silent"))));
+        n.show(note("D2", "2.0", None, "two"), sound("system"), Box::new(|| {}));
+        n.show(note("D3", "3.0", None, "three"), None, Box::new(|| {}));
+        n.settled().await;
+        assert_eq!(server.calls().len(), 1, "the desktop's sound goes with the bubble: {:?}", server.calls());
+        let out = n.take_output();
+        assert!(out[0].contains(&format!("s={}", super::super::clipboard::base64(b"system"))) && out[1].contains(&format!("s={}", super::super::clipboard::base64(b"silent"))), "{out:?}");
+        assert_eq!(n.route("chime"), RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: "opens it in ttyak; kitty brings its window and tab forward".into() });
+        assert_eq!(n.route("system").sound_by, "the notification");
+        // The system's do-not-disturb holds it back as well.
+        server.set_suppressed(Some(true));
+        n.show_guarded(note("D4", "4.0", None, "four"), sound("chime"), Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.settled().await;
+        assert!(n.take_output().is_empty() && server.calls().len() == 1 && !n.take_bell());
     }
 
     #[test]

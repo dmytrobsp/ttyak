@@ -4646,6 +4646,14 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
     }
 }
 
+/// Write what the terminal's notifications wait to have written to `out` (between draws, as the bell).
+fn write_notifications(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) {
+    let output = notifier.take_output();
+    if !output.is_empty() {
+        let _ = output.iter().try_for_each(|seq| out.write_all(seq.as_bytes())).and_then(|_| out.flush());
+    }
+}
+
 /// What the open conversation `channel` is marked read up to now: its newest message, unless
 /// that is marked already (`marked`), the user marked it unread while here
 /// (`Workspace::held_unread`), or it is a channel we are not in.
@@ -5014,6 +5022,9 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
     let title = guard.title();
     // Query the terminal before the event stream starts reading stdin.
     let mut media = super::media::Media::detect(&super::settings::load().0.messages.graphics);
+    if media.osc99 && super::osc99::wanted() {
+        notifier.use_terminal(super::osc99::terminal_name(), super::osc99::tmux_pane());
+    }
     let mut clipboard = super::clipboard::Clipboard::default();
     let mut events = EventStream::new();
     // Once the screen is up, so the check never holds the start.
@@ -5261,6 +5272,7 @@ async fn run_workspace(
         // The tab title follows what is unread, written only when it changes.
         let badge = super::attention::state(&app.ws, &app.others.lock().unwrap_or_else(|e| e.into_inner()));
         let _ = title.lock().unwrap_or_else(|e| e.into_inner()).sync(&mut std::io::stdout(), app.ws.settings.notifications.title_mark, badge, &app.client.session.team_name);
+        write_notifications(&app.notifier, &mut std::io::stdout());
         ring_bell(&app.notifier, &mut std::io::stdout());
         app.request_thumbs();
         app.request_feed_replies();
@@ -5332,6 +5344,8 @@ async fn run_workspace(
                 }
             }
             _ = tick.tick() => {}
+            // A notification through the terminal waits to be written.
+            _ = notifier.output_due() => {}
             // which-key opens (at the top of the loop).
             _ = tokio::time::sleep_until(which_key_due.unwrap_or_else(std::time::Instant::now).into()), if which_key_due.is_some() => {}
             // A recording in F6 → Keys ends (at the top of the loop).
@@ -5465,9 +5479,11 @@ fn handle_event(app: &mut App, ev: Event) -> bool {
         tracing::debug!(focused = app.terminal_focused, "terminal focus");
         return true;
     }
-    // An OSC reply from the terminal is not a key; nothing reads it yet.
+    // An OSC reply from the terminal is not a key: a click on one of its notifications (opened as the system's are), or
+    // their closing.
     if let Event::Osc(payload) = &ev {
         tracing::debug!(len = payload.len(), "terminal OSC reply");
+        app.notifier.report(payload);
         return true;
     }
     if let Event::Key(k) = &ev {
@@ -11138,6 +11154,46 @@ mod tests {
         app.open_target(Target { channel: "C2".into(), ts: None, thread_ts: None });
         settle(&mut app, true);
         assert_eq!((app.current.as_deref(), app.mode()), (Some("C2"), super::Mode::Normal));
+    }
+
+    #[tokio::test]
+    async fn a_click_reported_by_the_terminal_lands_on_the_message() {
+        use super::super::attention::{Decision, Note};
+        use super::super::notify::Target;
+        use crossterm::event::Event;
+        let (mut app, mut net) = with_channels(&["C1", "C2"]);
+        long_c1(&mut app, 30, 0);
+        app.notifier = crate::tui::notify::Notifier::fake().0;
+        app.notifier.use_terminal("kitty".into(), None);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        let note = Note { key: app.bubble_key("C1"), title: "Bob in #chanC1".into(), body: "hi".into(), target: Target { channel: "C1".into(), ts: Some(top_ts(5)), thread_ts: None } };
+        let gates = app.gates(false, 0.0);
+        app.interrupt(Decision::ForYou(note), &gates);
+        app.notifier.settled().await;
+        let mut written = Vec::new();
+        super::write_notifications(&app.notifier, &mut written);
+        assert!(String::from_utf8(written).unwrap().contains("\x1b]99;i=w0-C1:"), "kitty is asked to show it");
+        app.focus = super::Focus::Composer;
+        app.composer.set("half typed");
+        // kitty's report of the click (a=report), as it arrives from the terminal.
+        assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
+        let clicked = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(super::Net::NotificationClicked(target)) = net.recv().await {
+                    break target;
+                }
+            }
+        });
+        let target = clicked.await.expect("the click opens it");
+        super::handle_net(&mut app, super::Net::NotificationClicked(target));
+        settle(&mut app, true);
+        assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
+        assert_eq!(app.mode(), super::Mode::Normal);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        assert_eq!(app.composer.text(), "half typed", "the draft stays with its conversation");
     }
 
     #[tokio::test]

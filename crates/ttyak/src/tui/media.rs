@@ -30,6 +30,8 @@ pub struct Media {
     drawable: Vec<&'static str>,
     /// What to tell the user once about the graphics setting (a mode this terminal cannot draw).
     pub note: Option<String>,
+    /// The terminal answered the notification probe: it shows notifications itself (OSC 99).
+    pub osc99: bool,
 }
 
 /// [`drawable_modes`] of this terminal, worked out at start (every mode before that, and in tests).
@@ -128,7 +130,17 @@ impl Media {
         // A terminal that does not report its cell size (xterm by default) loses its sixel
         // support in the query above; ask for it on its own and take the size from the
         // window's pixel size.
-        let da1_sixel = picker.protocol_type() == ProtocolType::Halfblocks && sixel_advertised();
+        // One more question, fenced by DA1: whether the terminal shows notifications itself (OSC 99; inside tmux only
+        // through its passthrough).
+        let (probe, linger) = match super::osc99::tmux_pane() {
+            None => (super::osc99::probe().to_string(), std::time::Duration::ZERO),
+            Some(_) if matches!(super::osc99::tmux_passthrough().trim(), "on" | "all") => (super::osc99::wrap_for_tmux(super::osc99::probe()), TMUX_LINGER),
+            Some(_) => (String::new(), std::time::Duration::ZERO),
+        };
+        let reply = device_attributes(&probe, linger);
+        let osc99 = super::osc99::supported(&String::from_utf8_lossy(&reply));
+        tracing::info!(osc99, "terminal notifications");
+        let da1_sixel = picker.protocol_type() == ProtocolType::Halfblocks && da1_has_sixel(&reply);
         if da1_sixel {
             tracing::info!("the terminal advertises sixel but did not report its cell size: using sixel");
             picker.set_protocol_type(ProtocolType::Sixel);
@@ -142,7 +154,7 @@ impl Media {
         let drawable = drawable_modes(detected, picker.capabilities(), da1_sixel, &term_program);
         tracing::info!(protocol = ?detected, font = ?picker.font_size(), capabilities = ?picker.capabilities(), drawable = ?drawable, "terminal graphics");
         let _ = DRAWABLE.set(drawable.clone());
-        let mut media = Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable, note: None };
+        let mut media = Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable, note: None, osc99 };
         media.note = media.choose(choice);
         media
     }
@@ -151,7 +163,7 @@ impl Media {
     #[cfg(test)]
     pub fn with(picker: Picker) -> Media {
         let detected = picker.protocol_type();
-        Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable: GRAPHICS.to_vec(), note: None }
+        Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable: GRAPHICS.to_vec(), note: None, osc99: false }
     }
 
     /// Draw pictures as `choice` says ("auto": as detected; `TTYAK_GRAPHICS` wins, even with a
@@ -250,7 +262,6 @@ pub fn next_mode(current: &str, drawable: &[&'static str]) -> &'static str {
 }
 
 /// Whether a primary device attributes reply (`ESC [ ? 63 ; 1 ; 2 ; 4 ; … c`) lists sixel (4).
-#[cfg(any(unix, test))]
 fn da1_has_sixel(reply: &[u8]) -> bool {
     let Some(start) = reply.windows(3).position(|w| w == b"\x1b[?") else { return false };
     let rest = &reply[start + 3..];
@@ -258,20 +269,33 @@ fn da1_has_sixel(reply: &[u8]) -> bool {
     rest[..end].split(|b| *b == b';').any(|p| p == b"4")
 }
 
-/// Ask the terminal for its device attributes (in raw mode) and see whether it lists sixel;
-/// gives up after a short wait.
+/// How long the answer to a question passed through tmux is waited for after tmux's own DA1 answer (an internal wait:
+/// tmux answers DA1 itself, before the terminal outside answers what went through).
+const TMUX_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Ask the terminal `before` and then for its device attributes (in raw mode), and give back all it answered: the
+/// answers come in the order asked, so DA1's ends them (then `linger` more, for an answer coming through tmux); gives
+/// up after a short wait.
 #[cfg(unix)]
-fn sixel_advertised() -> bool {
+fn device_attributes(before: &str, linger: std::time::Duration) -> Vec<u8> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use std::io::Write;
     let mut out = std::io::stdout();
-    if out.write_all(b"\x1b[c").and_then(|_| out.flush()).is_err() {
-        return false;
+    if out.write_all(before.as_bytes()).and_then(|_| out.write_all(b"\x1b[c")).and_then(|_| out.flush()).is_err() {
+        return Vec::new();
     }
     let stdin = rustix::stdio::stdin();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    let mut deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let mut reply = Vec::new();
-    while !reply.ends_with(b"c") || !reply.windows(3).any(|w| w == b"\x1b[?") {
+    let mut fenced = false;
+    loop {
+        if !fenced && reply.ends_with(b"c") && reply.windows(3).any(|w| w == b"\x1b[?") {
+            fenced = true;
+            deadline = std::time::Instant::now() + linger;
+        }
+        if fenced && (linger.is_zero() || super::osc99::supported(&String::from_utf8_lossy(&reply))) {
+            break;
+        }
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
             break;
@@ -281,18 +305,18 @@ fn sixel_advertised() -> bool {
         if !matches!(poll(&mut fds, Some(&timeout)), Ok(n) if n > 0) {
             break;
         }
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 512];
         match rustix::io::read(stdin, &mut buf) {
             Ok(n) if n > 0 => reply.extend_from_slice(&buf[..n]),
             _ => break,
         }
     }
-    da1_has_sixel(&reply)
+    reply
 }
 
 #[cfg(not(unix))]
-fn sixel_advertised() -> bool {
-    false
+fn device_attributes(_before: &str, _linger: std::time::Duration) -> Vec<u8> {
+    Vec::new()
 }
 
 /// Fit the image's pixel size (from the file metadata, 4:3 if unknown) into
@@ -567,6 +591,9 @@ mod tests {
         assert!(!da1_has_sixel(b"\x1b[?63;1;2;14c"), "14 is not 4");
         assert!(!da1_has_sixel(b"\x1b[0n"), "no attributes");
         assert!(!da1_has_sixel(b"\x1b[?63;1;4"), "cut short");
+        // After the notification probe's answer (kitty's, which has no sixel).
+        assert!(!da1_has_sixel(b"\x1b]99;i=ttyak-probe:p=?;a=focus,report:c=1\x1b\\\x1b[?62;52;c"));
+        assert!(da1_has_sixel(b"\x1b]99;i=ttyak-probe:p=?;a=focus,report:c=1\x1b\\\x1b[?62;4;52;c"));
         assert_eq!(protocol_named("Sixel"), Some(ProtocolType::Sixel));
         assert_eq!(protocol_named("auto"), None);
         assert!(GRAPHICS.iter().skip(1).all(|g| protocol_named(g).is_some()), "every choice but auto names a protocol");
@@ -596,9 +623,9 @@ mod tests {
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, "iTerm.app"), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[CellSize(None)], false, "WezTerm"), ["auto", "halfblocks"]);
-        // Windows: DA1 is never asked on its own (`sixel_advertised` is false there), so only the query counts —
+        // Windows: DA1 is never asked on its own (`device_attributes` answers nothing there), so only the query counts —
         // Windows PowerShell's console answers nothing; Windows Terminal answers sixel.
-        assert!(!cfg!(windows) || !sixel_advertised());
+        assert!(!cfg!(windows) || device_attributes("", std::time::Duration::ZERO).is_empty());
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Sixel, &[Sixel, cell], false, ""), ["auto", "sixel", "halfblocks"]);
     }

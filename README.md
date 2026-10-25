@@ -305,6 +305,21 @@ notification, no sound, no bell. With any other server, or when it does not answ
 through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in `settings.toml`, on by
 default) turns this off; ttyak's own pause and schedule always hold notifications back.
 
+**Notifications through the terminal.** In a terminal that shows notifications itself — kitty (0.36 or newer), foot
+(1.18 or newer), Konsole (24.12 or newer), Contour — ttyak hands its notifications to the terminal (its OSC 99
+protocol) instead of the system's notifier; ttyak asks the terminal at start whether it can (`p=?`, answered before
+ttyak's screen is up). Clicking one makes the terminal focus its own window **and tab**, and tell ttyak, which opens
+what it showed — the message, a reply in its open thread, the conversation of a huddle — in NORMAL (a draft being typed
+stays; a notification from another workspace of the profile switches there first). One per conversation, replaced by a
+newer one and taken away once read, as above. The terminal passes the notification on to the desktop's notification
+server, so the system's do-not-disturb still applies; the sound: `system` goes with the notification (where the server
+can play sounds), ttyak's own sounds (chime, …) are played by ttyak, since the terminal can only ask for the desktop's
+sounds. Inside tmux this is used only with `set -g allow-passthrough on` (or `all`) and while ttyak's pane is the one
+shown, because tmux gives the terminal's answer to the active pane only; otherwise (and in every other terminal) the
+system's notifier shows them. Whether a click can bring the window forward across workspaces is up to the desktop: the
+terminal asks for focus, and the window manager may only mark it urgent. `TTYAK_NOTIFY_ROUTE=system` (for debugging)
+keeps to the system's notifier.
+
 ## Keys
 
 Press **F1** (or `?` outside the composer) in the app for the full list, with the keys in effect.
@@ -491,7 +506,7 @@ Slack it left, as when you leave, and the status line says "huddle connection lo
 Clicking a desktop notification (Linux desktops with an XDG notification server) opens its
 conversation in ttyak — a thread reply opens the thread with the reply selected — for 30
 minutes after it was shown. The terminal window is not raised (a terminal program cannot do
-that portably).
+that portably), unless the terminal shows the notification itself (see "Notifications through the terminal").
 
 Under the hood a huddle is an Amazon Chime SDK meeting: `rooms.join` hands out the meeting
 credentials, `crates/huddle` speaks Chime's signaling protocol and runs WebRTC audio (webrtc-rs,
@@ -544,6 +559,7 @@ on Windows only from an SSH session, where `gdigrab` cannot capture (no desktop)
 |---|---|
 | (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, the bell when not focused, the mark in the tab title, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
 | `TTYAK_LOG` | log filter, e.g. `ttyak=debug` (log file: `~/.cache/ttyak/<profile>/ttyak.log`); the websocket library's handshake and frames (`tungstenite::handshake::client`, `tungstenite::client`, `tungstenite::protocol`), which would print the token, cookie and messages, stay off unless named |
+| `TTYAK_NOTIFY_ROUTE=system` | for debugging: notifications through the system's notifier even in a terminal that shows them itself (kitty, foot, Konsole, Contour) |
 | `TTYAK_DOWNLOAD_DIR` | where `␣s` saves attachments first, over F6 → Messages & media → Save files to (default: your downloads folder) |
 | `TTYAK_OPEN_WITH` | the program `␣o` opens links with, given the address (default: the system's opener — `xdg-open`, `open`, Windows' URL handler); only web and mail links are opened |
 | `TTYAK_AVATARS=0` | initials instead of profile pictures next to names (as on terminals without real graphics; F6 → Messages & media → Show profile pictures turns both off, Two-row profile pictures makes them bigger) |

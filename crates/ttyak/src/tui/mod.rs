@@ -28,6 +28,7 @@ pub mod menu;
 pub mod messages;
 pub mod notify;
 pub mod open;
+pub mod osc99;
 pub mod others;
 pub mod picker;
 pub mod prefs;
