@@ -341,22 +341,30 @@ pub fn device_attributes(before: &str) -> Vec<u8> {
             }
         }
     };
-    let key = |record: &INPUT_RECORD| (u32::from(record.EventType) == KEY_EVENT).then(|| unsafe { (record.Event.KeyEvent.bKeyDown != 0, record.Event.KeyEvent.uChar.UnicodeChar) });
+    let key = |record: &INPUT_RECORD| {
+        (u32::from(record.EventType) == KEY_EVENT).then(|| unsafe { (record.Event.KeyEvent.bKeyDown != 0, record.Event.KeyEvent.uChar.UnicodeChar, record.Event.KeyEvent.wVirtualKeyCode) })
+    };
     let start = std::time::Instant::now();
     let mut reply = Vec::new();
     while !da1_ended(&reply) {
         let Some(record) = next(start + std::time::Duration::from_millis(500), true) else { break };
-        if let Some((down, unit)) = key(&record) {
+        if let Some((down, unit, _)) = key(&record) {
             key_text(down, unit, &mut reply);
         }
     }
-    // What follows that is more of the answers (DA1's last key-up; answers coming late, briefly) is taken too: crossterm
-    // would read it as key presses (Esc, [, ?, …), which NORMAL has bindings for. The first record that isn't stays.
-    let until = std::time::Instant::now() + if da1_ended(&reply) { std::time::Duration::ZERO } else { std::time::Duration::from_millis(200) };
+    // What follows that is more of the answers (DA1's last key-up; the rest of answers coming late, briefly) is taken
+    // too, into `reply`: crossterm would read it as key presses (Esc, [, ?, …), which NORMAL has bindings for. The first
+    // record that isn't stays. Once DA1 has ended, only what is queued already (DA1 comes last: an OSC 99 or DECRQM
+    // answer ending first still waits for it).
+    let Some(wait) = drain_wait(&reply) else { return reply };
+    let mut until = std::time::Instant::now() + wait;
     let mut shape = ReplyShape::after(&reply);
-    while let Some((down, unit)) = next(until, false).as_ref().and_then(key) {
-        if !shape.takes(down, unit) || next(until, true).is_none() {
+    while let Some((down, unit, vk)) = next(until, false).as_ref().and_then(key) {
+        if !shape.takes(down, unit, vk, &mut reply) || next(until, true).is_none() {
             break;
+        }
+        if da1_ended(&reply) {
+            until = std::time::Instant::now();
         }
     }
     reply
@@ -390,13 +398,21 @@ impl ReplyShape {
         shape
     }
 
-    /// Whether the key event `down`/`unit` belongs to an answer (then it is taken): a key-up within or after one, or a
-    /// character that goes on with an escape sequence (CSI, or OSC/DCS/APC up to its terminator).
-    fn takes(&mut self, down: bool, unit: u16) -> bool {
-        if !down {
+    /// Whether the key event `down`/`unit` (its virtual key `vk`) belongs to an answer (then it is taken, its character
+    /// added to `reply`): a key-up within or after one, or a character that goes on with an escape sequence (CSI, or
+    /// OSC/DCS/APC up to its terminator). conhost's input engine may wrap a shifted character (`?`, `$`, `_`) in Shift's
+    /// key-down and key-up, which carry no character, so Shift, Ctrl and Alt are taken within or after an answer too (on
+    /// win11-dev DA1's answer came as bare key-downs in both conhost and Windows Terminal).
+    fn takes(&mut self, down: bool, unit: u16, vk: u16, reply: &mut Vec<u8>) -> bool {
+        let modifier = unit == 0 && matches!(vk, 0x10..=0x12);
+        if !down || modifier {
             return self.seen || !self.open.is_empty();
         }
-        u8::try_from(unit).is_ok_and(|b| b.is_ascii() && self.push(b))
+        let taken = u8::try_from(unit).is_ok_and(|b| b.is_ascii() && self.push(b));
+        if taken {
+            key_text(down, unit, reply);
+        }
+        taken
     }
 
     /// Add `b` to the open sequence when it fits there (or starts one), closing it at its end.
@@ -421,6 +437,13 @@ impl ReplyShape {
         self.seen = true;
         true
     }
+}
+
+/// How long to wait for more of the answers after the deadline, given `reply`, what was read: nothing answered, none
+/// (no drain); DA1 ended, only what is queued already.
+#[cfg(any(windows, test))]
+fn drain_wait(reply: &[u8]) -> Option<std::time::Duration> {
+    (!reply.is_empty()).then(|| if da1_ended(reply) { std::time::Duration::ZERO } else { std::time::Duration::from_millis(200) })
 }
 
 /// Whether `reply` holds DA1's answer (`CSI ? … c`), which ends what the terminal answers.
@@ -720,27 +743,52 @@ mod tests {
 
     #[test]
     fn what_comes_after_the_answers_is_left_unless_it_is_more_answers() {
-        // Key-down and key-up of each character, as the console hands them over.
-        let feed = |shape: &mut ReplyShape, text: &str| text.encode_utf16().all(|u| shape.takes(true, u) && shape.takes(false, u));
-        // Late answers (OSC 99, then DA1) after the deadline: all taken, a key typed after them left for crossterm.
-        let mut shape = ReplyShape::after(b"");
-        assert!(feed(&mut shape, "\x1b]99;i=ttyak-probe:p=?;a=focus,report\x1b\\\x1b[?61;4;6c"));
-        assert!(!shape.takes(true, 'j' as u16));
+        const SHIFT: u16 = 0x10;
+        // As the console hands them over: key-down and key-up of each character, shifted ones (conhost) between a Shift
+        // key-down and key-up that carry no character.
+        let feed = |shape: &mut ReplyShape, reply: &mut Vec<u8>, text: &str| {
+            text.encode_utf16().all(|u| {
+                let shifted = "?$_:!\"|".encode_utf16().any(|s| s == u);
+                (!shifted || shape.takes(true, 0, SHIFT, reply))
+                    && shape.takes(true, u, u, reply)
+                    && shape.takes(false, u, u, reply)
+                    && (!shifted || shape.takes(false, 0, SHIFT, reply))
+            })
+        };
+        // Late answers (OSC 99, then DA1) after the deadline: all taken and added to what was answered, a key typed
+        // after them left for crossterm.
+        let (mut shape, mut reply) = (ReplyShape::after(b""), Vec::new());
+        assert!(feed(&mut shape, &mut reply, "\x1b]99;i=ttyak-probe:p=?;a=focus,report\x1b\\\x1b[?61;4;6c"));
+        assert_eq!(reply, b"\x1b]99;i=ttyak-probe:p=?;a=focus,report\x1b\\\x1b[?61;4;6c");
+        assert!(!shape.takes(true, 'j' as u16, 'J' as u16, &mut reply));
         // DECRQM's answer (an intermediate before its final byte) too.
-        assert!(feed(&mut ReplyShape::after(b""), "\x1b[?1004;2$y\x1b[?1;0c"));
-        // An answer cut off at the deadline goes on where it stopped.
-        let mut shape = ReplyShape::after(b"\x1b[?61;4");
-        assert!(shape.takes(true, 'c' as u16) && shape.takes(false, 'c' as u16));
-        assert!(!shape.takes(true, 'k' as u16));
-        // Once DA1 has ended: its last key-up is taken, the user's keys are not.
+        assert!(feed(&mut ReplyShape::after(b""), &mut Vec::new(), "\x1b[?1004;2$y\x1b[?1;0c"));
+        // An answer cut off at the deadline goes on where it stopped, and ends what was answered.
+        let mut reply = b"\x1b[?61;4".to_vec();
+        let mut shape = ReplyShape::after(&reply);
+        assert!(feed(&mut shape, &mut reply, "c") && da1_ended(&reply));
+        assert!(!shape.takes(true, 'k' as u16, 'K' as u16, &mut reply));
+        // Once DA1 has ended: its last key-up (and Shift's) is taken, the user's keys are not.
         let mut shape = ReplyShape::after(b"\x1b[?61;4c");
-        assert!(shape.takes(false, 'c' as u16));
-        assert!(!shape.takes(true, ':' as u16));
-        // Nothing answered: a typed key (down or up) is not an answer, nor is Esc followed by one.
+        assert!(shape.takes(false, 'c' as u16, 'C' as u16, &mut Vec::new()) && shape.takes(false, 0, SHIFT, &mut Vec::new()));
+        assert!(!shape.takes(true, ':' as u16, 0xBA, &mut Vec::new()));
+        // Nothing answered: a typed key (down or up, or Shift on its own) is not an answer, nor is Esc followed by one.
         let mut shape = ReplyShape::after(b"");
-        assert!(!shape.takes(true, 'j' as u16) && !shape.takes(false, 'j' as u16));
-        assert!(shape.takes(true, 0x1b) && !shape.takes(true, 'j' as u16));
-        assert!(!ReplyShape::after(b"").takes(true, 'é' as u16));
+        let mut none = Vec::new();
+        assert!(!shape.takes(true, 'j' as u16, 'J' as u16, &mut none) && !shape.takes(false, 'j' as u16, 'J' as u16, &mut none));
+        assert!(!shape.takes(true, 0, SHIFT, &mut none));
+        assert!(shape.takes(true, 0x1b, 0x1b, &mut none) && !shape.takes(true, 'j' as u16, 'J' as u16, &mut none));
+        assert!(!ReplyShape::after(b"").takes(true, 'é' as u16, 0, &mut none));
+        // BEL ends an OSC answer; ESC does not go on with a CSI one.
+        assert!(feed(&mut ReplyShape::after(b""), &mut Vec::new(), "\x1b]99;i=ttyak-probe:p=?;a=focus\x07\x1b[?1;0c"));
+        assert!(!ReplyShape::after(b"\x1b[?6").takes(true, 0x1b, 0x1b, &mut Vec::new()));
+    }
+
+    #[test]
+    fn late_answers_are_waited_for_only_while_one_is_coming() {
+        assert_eq!(drain_wait(b""), None, "nothing answered: nothing late to wait for");
+        assert_eq!(drain_wait(b"\x1b[?1004;2$y"), Some(std::time::Duration::from_millis(200)));
+        assert_eq!(drain_wait(b"\x1b[?1004;2$y\x1b[?1;0c"), Some(std::time::Duration::ZERO), "DA1 ended: only what is queued");
     }
 
     #[test]
