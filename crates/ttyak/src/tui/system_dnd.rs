@@ -125,7 +125,8 @@ async fn discover_on_bus() -> anyhow::Result<Environment> {
 }
 
 /// Whether `server` holds notifications back right now; None: it cannot be told (unknown server, not answering in
-/// [`ASK_WAIT`], an answer that makes no sense). Asked per for-you event.
+/// [`ASK_WAIT`], an answer that makes no sense; macOS's Focus, which has no unprivileged way to be read, and
+/// Windows'). Asked per for-you event.
 pub async fn suppressed(server: &Server) -> Option<bool> {
     within(ASK_WAIT, ask(server)).await
 }

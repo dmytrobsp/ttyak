@@ -1,6 +1,7 @@
 //! Bringing the terminal's window forward after a click on the system notifier's bubble (the terminal's own bubbles,
 //! OSC 99, bring it forward themselves): tmux's window, pane and client, the terminal's remote control (kitty, WezTerm),
-//! the window manager (Hyprland, sway, niri, KDE's KWin, X11). Where nothing can (GNOME on Wayland), nothing happens.
+//! the window manager (Hyprland, sway, niri, KDE's KWin, X11), on macOS the terminal app (Terminal.app's and iTerm2's
+//! tab by AppleScript). Where nothing can (GNOME on Wayland), nothing happens.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -8,6 +9,10 @@ use std::time::{Duration, Instant};
 
 /// How long one command (or the X server) may take before it is given up (internal).
 const COMMAND_WAIT: Duration = Duration::from_secs(2);
+
+/// How long an AppleScript may take (internal): the first one waits for the user's answer to macOS's one-time question
+/// whether the terminal may be controlled.
+const SCRIPT_WAIT: Duration = Duration::from_secs(60);
 
 /// How long the terminal may take to retitle its window after it focused ttyak's tab, and how often it is looked at
 /// meanwhile (internal).
@@ -63,6 +68,8 @@ pub struct Env {
     /// Inside tmux: the client last active on ttyak's session — its tty, and the outer terminal as that client sees it
     /// (its variables and parents).
     pub tmux_client: Option<(String, Box<Env>)>,
+    /// macOS: the terminal device ttyak runs on (`/dev/ttys003`), which tells Terminal.app's tabs apart.
+    pub tty: Option<String>,
 }
 
 /// Which of the window manager's windows.
@@ -92,7 +99,19 @@ pub enum Raise {
     Kwin { pids: Vec<u32>, title: Option<String>, plasma6: bool },
     /// EWMH `_NET_ACTIVE_WINDOW`.
     X11 { window: Pick },
+    Mac(MacRaise),
     None,
+}
+
+/// How the terminal app comes forward on macOS.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MacRaise {
+    /// iTerm2's session (its unique id) selected in its tab and window, by AppleScript.
+    Iterm2 { session: String },
+    /// Terminal.app's tab running on `tty` selected in its window, by AppleScript.
+    Terminal { tty: String },
+    /// The app brought forward with its own active window (Launch Services: no Apple event, so macOS asks nothing).
+    App { bundle: String },
 }
 
 /// The desktop the variables point at, first found in this order.
@@ -115,6 +134,61 @@ enum Step {
     Focus(Desktop, Pick, Vec<(String, String)>),
     /// The KWin script.
     Kwin { pids: Vec<u32>, title: Option<String>, plasma6: bool, vars: Vec<(String, String)> },
+    /// `osascript` with these arguments, for at most [`SCRIPT_WAIT`].
+    Script(Vec<String>),
+}
+
+/// The AppleScript selecting Terminal.app's tab whose tty is the script's argument.
+const TERMINAL_SCRIPT: &[&str] = &[
+    "on run argv",
+    "tell application id \"com.apple.Terminal\"",
+    "repeat with w in windows",
+    "repeat with t in tabs of w",
+    "if tty of t is (item 1 of argv) then",
+    "set selected tab of w to t",
+    "set index of w to 1",
+    "activate",
+    "return",
+    "end if",
+    "end repeat",
+    "end repeat",
+    "end tell",
+    "end run",
+];
+
+/// The AppleScript selecting iTerm2's session whose id is the script's argument, in its tab and window (iTerm2's
+/// scripting docs; not tried: no iTerm2 on the test Mac).
+const ITERM2_SCRIPT: &[&str] = &[
+    "on run argv",
+    "tell application id \"com.googlecode.iterm2\"",
+    "repeat with w in windows",
+    "repeat with t in tabs of w",
+    "repeat with s in sessions of t",
+    "if id of s is (item 1 of argv) then",
+    "select w",
+    "select t",
+    "select s",
+    "activate",
+    "return",
+    "end if",
+    "end repeat",
+    "end repeat",
+    "end repeat",
+    "end tell",
+    "end run",
+];
+
+/// The macOS app (its bundle id) of the terminal `vars` are of: by `TERM_PROGRAM`, which the terminal sets itself, then
+/// kitty's `KITTY_WINDOW_ID` (kitty sets no `TERM_PROGRAM`).
+pub fn host_bundle(vars: &HashMap<String, String>) -> Option<&'static str> {
+    match var(vars, "TERM_PROGRAM") {
+        Some("Apple_Terminal") => Some("com.apple.Terminal"),
+        Some("iTerm.app") => Some("com.googlecode.iterm2"),
+        Some("WezTerm") => Some("com.github.wez.wezterm"),
+        Some("ghostty") => Some("com.mitchellh.ghostty"),
+        _ if var(vars, "KITTY_WINDOW_ID").is_some() => Some("net.kovidgoyal.kitty"),
+        _ => None,
+    }
 }
 
 /// This process's environment, parents and OS, with the answers of the tools they point at (each asked for at most
@@ -126,10 +200,10 @@ pub fn env() -> Env {
         let tmux_client = tmux_client(pane).map(|(pid, tty)| (tty, Box::new(probed(environ(pid), parents(pid), pid))));
         return Env { vars, ancestors, os: std::env::consts::OS, pid: std::process::id(), tmux_client, ..Env::default() };
     }
-    probed(vars, ancestors, std::process::id())
+    Env { tty: tty(), ..probed(vars, ancestors, std::process::id()) }
 }
 
-/// The best raise for `env`, in the order: tmux, kitty, WezTerm, then the window manager.
+/// The best raise for `env`, in the order: tmux, kitty, WezTerm, then the window manager (macOS: the terminal app).
 pub fn detect(env: &Env) -> Raise {
     let var = |name: &str| var(&env.vars, name).map(String::from);
     if let (Some(_), Some(pane)) = (var("TMUX"), var("TMUX_PANE")) {
@@ -143,12 +217,32 @@ pub fn detect(env: &Env) -> Raise {
     // whose variables were inherited, e.g. by another terminal started from it.)
     let kitty = env.kitty.as_ref().filter(|k| k.pid == env.pid || env.ancestors.contains(&k.pid));
     if let (Some(window), Some(to), Some(kitty)) = (var("KITTY_WINDOW_ID"), var("KITTY_LISTEN_ON"), kitty) {
-        return Raise::Kitty { window, to, then: Box::new(window_manager(env, Some(&kitty.title), true)) };
+        let then = if env.os == "macos" { mac_app(&env.vars) } else { window_manager(env, Some(&kitty.title), true) };
+        return Raise::Kitty { window, to, then: Box::new(then) };
     }
     if let Some(pane) = var("WEZTERM_PANE") {
-        return Raise::Wezterm { pane, socket: var("WEZTERM_UNIX_SOCKET"), then: Box::new(window_manager(env, env.title.as_deref(), true)) };
+        let then = if env.os == "macos" { mac_app(&env.vars) } else { window_manager(env, env.title.as_deref(), true) };
+        return Raise::Wezterm { pane, socket: var("WEZTERM_UNIX_SOCKET"), then: Box::new(then) };
+    }
+    if env.os == "macos" {
+        return mac(env);
     }
     window_manager(env, env.title.as_deref(), false)
+}
+
+/// macOS: iTerm2's session or Terminal.app's tab, else the terminal app.
+fn mac(env: &Env) -> Raise {
+    match (var(&env.vars, "TERM_PROGRAM"), var(&env.vars, "ITERM_SESSION_ID"), &env.tty) {
+        // (`w0t1p0:<id>`: the session's place, then its id.)
+        (Some("iTerm.app"), Some(id), _) => Raise::Mac(MacRaise::Iterm2 { session: id.rsplit(':').next().unwrap_or(id).to_string() }),
+        (Some("Apple_Terminal"), _, Some(tty)) => Raise::Mac(MacRaise::Terminal { tty: tty.clone() }),
+        _ => mac_app(&env.vars),
+    }
+}
+
+/// macOS: the terminal app of `vars` brought forward, when known.
+fn mac_app(vars: &HashMap<String, String>) -> Raise {
+    host_bundle(vars).map_or(Raise::None, |bundle| Raise::Mac(MacRaise::App { bundle: bundle.to_string() }))
 }
 
 /// The window manager's raise, of the nearest parent of ttyak that has a window. `title`: the terminal window's, to
@@ -242,7 +336,7 @@ fn probed(vars: HashMap<String, String>, ancestors: Vec<u32>, pid: u32) -> Env {
         _ => None,
     };
     let windows = listed(&vars, os).map(|desktop| windows_of(desktop, &tools)).unwrap_or_default();
-    Env { vars, ancestors, os, pid, title: None, kitty, windows, tmux_client: None }
+    Env { vars, ancestors, os, pid, title: None, kitty, windows, tmux_client: None, tty: None }
 }
 
 /// The desktop whose windows are worth listing for `vars`: not X11 with `WINDOWID` (exact already), nor over ssh -X,
@@ -291,6 +385,7 @@ pub fn raise(r: &Raise) {
                 }
             }
             Step::Kwin { pids, title, plasma6, vars } => kwin(&pids, title.as_deref(), plasma6, &vars),
+            Step::Script(args) => drop(output_within(&args, &[], SCRIPT_WAIT)),
         }
     }
 }
@@ -334,6 +429,9 @@ pub fn describe(r: &Raise) -> String {
             Raise::Niri { .. } => ("niri", None),
             Raise::Kwin { .. } => ("KWin", None),
             Raise::X11 { .. } => ("X11", None),
+            Raise::Mac(MacRaise::Iterm2 { .. }) => ("iTerm2", None),
+            Raise::Mac(MacRaise::Terminal { .. }) => ("Terminal", None),
+            Raise::Mac(MacRaise::App { .. }) => ("macOS", None),
             Raise::None => break,
         };
         names.push(name);
@@ -370,6 +468,9 @@ fn steps(r: &Raise, vars: &[(String, String)]) -> Vec<Step> {
         Raise::Niri { window } => vec![Step::Focus(Desktop::Niri, window.clone(), vars.to_vec())],
         Raise::X11 { window } => vec![Step::Focus(Desktop::X11, window.clone(), vars.to_vec())],
         Raise::Kwin { pids, title, plasma6 } => vec![Step::Kwin { pids: pids.clone(), title: title.clone(), plasma6: *plasma6, vars: vars.to_vec() }],
+        Raise::Mac(MacRaise::Iterm2 { session }) => vec![Step::Script(osascript(ITERM2_SCRIPT, session))],
+        Raise::Mac(MacRaise::Terminal { tty }) => vec![Step::Script(osascript(TERMINAL_SCRIPT, tty))],
+        Raise::Mac(MacRaise::App { bundle }) => vec![run(&["open", "-b", bundle])],
         Raise::None => Vec::new(),
     }
 }
@@ -388,9 +489,24 @@ fn argv(args: &[&str]) -> Vec<String> {
     args.iter().map(|a| a.to_string()).collect()
 }
 
+/// `osascript` running `script`, one `-e` per line, with `arg` as its argument (never written into the script).
+fn osascript(script: &[&str], arg: &str) -> Vec<String> {
+    let mut out = vec!["osascript".to_string()];
+    for line in script {
+        out.extend(["-e".to_string(), line.to_string()]);
+    }
+    out.push(arg.to_string());
+    out
+}
+
 /// Run `argv` without a shell, with `vars` set, for at most [`COMMAND_WAIT`]: what it printed, when it succeeded.
 /// Every run is logged (debug) with how it ended.
 fn output(argv: &[String], vars: &[(String, String)]) -> Option<String> {
+    output_within(argv, vars, COMMAND_WAIT)
+}
+
+/// As [`output`], for at most `wait`.
+fn output_within(argv: &[String], vars: &[(String, String)], wait: Duration) -> Option<String> {
     use std::process::{Command, Stdio};
     let (program, args) = argv.split_first()?;
     let line = argv.join(" ");
@@ -411,8 +527,8 @@ fn output(argv: &[String], vars: &[(String, String)]) -> Option<String> {
         let _ = stdout.read_to_string(&mut text);
         let _ = tx.send(text);
     });
-    let deadline = Instant::now() + COMMAND_WAIT;
-    let text = rx.recv_timeout(COMMAND_WAIT).ok();
+    let deadline = Instant::now() + wait;
+    let text = rx.recv_timeout(wait).ok();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -421,7 +537,7 @@ fn output(argv: &[String], vars: &[(String, String)]) -> Option<String> {
             }
             Ok(None) if text.is_some() && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => {
-                tracing::debug!(command = line, "raise: no answer within {} s", COMMAND_WAIT.as_secs());
+                tracing::debug!(command = line, "raise: no answer within {} s", wait.as_secs());
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
@@ -504,12 +620,12 @@ fn environ(pid: u32) -> HashMap<String, String> {
     raw.split(|b| *b == 0).filter_map(|entry| String::from_utf8_lossy(entry).split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))).collect()
 }
 
-/// The parents of process `pid`, nearest first, up to init (Linux: from /proc; elsewhere none).
+/// The parents of process `pid`, nearest first, up to init (Linux: from /proc; macOS: from the kernel; elsewhere none).
 fn parents(pid: u32) -> Vec<u32> {
     let mut out = Vec::new();
     let mut at = pid;
     while out.len() < 64 {
-        match std::fs::read_to_string(format!("/proc/{at}/stat")).ok().as_deref().and_then(parent_in) {
+        match parent(at) {
             Some(parent) if parent > 1 => {
                 out.push(parent);
                 at = parent;
@@ -520,7 +636,41 @@ fn parents(pid: u32) -> Vec<u32> {
     out
 }
 
+/// The parent of process `pid`.
+#[cfg(not(target_os = "macos"))]
+fn parent(pid: u32) -> Option<u32> {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).ok().as_deref().and_then(parent_in)
+}
+
+#[cfg(target_os = "macos")]
+fn parent(pid: u32) -> Option<u32> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the kernel writes at most `size` bytes into `info`, a buffer of that size.
+    let written = unsafe { libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTBSDINFO, 0, info.as_mut_ptr().cast(), size) };
+    // SAFETY: all of it was written (and zeroed before).
+    (written == size).then(|| unsafe { info.assume_init() }.pbi_ppid)
+}
+
+/// The terminal device ttyak runs on, from its standard streams (macOS only: Terminal.app's tabs are told apart by it).
+#[cfg(target_os = "macos")]
+fn tty() -> Option<String> {
+    (0..3).find_map(|fd| {
+        let mut name = [0 as libc::c_char; 128];
+        // SAFETY: ttyname_r writes a NUL-terminated name of at most `name.len()` bytes into `name`.
+        let found = unsafe { libc::ttyname_r(fd, name.as_mut_ptr(), name.len()) } == 0;
+        // SAFETY: it did.
+        found.then(|| unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned())
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn tty() -> Option<String> {
+    None
+}
+
 /// The parent's pid in a `/proc/<pid>/stat` line.
+#[cfg(any(not(target_os = "macos"), test))]
 fn parent_in(stat: &str) -> Option<u32> {
     // After the name, which may hold spaces and brackets: the state, then the parent.
     stat[stat.rfind(')')? + 1..].split_whitespace().nth(1)?.parse().ok()
@@ -841,6 +991,77 @@ mod tests {
     }
 
     #[test]
+    fn host_apps_by_their_variables() {
+        let vars = |v: &[(&str, &str)]| v.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>();
+        let program = |p: &str| host_bundle(&vars(&[("TERM_PROGRAM", p)]));
+        assert_eq!(program("Apple_Terminal"), Some("com.apple.Terminal"));
+        assert_eq!(program("iTerm.app"), Some("com.googlecode.iterm2"));
+        assert_eq!(program("WezTerm"), Some("com.github.wez.wezterm"));
+        assert_eq!(program("ghostty"), Some("com.mitchellh.ghostty"));
+        assert_eq!(host_bundle(&vars(&[("KITTY_WINDOW_ID", "1")])), Some("net.kovidgoyal.kitty"));
+        assert_eq!(program("tmux"), None, "tmux's own: not an app");
+        assert_eq!(program("vscode"), None);
+        assert_eq!(host_bundle(&vars(&[])), None);
+        assert_eq!(host_bundle(&vars(&[("TERM_PROGRAM", "Apple_Terminal"), ("KITTY_WINDOW_ID", "1")])), Some("com.apple.Terminal"), "kitty's variable inherited by a terminal started from it");
+    }
+
+    #[test]
+    fn macos_selects_the_tab_or_brings_the_app_forward() {
+        let mac = |vars: &[(&str, &str)], tty: Option<&str>| Env { os: "macos", tty: tty.map(String::from), ..at(vars, &[300], &[]) };
+        let terminal = detect(&mac(&[("TERM_PROGRAM", "Apple_Terminal")], Some("/dev/ttys003")));
+        assert_eq!(terminal, Raise::Mac(MacRaise::Terminal { tty: "/dev/ttys003".into() }));
+        let iterm = detect(&mac(&[("TERM_PROGRAM", "iTerm.app"), ("ITERM_SESSION_ID", "w0t1p0:6D9C1F1A-0B6E-4E8B-9C2A-1A2B3C4D5E6F")], Some("/dev/ttys004")));
+        assert_eq!(iterm, Raise::Mac(MacRaise::Iterm2 { session: "6D9C1F1A-0B6E-4E8B-9C2A-1A2B3C4D5E6F".into() }), "the session's id, without its place");
+        let app = |bundle: &str| Raise::Mac(MacRaise::App { bundle: bundle.into() });
+        assert_eq!(detect(&mac(&[("TERM_PROGRAM", "Apple_Terminal")], None)), app("com.apple.Terminal"), "no tty known: the app only");
+        assert_eq!(detect(&mac(&[("TERM_PROGRAM", "iTerm.app")], None)), app("com.googlecode.iterm2"));
+        assert_eq!(detect(&mac(&[("TERM_PROGRAM", "ghostty")], Some("/dev/ttys005"))), app("com.mitchellh.ghostty"));
+        assert_eq!(detect(&mac(&[("ALACRITTY_WINDOW_ID", "1")], Some("/dev/ttys006"))), Raise::None, "an app ttyak doesn't know");
+        // kitty's and WezTerm's remote control pick the tab; then their app comes forward.
+        let kitty = Env { kitty: Some(KittyWindow { pid: 300, title: "ttyak".into() }), ..mac(&[("KITTY_WINDOW_ID", "5"), ("KITTY_LISTEN_ON", KITTY_TO)], None) };
+        let r = detect(&kitty);
+        assert_eq!(r, Raise::Kitty { window: "5".into(), to: KITTY_TO.into(), then: Box::new(app("net.kovidgoyal.kitty")) });
+        assert_eq!(steps(&r, &[])[1], run(&["open", "-b", "net.kovidgoyal.kitty"]));
+        let wezterm = detect(&mac(&[("TERM_PROGRAM", "WezTerm"), ("WEZTERM_PANE", "2")], None));
+        assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(app("com.github.wez.wezterm")) });
+        assert_eq!(describe(&terminal), "via Terminal");
+        assert_eq!(describe(&iterm), "via iTerm2");
+        assert_eq!(describe(&app("com.mitchellh.ghostty")), "via macOS");
+        assert_eq!(describe(&r), "via kitty and macOS");
+    }
+
+    #[test]
+    fn the_terminal_apps_scripts() {
+        // Terminal.app: the tab whose tty is ttyak's, given as the script's argument (never written into it).
+        let [Step::Script(argv)] = &steps(&Raise::Mac(MacRaise::Terminal { tty: "/dev/ttys003".into() }), &[])[..] else { panic!("one script") };
+        assert_eq!((argv[0].as_str(), argv.last().map(String::as_str)), ("osascript", Some("/dev/ttys003")));
+        let lines = &argv[1..argv.len() - 1];
+        assert!(lines.chunks(2).all(|l| l.len() == 2 && l[0] == "-e"), "one -e per line: {argv:?}");
+        let text = lines.chunks(2).map(|l| l[1].as_str()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("tell application id \"com.apple.Terminal\"") && text.contains("if tty of t is (item 1 of argv) then") && text.contains("set selected tab of w to t") && text.contains("activate"), "{text}");
+        assert!(!text.contains("ttys003"));
+        // iTerm2: the session by its id.
+        let [Step::Script(argv)] = &steps(&Raise::Mac(MacRaise::Iterm2 { session: "6D9C".into() }), &[])[..] else { panic!("one script") };
+        let text = argv.join("\n");
+        assert!(text.contains("tell application id \"com.googlecode.iterm2\"") && text.contains("if id of s is (item 1 of argv) then") && text.contains("select s") && argv.last().map(String::as_str) == Some("6D9C"), "{text}");
+        // Any other app: brought forward by Launch Services (no Apple event, so no question asked).
+        assert_eq!(steps(&Raise::Mac(MacRaise::App { bundle: "com.mitchellh.ghostty".into() }), &[]), vec![run(&["open", "-b", "com.mitchellh.ghostty"])]);
+    }
+
+    /// The scripts compile (macOS; compiling sends no Apple event, so macOS asks nothing). iTerm2's needs iTerm2 installed.
+    #[test]
+    #[ignore = "macOS: compiles the AppleScripts with osacompile"]
+    fn live_scripts_compile() {
+        for (r, needs) in [(MacRaise::Terminal { tty: "/dev/ttys000".into() }, "com.apple.Terminal"), (MacRaise::Iterm2 { session: "x".into() }, "com.googlecode.iterm2")] {
+            let [Step::Script(argv)] = &steps(&Raise::Mac(r), &[])[..] else { panic!("one script") };
+            let out = std::env::temp_dir().join(format!("ttyak-raise-{}.scpt", std::process::id()));
+            let compiled = std::process::Command::new("osacompile").args(["-o", &out.to_string_lossy()]).args(&argv[1..argv.len() - 1]).output().unwrap();
+            let _ = std::fs::remove_file(&out);
+            println!("{needs}: {} {}", compiled.status, String::from_utf8_lossy(&compiled.stderr).trim());
+        }
+    }
+
+    #[test]
     fn gnome_on_wayland_cannot() {
         let gnome = at(&[("XDG_CURRENT_DESKTOP", "GNOME"), ("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")], &[300, 100], &[]);
         assert_eq!(detect(&gnome), Raise::None);
@@ -874,8 +1095,9 @@ mod tests {
     #[test]
     #[ignore]
     fn live_detect() {
-        let r = detect(&env());
-        println!("{r:?} -> {}", describe(&r));
+        let env = env();
+        let r = detect(&env);
+        println!("{r:?} -> {} (parents {:?}, tty {:?})", describe(&r), env.ancestors, env.tty);
     }
 
     /// Brings the window forward by what is picked — only with `TTYAK_RAISE_LIVE=1`, where it can't move the user's

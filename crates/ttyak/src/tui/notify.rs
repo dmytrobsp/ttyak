@@ -80,7 +80,8 @@ impl Target {
 
 /// A notification titled `title` saying `body`, with the settings' `sound` (None: none at all) as `by` carries it:
 /// `Notification`: the server plays it ("system": the desktop's own, else the built-in one as the WAV `file`); otherwise
-/// the server is told to keep quiet (ttyak plays it itself, or nobody does).
+/// the server is told to keep quiet (ttyak plays it itself, or nobody does). (macOS sends its bubbles itself: [`mac`].)
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn notice(title: &str, body: &str, sound: Option<&str>, by: SoundBy, file: Option<&std::path::Path>) -> notify_rust::Notification {
     let mut n = notify_rust::Notification::new();
     n.appname("ttyak").summary(title).body(body);
@@ -188,8 +189,8 @@ trait Shown: Send + Sync {
     fn close(&self) -> Fut<'_, ()>;
 }
 
-/// The system's notifier through notify-rust: freedesktop's notification server (replacing, closing, clicks), or
-/// macOS's and Windows' (shown only, for now).
+/// The system's notifier: freedesktop's notification server through notify-rust (replacing, closing, clicks), macOS's
+/// notification centre ([`mac`]: clicks while the main thread runs its run loop), or Windows' (shown only, for now).
 struct System;
 
 impl Backend for System {
@@ -209,7 +210,28 @@ impl Backend for System {
                 tracing::debug!(id = handle.id(), replaced = bubble.replaces.is_some(), "notification shown");
                 Ok(Arc::new(Xdg(handle)) as Arc<dyn Shown>)
             }
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            #[cfg(target_os = "macos")]
+            {
+                // (The older API replaces nothing: a newer bubble stacks.)
+                let (title, body, sound) = (bubble.title, bubble.body, mac_sound(bubble.sound.as_deref(), bubble.by));
+                if bubble.clickable && mac::may_wait() {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    // A thread of its own, not the runtime's blocking pool: it waits until the bubble is clicked or leaves
+                    // the notification centre, maybe long after ttyak stopped waiting.
+                    let waiter = std::thread::Builder::new().name("notification".into()).spawn(move || {
+                        let _ = tx.send(mac::send(&title, &body, sound, true));
+                        mac::done_waiting();
+                    });
+                    if let Err(e) = waiter {
+                        mac::done_waiting();
+                        return Err(e.into());
+                    }
+                    return Ok(Arc::new(MacBubble(Mutex::new(Some(rx)))) as Arc<dyn Shown>);
+                }
+                tokio::task::spawn_blocking(move || mac::send(&title, &body, sound, false));
+                Ok(Arc::new(Unwatched) as Arc<dyn Shown>)
+            }
+            #[cfg(not(unix))]
             {
                 let n = notice(&bubble.title, &bubble.body, bubble.sound.as_deref(), bubble.by, bubble.file.as_deref());
                 let _ = (bubble.replaces, bubble.clickable);
@@ -266,6 +288,165 @@ impl Shown for Xdg {
 
     fn close(&self) -> Fut<'_, ()> {
         Box::pin(self.0.close_async())
+    }
+}
+
+/// A bubble of macOS's notification centre whose click is waited for (on its own thread).
+#[cfg(target_os = "macos")]
+struct MacBubble(Mutex<Option<tokio::sync::oneshot::Receiver<bool>>>);
+
+#[cfg(target_os = "macos")]
+impl Shown for MacBubble {
+    fn id(&self) -> u32 {
+        0
+    }
+
+    fn clicked(&self) -> Fut<'_, bool> {
+        let answer = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        Box::pin(async move {
+            match answer {
+                Some(answer) => answer.await.unwrap_or(false),
+                None => false,
+            }
+        })
+    }
+
+    /// (The older API cannot take a bubble back: it stays in the notification centre.)
+    fn close(&self) -> Fut<'_, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// The sound macOS's bubble carries: the desktop's own when it plays "system" (any other is ttyak's own:
+/// [`system_dnd::sound_route`]).
+#[cfg(any(target_os = "macos", test))]
+fn mac_sound(sound: Option<&str>, by: SoundBy) -> Option<&'static str> {
+    (sound == Some("system") && by == SoundBy::Notification).then(super::sound::system_sound_name)
+}
+
+/// Takes one of `max` places counted by `count`; false when all are taken.
+#[cfg(any(target_os = "macos", test))]
+fn take_place(count: &std::sync::atomic::AtomicUsize, max: usize) -> bool {
+    count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < max).then_some(n + 1)).is_ok()
+}
+
+/// macOS's notification centre through its older API, the one a program outside an app bundle can use: bubbles are sent
+/// as the terminal's app (macOS 26 refuses them as apps that use the newer API, kitty's and Finder's among them), and
+/// its answers — that a bubble was shown, clicked, dismissed — come through the main thread's run loop only.
+#[cfg(target_os = "macos")]
+pub mod mac {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    /// How many bubbles a click is waited for at once (internal: each holds a thread until it is clicked or leaves the
+    /// notification centre; any more are shown without).
+    const WAITERS: usize = 32;
+
+    /// How long the main thread's run loop runs before it looks whether ttyak ended (internal).
+    const RUN_SLICE: Duration = Duration::from_millis(250);
+
+    /// See [`listening`].
+    static RUN_LOOP: AtomicBool = AtomicBool::new(false);
+    static WAITING: AtomicUsize = AtomicUsize::new(0);
+    static SENDER: std::sync::Once = std::sync::Once::new();
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        fn CFRunLoopRunInMode(mode: *const std::ffi::c_void, seconds: f64, return_after_source_handled: u8) -> i32;
+        fn CFRunLoopGetMain() -> *mut std::ffi::c_void;
+        fn CFRunLoopStop(run_loop: *mut std::ffi::c_void);
+    }
+
+    /// `kCFRunLoopRunFinished`: the run loop has nothing to run yet.
+    const FINISHED: i32 = 1;
+
+    /// Run `main` on a thread of its own (with the main thread's stack size) while this, the main thread, runs its run
+    /// loop for the notification centre; `main`'s result once it ends.
+    pub fn with_run_loop<T: Send + 'static>(main: impl FnOnce() -> T + Send + 'static) -> std::io::Result<T> {
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let (ended, main_thread) = (done.clone(), std::thread::current());
+        RUN_LOOP.store(true, Ordering::Relaxed);
+        let worker = std::thread::Builder::new().name("ttyak".into()).stack_size(8 << 20).spawn(move || {
+            let out = main();
+            ended.store(true, Ordering::Relaxed);
+            main_thread.unpark();
+            // SAFETY: the main thread's run loop exists for the whole process; stopping it is allowed from any thread.
+            unsafe { CFRunLoopStop(CFRunLoopGetMain()) };
+            out
+        });
+        let worker = match worker {
+            Ok(worker) => worker,
+            Err(e) => {
+                RUN_LOOP.store(false, Ordering::Relaxed);
+                return Err(e);
+            }
+        };
+        while !done.load(Ordering::Relaxed) {
+            // SAFETY: called on the main thread with the default mode CoreFoundation exports.
+            if unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, RUN_SLICE.as_secs_f64(), 0) } == FINISHED {
+                std::thread::park_timeout(RUN_SLICE);
+            }
+        }
+        RUN_LOOP.store(false, Ordering::Relaxed);
+        match worker.join() {
+            Ok(out) => Ok(out),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    /// Whether a click can be waited for now (the main thread runs its run loop, and a place is free); if so, the place
+    /// is taken until [`done_waiting`].
+    pub fn may_wait() -> bool {
+        listening() && super::take_place(&WAITING, WAITERS)
+    }
+
+    /// The main thread runs its run loop: the notification centre's answers arrive.
+    pub fn listening() -> bool {
+        RUN_LOOP.load(Ordering::Relaxed)
+    }
+
+    pub fn done_waiting() {
+        WAITING.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Bubbles are sent as the terminal's app (once, before the first): its icon, and a click brings it forward. An app
+    /// ttyak doesn't know leaves macOS's default.
+    fn sender() {
+        SENDER.call_once(|| {
+            let vars = std::env::vars().collect();
+            match super::super::raise::host_bundle(&vars) {
+                Some(bundle) => match mac_notification_sys::set_application(bundle) {
+                    Ok(()) => tracing::debug!(bundle, "notifications sent as the terminal's app"),
+                    Err(e) => tracing::debug!(bundle, "notifications: the terminal's app can't send them: {e}"),
+                },
+                None => tracing::debug!("notifications: the terminal's app isn't known; sent as macOS's default"),
+            }
+        });
+    }
+
+    /// Show a bubble with `sound` (a system sound's name); `wait`: until it is clicked (true) or gone (false).
+    pub fn send(title: &str, body: &str, sound: Option<&str>, wait: bool) -> bool {
+        use mac_notification_sys::{Notification, NotificationResponse};
+        sender();
+        let mut n = Notification::new();
+        n.maybe_sound(sound);
+        if wait {
+            n.wait_for_click(true);
+        } else {
+            n.asynchronous(true);
+        }
+        match mac_notification_sys::send_notification(title, None, body, Some(&n)) {
+            Ok(NotificationResponse::Click) => true,
+            Ok(answer) => {
+                tracing::debug!(?answer, wait, "notification ended");
+                false
+            }
+            Err(e) => {
+                tracing::warn!("notification failed: {e}");
+                false
+            }
+        }
     }
 }
 
@@ -621,7 +802,7 @@ impl Notifier {
     /// time this is asked: until it is found, the sound's route reads "not known yet".)
     #[allow(dead_code)] // read by F6, wired in after this
     pub fn route(&self, sound: &str) -> RouteInfo {
-        let click = if cfg!(all(unix, not(target_os = "macos"))) { "opens it in ttyak" } else { "does what the system does" };
+        let click = if cfg!(all(unix, not(target_os = "macos"))) || clicks_heard() { "opens it in ttyak" } else { "does what the system does" };
         let environment = self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if environment.is_none() && !self.inner.shared.probed.swap(true, Ordering::Relaxed) {
             self.send(Cmd::Probe);
@@ -703,6 +884,15 @@ impl Notifier {
             None => std::future::pending().await,
         }
     }
+}
+
+/// Whether the system's notifier tells ttyak about clicks beyond freedesktop's (macOS: while the main thread runs its
+/// run loop).
+fn clicks_heard() -> bool {
+    #[cfg(target_os = "macos")]
+    return mac::listening();
+    #[cfg(not(target_os = "macos"))]
+    false
 }
 
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
@@ -1212,6 +1402,20 @@ mod tests {
         let _ = loud;
     }
 
+    #[test]
+    fn macos_bubbles() {
+        // Only "system" is the desktop's own sound; ttyak plays any other itself.
+        assert_eq!(mac_sound(Some("system"), SoundBy::Notification), Some(super::super::sound::system_sound_name()));
+        assert_eq!(mac_sound(Some("system"), SoundBy::None), None);
+        assert_eq!(mac_sound(Some("chime"), SoundBy::Ttyak), None);
+        assert_eq!(mac_sound(None, SoundBy::Notification), None);
+        // So many clicks are waited for at once, then none until one is done.
+        let count = std::sync::atomic::AtomicUsize::new(0);
+        assert!(take_place(&count, 2) && take_place(&count, 2) && !take_place(&count, 2));
+        count.fetch_sub(1, Ordering::Relaxed);
+        assert!(take_place(&count, 2));
+    }
+
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn off_mutes_the_server() {
@@ -1243,13 +1447,20 @@ mod tests {
         n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
-        assert!(matches!(calls.as_slice(), [fake::Call::Show { sound: Some(s), by: SoundBy::Notification, .. }] if s == "chime"), "{calls:?}");
-        assert_eq!(n.route("chime").sound_by, if cfg!(all(unix, not(target_os = "macos"))) { "the notification" } else { "ttyak" });
+        // (macOS's and Windows' bubbles carry only the desktop's own sound: ttyak plays the chime there.)
+        let carried = cfg!(all(unix, not(target_os = "macos")));
+        let first = if carried {
+            matches!(calls.as_slice(), [fake::Call::Show { sound: Some(s), by: SoundBy::Notification, .. }] if s == "chime")
+        } else {
+            matches!(calls.as_slice(), [fake::Call::Play(p), fake::Call::Show { by: SoundBy::Ttyak, .. }] if p == "chime")
+        };
+        assert!(first, "{calls:?}");
+        assert_eq!(n.route("chime").sound_by, if carried { "the notification" } else { "ttyak" });
         // Off: nobody, whatever the server can do.
         n.show(note("D3", "3.0", None, "three"), None, Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
-        assert!(matches!(&calls[1..], [fake::Call::Show { sound: None, by: SoundBy::None, .. }]), "{calls:?}");
+        assert!(matches!(&calls[if carried { 1 } else { 2 }..], [fake::Call::Show { sound: None, by: SoundBy::None, .. }]), "{calls:?}");
         // One that cannot play: ttyak's own player, before the bubble.
         let (n, server) = Notifier::fake();
         n.show(note("D2", "2.0", None, "two"), sound("chime"), Box::new(|_| {}));

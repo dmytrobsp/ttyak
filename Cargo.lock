@@ -5313,6 +5313,7 @@ dependencies = [
  "huddle",
  "image",
  "libc",
+ "mac-notification-sys",
  "notify-rust",
  "qrcode",
  "ratatui",
