@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in ttyak works wrong
+labels: ["triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please leave out anything private: tokens, cookies, message text, names of people or
+        workspaces you'd rather not share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what ttyak did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: input
+    id: version
+    attributes:
+      label: ttyak version
+      description: "`ttyak --version`"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System and terminal
+      placeholder: "e.g. Ubuntu 24.04, kitty 0.48 on Hyprland · macOS 26, Terminal.app · Windows 11, Windows Terminal 1.24"
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `ttyak ctl check`
+      description: Run it in the terminal where the problem happens (not over ssh).
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines (optional)
+      description: |
+        Start ttyak with `TTYAK_LOG=ttyak=debug`, reproduce, and paste the lines around it from `ttyak.log` in ttyak's
+        cache folder. Look them over for anything private first.
+      render: text

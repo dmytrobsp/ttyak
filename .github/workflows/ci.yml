@@ -7,9 +7,9 @@ name: CI
 on:
   push:
     branches: [master]
-    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**"]
+    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**", ".github/ISSUE_TEMPLATE/**"]
   pull_request:
-    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**"]
+    paths-ignore: ["**.md", "docs/**", "site/**", "tools/site/**", ".github/ISSUE_TEMPLATE/**"]
 
 # A newer push to the same branch makes the older run pointless.
 concurrency:

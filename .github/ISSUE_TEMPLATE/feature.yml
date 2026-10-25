@@ -1,0 +1,20 @@
+name: Feature request
+description: Something ttyak doesn't do yet, or could do better
+labels: ["triage"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you'd like
+      description: What you want to do, and how you'd expect it to work.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What you do today instead, or what Slack's own client does.
+  - type: input
+    id: system
+    attributes:
+      label: System and terminal (if it matters)
