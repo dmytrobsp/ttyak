@@ -363,9 +363,10 @@ pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::s
     tokio::spawn(run(path, crate::install::platform(), url, download_base(), current, reports, asks, |u: String| async move { fetch(&u, check_timeout()).await }, settings));
 }
 
-/// [`spawn`]'s task, with `path` for `updates.json`, `fetch` for the GET and `settings` for
-/// `[updates]`; it ends when the app is gone. All the requests that came before a check ends are
-/// answered by that one check.
+/// [`spawn`]'s task, with `path` for `updates.json`, `downloads` for the release folders' parent, `fetch` for the GET
+/// and `settings` for `[updates]`; it ends when the app is gone. All the Check now requests that came before a Check now
+/// ends are answered by that one; one that came while a scheduled check ran gets one after it. A version seen is
+/// written at once, a check running or not.
 async fn run<F, Fut>(path: PathBuf, platform: Option<&str>, url: String, downloads: String, current: Version, reports: tokio::sync::mpsc::UnboundedSender<Report>, mut asks: tokio::sync::mpsc::UnboundedReceiver<Ask>, fetch: F, settings: impl Fn() -> crate::tui::settings::Updates)
 where
     F: Fn(String) -> Fut,
@@ -380,22 +381,43 @@ where
     // What this run last wrote (or tried to): a floor under what the file says.
     let mut kept = State::default();
     let mut asked = false;
-    // The versions whose update screen was opened, still to write down.
-    let mut seen = Vec::new();
     loop {
         let settings = settings();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         // Read each time: another ttyak (another profile) may have checked meanwhile.
         let mut state = with_floor(load_state(&path), &kept);
-        let ran = if asked {
-            let (next, newer, checked) = check_now(&state, now, &current, platform, &url, &fetch).await;
-            // Pressed while it ran: answered by it.
-            drain(&mut asks, &mut seen);
-            Some((next, newer, Some(checked)))
-        } else {
-            check(&settings, &state, now, &current, platform, &url, &fetch).await.map(|(next, newer)| (next, newer, None))
+        // A Check now pressed while a scheduled check runs: one after it.
+        let mut check_after = false;
+        let ran = {
+            let checking = async {
+                if asked {
+                    let (next, newer, checked) = check_now(&state, now, &current, platform, &url, &fetch).await;
+                    Some((next, newer, Some(checked)))
+                } else {
+                    check(&settings, &state, now, &current, platform, &url, &fetch).await.map(|(next, newer)| (next, newer, None))
+                }
+            };
+            tokio::pin!(checking);
+            loop {
+                tokio::select! {
+                    ran = &mut checking => break ran,
+                    // A version seen is written at once, not after the check (ttyak may be quit meanwhile); a Check
+                    // now pressed while one runs is answered by it.
+                    ask = asks.recv() => match ask {
+                        Some(ask) => check_after |= take(ask, &path, &mut kept) && !asked,
+                        // The app is gone.
+                        None => return,
+                    },
+                }
+            }
         };
+        // Pressed as it ended: as above.
+        while let Ok(ask) = asks.try_recv() {
+            check_after |= take(ask, &path, &mut kept) && !asked;
+        }
         if let Some((next, newer, checked)) = ran {
+            // With what was written while it ran (a version seen).
+            let next = with_floor(next, &kept);
             kept = next.clone();
             // Only once it is written: never notified twice.
             let saved = save_state(&path, &next);
@@ -416,42 +438,42 @@ where
             }
             state = next;
         }
-        if !seen.is_empty() {
-            state = seen.drain(..).fold(state, |s, v| with_seen(s, &v));
-            kept = state.clone();
-            if let Err(e) = save_state(&path, &state) {
-                tracing::debug!("update check: {}: {e:#}", path.display());
-            }
+        if check_after {
+            asked = true;
+            continue;
         }
-        asked = tokio::select! {
-            () = tokio::time::sleep(wait(&settings, &state, now)) => false,
-            ask = asks.recv() => match ask {
-                Some(ask) => take(ask, &mut seen) | drain(&mut asks, &mut seen),
-                // The app is gone.
-                None => return,
-            },
+        let sleep = tokio::time::sleep(wait(&settings, &state, now));
+        tokio::pin!(sleep);
+        asked = loop {
+            tokio::select! {
+                () = &mut sleep => break false,
+                ask = asks.recv() => match ask {
+                    Some(ask) => {
+                        if take(ask, &path, &mut kept) {
+                            break true;
+                        }
+                    }
+                    // The app is gone.
+                    None => return,
+                },
+            }
         };
     }
 }
 
-/// `ask` taken: true for a Check now; a version seen goes to `seen`.
-fn take(ask: Ask, seen: &mut Vec<Version>) -> bool {
+/// `ask` taken: true for a Check now; a version seen is written to `path` at once, with `kept` (what this run last
+/// wrote) as the floor, and is then what this run last wrote.
+fn take(ask: Ask, path: &Path, kept: &mut State) -> bool {
     match ask {
         Ask::CheckNow => true,
         Ask::Seen(version) => {
-            seen.push(version);
+            *kept = with_seen(with_floor(load_state(path), kept), &version);
+            if let Err(e) = save_state(path, kept) {
+                tracing::debug!("update check: {}: {e:#}", path.display());
+            }
             false
         }
     }
-}
-
-/// What waits on `asks` taken: true when a Check now is among it.
-fn drain(asks: &mut tokio::sync::mpsc::UnboundedReceiver<Ask>, seen: &mut Vec<Version>) -> bool {
-    let mut check = false;
-    while let Ok(ask) = asks.try_recv() {
-        check |= take(ask, seen);
-    }
-    check
 }
 
 /// The executable in the release archive (its top level).
@@ -1130,6 +1152,85 @@ mod tests {
         let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
         let found = next(&mut reports).await;
         assert!(matches!(&found, Some(Report::Found(Found { notify: false, desktop: false, .. }))), "{found:?}");
+        drop(asks_tx);
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+    }
+
+    /// A version seen is written at once, also while a check hangs (ttyak may be quit before it ends), and the check's
+    /// own write after it keeps it.
+    #[tokio::test]
+    async fn a_version_seen_is_written_while_a_check_runs() {
+        let dir = Temp::new("seen-busy");
+        let path = dir.0.join("updates.json");
+        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux"));
+        save_state(&path, &state).unwrap();
+        // Due at once; its answer comes only when the test lets it.
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let fetch = {
+            let gate = gate.clone();
+            move |_url: String| {
+                let gate = gate.clone();
+                async move {
+                    gate.notified().await;
+                    Ok(FEED.to_string())
+                }
+            }
+        };
+        let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, fetch, Updates::default));
+        let found = tokio::time::timeout(Duration::from_secs(5), reports.recv()).await.unwrap();
+        assert!(matches!(found, Some(Report::Found(Found { notify: true, .. }))), "{found:?}");
+        asks_tx.send(Ask::Seen(v("0.10.2"))).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while load_state(&path).seen.is_none() {
+            assert!(std::time::Instant::now() < until, "seen not written while the check runs");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // The check ends and writes its own state: the version seen stays.
+        gate.notify_one();
+        let found = tokio::time::timeout(Duration::from_secs(5), reports.recv()).await.unwrap();
+        assert!(matches!(found, Some(Report::Found(_))), "{found:?}");
+        let after = load_state(&path);
+        assert!(after.last_check > 50, "the check's write: {after:?}");
+        assert_eq!(after.seen.as_deref(), Some("0.10.2"));
+        drop(asks_tx);
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+    }
+
+    /// Check now pressed while a scheduled check runs: checked again after it, and says how it ended.
+    #[tokio::test]
+    async fn check_now_during_a_scheduled_check_comes_after_it() {
+        let dir = Temp::new("now-after");
+        let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+        let fetched = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fetch = {
+            let (gate, fetched) = (gate.clone(), fetched.clone());
+            move |_url: String| {
+                let (gate, fetched) = (gate.clone(), fetched.clone());
+                async move {
+                    fetched.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    gate.acquire().await.unwrap().forget();
+                    Ok(FEED.to_string())
+                }
+            }
+        };
+        let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(dir.0.join("updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, fetch, Updates::default));
+        while fetched.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        asks_tx.send(Ask::CheckNow).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        gate.add_permits(2);
+        async fn next(r: &mut tokio::sync::mpsc::UnboundedReceiver<Report>) -> Option<Report> {
+            tokio::time::timeout(Duration::from_secs(5), r.recv()).await.unwrap()
+        }
+        assert!(matches!(next(&mut reports).await, Some(Report::Found(Found { notify: true, .. }))), "the scheduled one");
+        assert!(matches!(next(&mut reports).await, Some(Report::Found(Found { notify: false, .. }))), "Check now's");
+        assert!(matches!(next(&mut reports).await, Some(Report::Checked(Checked::Out(_)))));
+        assert_eq!(fetched.load(std::sync::atomic::Ordering::SeqCst), 2);
         drop(asks_tx);
         tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
     }
