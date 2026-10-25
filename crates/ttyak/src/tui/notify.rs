@@ -1304,9 +1304,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                         }
                     }
                 }
-                if let (SoundBy::Ttyak, Some(own)) = (bubble.by, own) {
-                    backend.play(own);
-                }
+                let by = bubble.by;
                 bubble.replaces = key.as_ref().and_then(|k| live.get(k)).map(|o| o.shown.id());
                 // A server that can't replace in place (macOS): the older bubble goes first, so the newer one is the
                 // only one left (they may show the same).
@@ -1333,6 +1331,10 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                         continue;
                     }
                 };
+                // ttyak's own sound once the bubble is up (none for a bubble that failed).
+                if let (SoundBy::Ttyak, Some(own)) = (by, own) {
+                    backend.play(own);
+                }
                 // The replaced bubble's waiter ends: the server keeps its id for the new one. (A click on the old one
                 // that came in just now is lost with it.)
                 if let Some(w) = key.as_ref().and_then(|k| live.remove(k)).and_then(|o| o.waiter) {
@@ -1955,7 +1957,7 @@ mod tests {
         let first = if carried {
             matches!(calls.as_slice(), [fake::Call::Show { sound: Some(s), by: SoundBy::Notification, .. }] if s == "chime")
         } else {
-            matches!(calls.as_slice(), [fake::Call::Play(p), fake::Call::Show { by: SoundBy::Ttyak, .. }] if p == "chime")
+            matches!(calls.as_slice(), [fake::Call::Show { by: SoundBy::Ttyak, .. }, fake::Call::Play(p)] if p == "chime")
         };
         assert!(first, "{calls:?}");
         assert_eq!(n.route("chime").sound_by, if carried { "the notification" } else { "ttyak" });
@@ -1964,12 +1966,25 @@ mod tests {
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(&calls[if carried { 1 } else { 2 }..], [fake::Call::Show { sound: None, by: SoundBy::None, .. }]), "{calls:?}");
-        // One that cannot play: ttyak's own player, before the bubble.
+        // One that cannot play: ttyak's own player, once the bubble is up.
         let (n, server) = Notifier::fake();
         n.show(note("D2", "2.0", None, "two"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
-        assert!(matches!(calls.as_slice(), [fake::Call::Play(p), fake::Call::Show { by: SoundBy::Ttyak, .. }] if p == "chime"), "{calls:?}");
+        assert!(matches!(calls.as_slice(), [fake::Call::Show { by: SoundBy::Ttyak, .. }, fake::Call::Play(p)] if p == "chime"), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn no_bubble_no_sound_of_ttyaks() {
+        // A server that cannot play: ttyak's own sound, but only once the bubble is up.
+        for (down, hung) in [(true, false), (false, true)] {
+            let (n, server) = Notifier::fake();
+            server.set_down(down);
+            server.set_hung(hung);
+            n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
+            n.settled().await;
+            assert!(!server.calls().iter().any(|c| matches!(c, fake::Call::Play(_))), "down {down}, hung {hung}: {:?}", server.calls());
+        }
     }
 
     #[tokio::test]
@@ -2041,7 +2056,7 @@ mod tests {
         n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
-        assert!(matches!(calls.as_slice(), [fake::Call::Play(_), fake::Call::Show { by: SoundBy::Ttyak, file: None, .. }]) || !cfg!(all(unix, not(target_os = "macos"))), "{calls:?}");
+        assert!(matches!(calls.as_slice(), [fake::Call::Show { by: SoundBy::Ttyak, file: None, .. }, fake::Call::Play(_)]) || !cfg!(all(unix, not(target_os = "macos"))), "{calls:?}");
     }
 
     #[tokio::test]
@@ -2113,7 +2128,8 @@ mod tests {
         // Clicked, it is gone: the next one is a bubble of its own.
         n.show(note("D1", "4.0", None, "three"), Some(Sound { name: "system".into(), device: None, volume: 100 }), on_click("three"));
         n.settled().await;
-        let fake::Call::Show { replaces, sound, .. } = server.calls().pop().unwrap() else { panic!() };
+        // (A server without sounds: ttyak's own player after it.)
+        let Some(fake::Call::Show { replaces, sound, .. }) = server.calls().into_iter().rev().find(|c| matches!(c, fake::Call::Show { .. })) else { panic!() };
         assert_eq!((replaces, sound.as_deref()), (None, Some("system")));
         // The update notice stands alone, silent.
         n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);

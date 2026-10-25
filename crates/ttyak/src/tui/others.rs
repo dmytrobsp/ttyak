@@ -110,6 +110,15 @@ fn withdraw_read(notifier: &Notifier, index: usize, counts: &Value) {
     }
 }
 
+/// Keep workspace `index`'s badge from a poll, unless the user switched to it meanwhile (its sidebar counts then).
+/// (Asked under the lock: the switch stores the shown index before it takes the shown one's badge away.)
+fn keep(badges: &Badges, shown: &AtomicUsize, index: usize, badge: Badge) {
+    let mut badges = badges.lock().unwrap_or_else(|e| e.into_inner());
+    if index != shown.load(Ordering::Relaxed) {
+        badges.insert(index, badge);
+    }
+}
+
 /// Ask every workspace but the shown one (`shown`, kept current by the caller) and the signed-out
 /// ones for its counts, now, every [`POLL`] and whenever `wake` is notified (a switch); nothing
 /// to do with a single workspace. What they show read withdraws its bubbles from `notifier`.
@@ -124,7 +133,7 @@ pub fn spawn(sessions: Vec<WorkspaceSession>, shown: Arc<AtomicUsize>, badges: B
                 let Some(client) = client.as_ref().filter(|_| i != shown.load(Ordering::Relaxed) && !out(&signed_out, i)) else { continue };
                 match client.counts().await {
                     Ok(v) => {
-                        badges.lock().unwrap_or_else(|e| e.into_inner()).insert(i, badge(&v));
+                        keep(&badges, &shown, i, badge(&v));
                         withdraw_read(&notifier, i, &v);
                     }
                     Err(e) => {
@@ -335,6 +344,19 @@ mod tests {
         notifier.settled().await;
         assert_eq!(server.calls().last(), Some(&Call::Close(1)), "D1 read; D2 newer than its mark, and another workspace's D2 is not this one");
         assert_eq!(server.calls().len(), 3);
+    }
+
+    #[test]
+    fn a_poll_answered_after_a_switch_to_its_workspace_is_dropped() {
+        let (badges, shown) = (Badges::default(), AtomicUsize::new(0));
+        keep(&badges, &shown, 1, Badge { attention: 1, unread: true });
+        // The user switched to workspace 2 while its counts were on the way.
+        shown.store(1, Ordering::Relaxed);
+        badges.lock().unwrap().remove(&1);
+        keep(&badges, &shown, 1, Badge { attention: 2, unread: true });
+        assert!(badges.lock().unwrap().is_empty(), "the shown workspace's own counts are its sidebar's");
+        keep(&badges, &shown, 0, Badge { attention: 0, unread: true });
+        assert_eq!(badges.lock().unwrap().keys().copied().collect::<Vec<_>>(), [0]);
     }
 
     #[test]

@@ -6682,7 +6682,8 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
             app.mark_signed_out();
         }
         RtmEvent::Event(v) => {
-            let fx = super::live::apply(&mut app.ws, &v, app.current.as_deref(), reading(app.focus_reported, app.terminal_focused));
+            // (Behind a main-pane view the open conversation is not on screen: what arrives in it counts unread.)
+            let fx = super::live::apply(&mut app.ws, &v, app.current.as_deref(), reading(app.focus_reported, app.terminal_focused) && app.view == View::Conversation);
             if let Some((channel, thread, up_to)) = &fx.read {
                 app.notifier.read(&app.bubble_key(channel), thread.as_deref(), up_to);
             }
@@ -8735,6 +8736,20 @@ mod tests {
         // Focused and reading: it never counts.
         super::handle_rtm(&mut app, dm("1700000002.000100"));
         assert_eq!(read(&app), State::Read);
+    }
+
+    #[tokio::test]
+    async fn a_message_in_the_open_conversation_is_unread_behind_a_view() {
+        use crate::tui::attention::{State, state};
+        use crate::tui::state::Timeline;
+        let (mut app, _server) = notified_app();
+        app.ws.timelines.insert("D1".into(), Timeline { loaded: true, ..Default::default() });
+        app.current = Some("D1".into());
+        app.view = super::View::Threads;
+        super::handle_rtm(&mut app, dm("1700000001.000100"));
+        app.mark_reads();
+        assert_eq!(state(&app.ws, &Default::default()), State::ForYou, "the Threads view in front, the DM not on screen");
+        assert!(app.ws.unread["D1"].has_unreads);
     }
 
     /// An app on a workspace that answers nothing (every request is refused at once), with the

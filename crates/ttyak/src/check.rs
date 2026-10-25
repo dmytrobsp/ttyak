@@ -60,7 +60,7 @@ const SYSTEM: &str = "The system";
 const NOT_A_TERMINAL: &str = "Not a terminal (stdin is not one): the terminal part is skipped. Run it in your terminal.";
 const GLYPHS_HEAD: &str = "Glyphs: the | at the end of each line should sit in one column";
 const LOOK_FOR: &str = "Look for empty boxes or misaligned columns";
-const FONTS_HINT: &str = "Boxes: install the fonts listed under Requirements in the README, or turn on F6 → Emoji as names. Misaligned rows: the terminal measures emoji differently.";
+const FONTS_HINT: &str = "Boxes: install the fonts listed under Requirements in the README, or turn on F6 → Messages & media → Show emoji as :names:. Misaligned rows: the terminal measures emoji differently.";
 const LINKS_NAME: &str = "links (OSC 8)";
 const LINK_TEXT: &str = "a link to ttyak.sh";
 

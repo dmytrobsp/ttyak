@@ -1,5 +1,5 @@
 //! The terminal's tab title: `○ ttyak - <workspace>`, the read/unread mark first, and the title it had before
-//! put back when ttyak ends.
+//! put back when ttyak ends (where the terminal keeps a title stack; elsewhere the title is cleared).
 
 use std::io::{self, Write};
 
@@ -59,11 +59,13 @@ impl Title {
         if on { self.set(out, &text(state, workspace)) } else { Ok(()) }
     }
 
-    /// Puts the terminal's own title back, if ttyak changed it.
-    pub fn restore(&self, out: &mut impl Write) {
+    /// Puts the terminal's own title back, if ttyak changed it, once: the title is cleared first (for terminals
+    /// without a title stack), then popped (where there is one, the pop wins).
+    pub fn restore(&mut self, out: &mut impl Write) {
         if self.pushed {
-            let _ = out.write_all(b"\x1b[23;0t");
+            let _ = out.write_all(b"\x1b]2;\x07\x1b[23;0t");
             let _ = out.flush();
+            (self.pushed, self.last) = (false, None);
         }
     }
 }
@@ -100,7 +102,20 @@ mod tests {
         assert_eq!(String::from_utf8(out.clone()).unwrap().matches("\x1b[22;0t").count(), 1);
         let mut back = Vec::new();
         t.restore(&mut back);
-        assert_eq!(back, b"\x1b[23;0t");
+        // The title cleared first (terminals without a title stack), then the pop (it wins where there is one).
+        assert_eq!(back, b"\x1b]2;\x07\x1b[23;0t");
+    }
+
+    #[test]
+    fn restored_once() {
+        let (mut t, mut out) = (Title::default(), Vec::new());
+        t.set(&mut out, "○ ttyak - a").unwrap();
+        let mut back = Vec::new();
+        t.restore(&mut back);
+        assert!(!back.is_empty());
+        let mut again = Vec::new();
+        t.restore(&mut again);
+        assert!(again.is_empty(), "the old title is popped only once: {again:?}");
     }
 
     #[test]
