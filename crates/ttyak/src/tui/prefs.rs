@@ -687,6 +687,8 @@ pub struct Machine {
     pub dnd_on: Option<bool>,
     /// When the last read started; None: not read yet.
     pub read_at: Option<Instant>,
+    /// The route is being read (one read at a time: a hung one is not started again).
+    pub route_reading: bool,
 }
 
 /// What Enter does on a row of "On this machine".
@@ -1071,6 +1073,16 @@ impl Prefs {
     }
 
     /// Whether F6 → Notifications is shown and what it read about this machine is missing or old: it is to be read.
+    /// The help of `field` on this page, titled as its row is here (the pause on Notifications).
+    fn help_of(&self, field: Field, ws: &Workspace, keys: &Keymap) -> super::prefs_help::Help {
+        let mut help = super::prefs_help::help_shown(field, ws, keys, self.machine_value(field).as_deref());
+        let label = page_label(self.category, field);
+        if label != field.label() {
+            help.title = label;
+        }
+        help
+    }
+
     pub fn machine_due(&self) -> bool {
         CATEGORIES.get(self.category).is_some_and(|c| c.0 == "Notifications") && self.machine.lock().unwrap_or_else(|e| e.into_inner()).read_at.is_none_or(|at| at.elapsed() >= MACHINE_REREAD)
     }
@@ -1546,7 +1558,7 @@ impl Prefs {
         // The selected item's help under a blank row, indented like the rows; too little room: none.
         let below = Rect { x: right.x + 1, y: list_area.y + shown + 1, width: right.width.saturating_sub(1), height: list_area.height.saturating_sub(shown + 1) };
         if let Some(field) = fields.get(self.selected) {
-            let help = if keys_shown && self.filter_focused { super::prefs_help::filter_help(keys) } else { super::prefs_help::help_shown(*field, ws, keys, self.machine_value(*field).as_deref()) };
+            let help = if keys_shown && self.filter_focused { super::prefs_help::filter_help(keys) } else { self.help_of(*field, ws, keys) };
             if let Some(height) = super::prefs_help::box_height(&help, below.width, below.height) {
                 super::prefs_help::draw(f, Rect { height, ..below }, &help);
             }
@@ -1632,6 +1644,17 @@ fn fit(text: &str, room: usize, tail: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_help_title_is_the_rows_label_on_its_page() {
+        let (ws, keys) = (Workspace::default(), Keymap::load("").0);
+        let mut p = Prefs::default();
+        p.category = CATEGORIES.iter().position(|(name, _)| *name == "Notifications").unwrap();
+        assert_eq!(p.help_of(Field::Notifications, &ws, &keys).title, "Pause notifications");
+        assert_eq!(p.help_of(Field::Bell, &ws, &keys).title, Field::Bell.label());
+        p.category = CATEGORIES.iter().position(|(name, _)| *name == "Availability").unwrap();
+        assert_eq!(p.help_of(Field::Notifications, &ws, &keys).title, "Notifications");
+    }
 
     #[test]
     fn the_save_folder() {

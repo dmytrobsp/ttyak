@@ -1422,8 +1422,12 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
             Cmd::Probe => drop(environment(&backend, &shared).await),
             Cmd::ReadDnd(done) => {
                 let environment = environment(&backend, &shared).await;
-                let answer = backend.suppressed(environment.server.clone()).await;
-                done(system_dnd::describe(&environment.server, answer), answer);
+                let ask = backend.suppressed(environment.server.clone());
+                // Answered beside the worker: F6's reads (every few seconds) and the ring's hold no notification back.
+                drop(tokio::spawn(async move {
+                    let answer = ask.await;
+                    done(system_dnd::describe(&environment.server, answer), answer);
+                }));
             }
             Cmd::Withdraw { key, how } => {
                 let covered = live.get(&key).is_some_and(|l| how.takes(l.at.as_ref()));
@@ -1572,6 +1576,8 @@ pub mod fake {
         last_id: AtomicU32,
         down: AtomicBool,
         hung: AtomicBool,
+        /// The system never answers about do-not-disturb.
+        dnd_hung: AtomicBool,
         environment: Mutex<Environment>,
         suppressed: Mutex<Option<bool>>,
         /// How often the system was asked about do-not-disturb, and the notification server about itself.
@@ -1593,6 +1599,7 @@ pub mod fake {
                 last_id: AtomicU32::default(),
                 down: AtomicBool::default(),
                 hung: AtomicBool::default(),
+                dnd_hung: AtomicBool::default(),
                 environment: Mutex::new(Environment { server: system_dnd::Server::Other("fake".into()), capabilities: Vec::new() }),
                 suppressed: Mutex::new(Some(false)),
                 asked: AtomicU32::default(),
@@ -1638,6 +1645,11 @@ pub mod fake {
         /// From now on the built-in sounds cannot be written as files, or can.
         pub fn set_no_files(&self, no_files: bool) {
             self.no_files.store(no_files, Ordering::Relaxed);
+        }
+
+        /// From now on the system never answers about do-not-disturb (`hung`), or answers again.
+        pub fn set_dnd_hung(&self, hung: bool) {
+            self.dnd_hung.store(hung, Ordering::Relaxed);
         }
 
         /// What the system says about do-not-disturb from now on (None: cannot be told).
@@ -1698,7 +1710,13 @@ pub mod fake {
         fn suppressed(&self, _: system_dnd::Server) -> Fut<'static, Option<bool>> {
             self.0.asked.fetch_add(1, Ordering::Relaxed);
             let answer = *self.0.suppressed.lock().unwrap();
-            Box::pin(async move { answer })
+            let hung = self.0.dnd_hung.load(Ordering::Relaxed);
+            Box::pin(async move {
+                if hung {
+                    std::future::pending::<()>().await;
+                }
+                answer
+            })
         }
 
         fn play(&self, sound: Sound) {
@@ -2424,6 +2442,21 @@ mod tests {
         let started = std::time::Instant::now();
         let _rx = read(&n);
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn f6_reading_the_systems_do_not_disturb_holds_no_notification_back() {
+        let (n, server) = Notifier::fake();
+        server.set_dnd_hung(true);
+        n.read_system_dnd(|_, _| {});
+        n.show_silent("after".into(), "b".into(), None);
+        for _ in 0..100 {
+            if !server.calls().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(matches!(server.calls().first(), Some(fake::Call::Show { title, .. }) if title == "after"), "{:?}", server.calls());
     }
 
     #[tokio::test]

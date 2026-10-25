@@ -3568,14 +3568,18 @@ impl App {
         let Some(p) = self.prefs.as_ref() else { return };
         let machine = p.machine.clone();
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-        // Not read again while this one is under way.
-        machine.lock().unwrap_or_else(|e| e.into_inner()).read_at = Some(std::time::Instant::now());
+        // Not read again while this one is under way; a route check that hangs is not started again until it is back.
+        let route_busy = {
+            let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
+            m.read_at = Some(std::time::Instant::now());
+            std::mem::replace(&mut m.route_reading, true)
+        };
         let shared = machine.clone();
-        drop(runtime.spawn_blocking(move || {
+        let check = move || {
             let (info, via_terminal, known) = route();
             let ask_raise = {
                 let mut m = shared.lock().unwrap_or_else(|e| e.into_inner());
-                (m.route, m.via_terminal) = (Some(info), via_terminal);
+                (m.route, m.via_terminal, m.route_reading) = (Some(info), via_terminal, false);
                 // The server is still being looked for: read again soon.
                 if !known {
                     m.read_at = std::time::Instant::now().checked_sub(super::prefs::MACHINE_REREAD - std::time::Duration::from_secs(1));
@@ -3586,7 +3590,10 @@ impl App {
                 let text = raise();
                 shared.lock().unwrap_or_else(|e| e.into_inner()).raise = Some(text);
             }
-        }));
+        };
+        if !route_busy {
+            drop(runtime.spawn_blocking(check));
+        }
         self.notifier.read_system_dnd(move |text, on| {
             let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
             (m.dnd, m.dnd_on) = (Some(text), on);
@@ -11586,6 +11593,49 @@ mod tests {
         app.ws.settings.notifications.bell = false;
         app.send_test_notification();
         assert!(!app.status.contains("bell"), "{}", app.status);
+    }
+
+    #[tokio::test]
+    async fn a_hung_route_check_is_not_started_again() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        let started = std::sync::Arc::new(AtomicU32::new(0));
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let released = std::sync::Arc::new(std::sync::Mutex::new(released));
+        let route = || {
+            let (started, released) = (started.clone(), released.clone());
+            move || {
+                started.fetch_add(1, Ordering::SeqCst);
+                let _ = released.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5));
+                (crate::tui::notify::RouteInfo { shown_by: "hung".into(), sound_by: "ttyak".into(), click: "opens it".into() }, false, true)
+            }
+        };
+        let wait_for = |what: &dyn Fn() -> bool| {
+            for _ in 0..300 {
+                if what() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            false
+        };
+        app.read_machine_with(route(), || "via nothing".into());
+        assert!(wait_for(&|| started.load(Ordering::SeqCst) == 1));
+        // Due again while the first still hangs: not started a second time.
+        app.prefs.as_ref().unwrap().machine.lock().unwrap().read_at = None;
+        assert!(app.prefs.as_ref().unwrap().machine_due());
+        app.read_machine_with(route(), || "via nothing".into());
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(started.load(Ordering::SeqCst), 1, "one route check at a time");
+        // Once it is back, the next one starts.
+        release.send(()).unwrap();
+        let machine = app.prefs.as_ref().unwrap().machine.clone();
+        assert!(wait_for(&|| machine.lock().unwrap().route.is_some()));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        release.send(()).unwrap();
+        app.read_machine_with(route(), || "via nothing".into());
+        assert!(wait_for(&|| started.load(Ordering::SeqCst) == 2));
     }
 
     #[tokio::test]
