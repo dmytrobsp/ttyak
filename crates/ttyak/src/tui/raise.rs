@@ -192,6 +192,33 @@ fn tab_of(names: &[String], title: &str) -> Tab {
     }
 }
 
+/// What is done with the tab [`tab_of`] picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TabMove {
+    Select(usize),
+    AlreadySelected(usize),
+    /// The tab can't be selected through UI Automation.
+    NoPattern(usize),
+    /// The raise gave up waiting for UI Automation: nothing is selected after it.
+    Late,
+    Missing,
+    Several(usize),
+}
+
+/// What is done with tab `pick`: `selected`, whether it is selected already (None: it has no SelectionItemPattern);
+/// `late`, the raise gave up waiting.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn tab_move(pick: Tab, selected: Option<bool>, late: bool) -> TabMove {
+    match (pick, selected) {
+        (Tab::Missing, _) => TabMove::Missing,
+        (Tab::Several(n), _) => TabMove::Several(n),
+        (Tab::At(_), _) if late => TabMove::Late,
+        (Tab::At(i), None) => TabMove::NoPattern(i),
+        (Tab::At(i), Some(true)) => TabMove::AlreadySelected(i),
+        (Tab::At(i), Some(false)) => TabMove::Select(i),
+    }
+}
+
 /// Title `title` after its read/unread mark and the space after it, when it starts with one.
 fn unmarked(title: &str) -> Option<&str> {
     use super::attention::State;
@@ -252,10 +279,18 @@ fn console_forward() {}
 #[cfg_attr(not(windows), allow(dead_code))]
 const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
 
+/// How long UI Automation may take to reach Windows Terminal and to answer one call (internal; its own default is 20
+/// seconds a call).
+#[cfg_attr(not(windows), allow(dead_code))]
+const AUTOMATION_WAIT: Duration = Duration::from_millis(1500);
+
 /// Select Windows Terminal's tab titled `title` in the console's window, when that is Windows Terminal's: UI
-/// Automation, at most [`COMMAND_WAIT`] (left behind if it hangs). Logged; nothing else happens when it can't.
+/// Automation, at most [`COMMAND_WAIT`] (once given up, a late answer selects nothing). Logged; nothing else happens
+/// when it can't.
 #[cfg(windows)]
 fn select_tab(title: &str) {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW;
     let root = console_windows().1;
     let mut class = [0u16; 64];
@@ -266,46 +301,78 @@ fn select_tab(title: &str) {
         tracing::debug!(root, class, "raise: not Windows Terminal's window: no tab to select");
         return;
     }
-    let title = title.to_string();
-    if bounded(move || Some(select_tab_in(root, &title))).is_none() {
+    let (title, late) = (title.to_string(), Arc::new(AtomicBool::new(false)));
+    let given_up = late.clone();
+    let selecting = move || {
+        select_tab_in(root, &title, &late);
+        Some(())
+    };
+    if bounded(selecting).is_none() {
+        given_up.store(true, Ordering::Release);
         tracing::debug!("raise: Windows Terminal's tabs: no answer within {} s", COMMAND_WAIT.as_secs());
     }
 }
 
-/// [`select_tab`]'s work in window `root`, on its own thread (COM initialised for it).
+/// [`select_tab`]'s work in window `root`, on its own thread (COM initialised for it); `late`: the caller gave up.
 #[cfg(windows)]
-fn select_tab_in(root: u64, title: &str) {
+fn select_tab_in(root: u64, title: &str, late: &std::sync::atomic::AtomicBool) {
+    use std::mem::ManuallyDrop;
+    use std::sync::atomic::Ordering;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
-    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationSelectionItemPattern, TreeScope_Descendants, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId};
+    use windows::Win32::System::Variant::{VARIANT, VARIANT_0, VARIANT_0_0, VARIANT_0_0_0, VT_I4};
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomation2, IUIAutomationSelectionItemPattern, TreeScope_Descendants, UIA_ControlTypePropertyId, UIA_NamePropertyId, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
+    };
+    use windows::core::Interface;
     // SAFETY: COM initialised on this thread for the calls below and uninitialised after them (their objects are
-    // dropped first); the window handle is Windows', a stale one only makes UI Automation fail.
+    // dropped first); the window handle is Windows', a stale one only makes UI Automation fail; the VARIANT is a plain
+    // VT_I4.
     unsafe {
         let init = CoInitializeEx(None, COINIT_MULTITHREADED);
         let select = || -> windows::core::Result<()> {
             let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
-            let window = automation.ElementFromHandle(HWND(root as _))?;
-            let all = window.FindAll(TreeScope_Descendants, &automation.CreateTrueCondition()?)?;
-            let mut tabs: Vec<IUIAutomationElement> = Vec::new();
-            for i in 0..all.Length()? {
-                let element = all.GetElement(i)?;
-                if element.CurrentControlType()? == UIA_TabItemControlTypeId {
-                    tabs.push(element);
-                }
+            if let Ok(timed) = automation.cast::<IUIAutomation2>() {
+                let ms = AUTOMATION_WAIT.as_millis() as u32;
+                let _ = (timed.SetConnectionTimeout(ms), timed.SetTransactionTimeout(ms));
             }
-            let names: Vec<String> = tabs.iter().map(|t| t.CurrentName().map(|n| n.to_string()).unwrap_or_default()).collect();
-            match tab_of(&names, title) {
-                Tab::At(i) => {
-                    let item: IUIAutomationSelectionItemPattern = tabs[i].GetCurrentPatternAs(UIA_SelectionItemPatternId)?;
-                    if item.CurrentIsSelected()?.as_bool() {
-                        tracing::debug!(tab = i, tabs = tabs.len(), "raise: Windows Terminal's tab already selected");
-                    } else {
+            let window = automation.ElementFromHandle(HWND(root as _))?;
+            // Only the tab items, their names fetched with them (one call, not one per tab).
+            let tab_item = VARIANT { Anonymous: VARIANT_0 { Anonymous: ManuallyDrop::new(VARIANT_0_0 { vt: VT_I4, Anonymous: VARIANT_0_0_0 { lVal: UIA_TabItemControlTypeId.0 }, ..Default::default() }) } };
+            let condition = automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &tab_item)?;
+            let cache = automation.CreateCacheRequest()?;
+            cache.AddProperty(UIA_NamePropertyId)?;
+            let found = window.FindAllBuildCache(TreeScope_Descendants, &condition, &cache)?;
+            let tabs = (0..found.Length()?).map(|i| found.GetElement(i)).collect::<windows::core::Result<Vec<_>>>()?;
+            let names: Vec<String> = tabs.iter().map(|t| t.CachedName().map(|n| n.to_string()).unwrap_or_default()).collect();
+            let pick = tab_of(&names, title);
+            let mut item: Option<IUIAutomationSelectionItemPattern> = None;
+            let mut selected = None;
+            if let Tab::At(i) = pick {
+                // (No such pattern: an empty answer, an error whose code is success.)
+                item = match tabs[i].GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) {
+                    Ok(item) => Some(item),
+                    Err(e) if e.code().is_ok() => None,
+                    Err(e) => return Err(e),
+                };
+                selected = match &item {
+                    Some(item) => Some(item.CurrentIsSelected()?.as_bool()),
+                    None => None,
+                };
+            }
+            let n = tabs.len();
+            match tab_move(pick, selected, late.load(Ordering::Acquire)) {
+                TabMove::Select(i) => {
+                    if let Some(item) = &item {
                         item.Select()?;
-                        tracing::debug!(tab = i, tabs = tabs.len(), "raise: Windows Terminal's tab selected");
                     }
+                    tracing::debug!(tab = i, tabs = n, "raise: Windows Terminal's tab selected");
                 }
-                Tab::Missing => tracing::debug!(tabs = tabs.len(), "raise: no Windows Terminal tab carries ttyak's title: left"),
-                Tab::Several(n) => tracing::debug!(tabs = tabs.len(), of_title = n, "raise: several Windows Terminal tabs carry ttyak's title: none selected"),
+                TabMove::AlreadySelected(i) => tracing::debug!(tab = i, tabs = n, "raise: Windows Terminal's tab already selected"),
+                TabMove::NoPattern(i) => tracing::debug!(tab = i, tabs = n, "raise: Windows Terminal's tab has no SelectionItemPattern: left"),
+                TabMove::Late => tracing::debug!(tabs = n, "raise: Windows Terminal's tabs answered after the raise gave up: none selected"),
+                TabMove::Missing => tracing::debug!(tabs = n, "raise: no Windows Terminal tab carries ttyak's title: left"),
+                TabMove::Several(of_title) => tracing::debug!(tabs = n, of_title, "raise: several Windows Terminal tabs carry ttyak's title: none selected"),
             }
             Ok(())
         };
@@ -1366,6 +1433,16 @@ mod tests {
         assert_eq!(tab_of(&names(&["○ ttyak - w2", "○ ttyak - w"]), "● ttyak - w"), Tab::At(1), "another workspace's ttyak isn't it");
         assert_eq!(tab_of(&names(&["x ttyak - w", "ttyak - w"]), "○ ttyak - w"), Tab::Missing, "only ttyak's marks are passed over");
         assert_eq!(tab_of(&names(&["vim ○ ttyak - w"]), "○ ttyak - w"), Tab::Missing, "the whole name, not a part");
+    }
+
+    #[test]
+    fn what_is_done_with_the_tab() {
+        assert_eq!(tab_move(Tab::At(1), Some(false), false), TabMove::Select(1));
+        assert_eq!(tab_move(Tab::At(1), Some(true), false), TabMove::AlreadySelected(1));
+        assert_eq!(tab_move(Tab::At(1), None, false), TabMove::NoPattern(1), "a tab without SelectionItemPattern");
+        assert_eq!(tab_move(Tab::At(1), Some(false), true), TabMove::Late, "the raise gave up waiting: no tab selected later");
+        assert_eq!(tab_move(Tab::Missing, None, false), TabMove::Missing);
+        assert_eq!(tab_move(Tab::Several(2), None, false), TabMove::Several(2));
     }
 
     #[test]

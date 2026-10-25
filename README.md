@@ -420,9 +420,11 @@ and then brings ttyak's window forward by the first of these that works here:
   the foreground; after WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the
   foreground only in some cases (the user's last input went to it, or the program in front allows it); otherwise the
   window's taskbar button flashes instead. In Windows Terminal (`WT_SESSION`) ttyak's tab is then selected through UI
-  Automation: the tab titled as ttyak titled it (Mark in the tab title on; the read/unread mark may differ); when no
-  tab or several carry that title (two ttyaks of one workspace), the tab is left as it is. Tried at the desktop after a
-  toast click: Windows Terminal 1.24's window and conhost's came forward; selecting the tab is not tried yet.
+  Automation: the tab titled as ttyak titled it (Mark in the tab title on; the read/unread mark may differ). The tab is
+  left as it is, and the log says why, when no tab or several carry that title: two ttyaks of one workspace; ttyak in a
+  split pane that isn't the focused one (Windows Terminal names the tab after its focused pane); a Windows Terminal
+  profile with `tabTitle` or `suppressApplicationTitle`; a tab renamed by hand. Tried at the desktop after a toast
+  click: Windows Terminal 1.24's window and conhost's came forward; selecting the tab is not tried yet.
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the Notification Center's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -468,8 +470,8 @@ ttyak's sound, Windows' sound or the bell (and the huddle ring keeps quiet): Win
 notification center, as it does other apps' toasts — though in a busy state with Windows' full-screen rule off Windows
 may still show a banner. Tried at the desktop: Do not disturb switched on reads as on (profile 1), and so does Windows
 11's automatic one for a full-screen app (profile 2, Windows Terminal full screen); the toast sent without sound in the
-notification center under it is not tried yet. Can't do on
-Windows: picking Windows Terminal's tab when another tab carries the same title; a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
+notification center under it is not tried yet. Can't do on Windows: picking Windows Terminal's tab when it doesn't
+carry ttyak's title alone (above); a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
 
 Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
 one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it
