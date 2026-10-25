@@ -70,7 +70,7 @@ with graphics for real pictures (see below). To build it yourself instead, see b
 
 ## Requirements
 
-What ttyak needs, and what makes it better. `ttyak --profile default ctl check` reports what your terminal and system
+What ttyak needs, and what makes it better. `ttyak ctl check` reports what your terminal and system
 offer (no Slack, no network; run it in your terminal) and prints one line of each kind of glyph for you to judge:
 look for empty boxes or misaligned columns.
 
@@ -93,8 +93,8 @@ look for empty boxes or misaligned columns.
   `noto-fonts`); macOS and Windows have them
 - optional: CJK for Chinese, Japanese and Korean names and text (`fonts-noto-cjk`, Fedora `google-noto-sans-cjk-fonts`,
   Arch `noto-fonts-cjk`); macOS and Windows have them
-- emoji drawn as boxes: install the font above, or F6 → "Emoji as names" shows `:smile:` instead; rows that
-  look misaligned mean the terminal measures an emoji's width differently from ttyak (the same setting is the way out)
+- emoji drawn as boxes: install the font above, or F6 → Messages & media → "Show emoji as :names:" shows `:smile:`
+  instead; rows that look misaligned mean the terminal measures an emoji's width differently from ttyak (the same setting is the way out)
 
 **Linux**
 
@@ -331,9 +331,10 @@ and `/workspace [name]` lists them or switches by name. The rail on the left sho
 unread messages in the others (checked every 30 s), and their desktop notifications still arrive (titled with the workspace); clicking one switches there.
 
 The terminal's tab title carries a mark: `○ ttyak - <workspace>` with nothing unread, `●` with something unread (in any
-workspace of the profile), `◆` with something for you (a direct message, a mention). Your terminal's own title comes
-back when ttyak ends. F6 → Notifications → Mark in the tab title (`title_mark` in `settings.toml`) turns it off, and
-ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
+workspace of the profile), `◆` with something for you (a direct message, a mention). When ttyak ends, your terminal's
+own title comes back in terminals that keep a title stack (kitty, …); elsewhere the title is cleared. F6 →
+Notifications → Mark in the tab title (`title_mark` in `settings.toml`) turns it off, and ttyak then never touches the
+title. In tmux this needs `set -g set-titles on`.
 
 A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
 instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
@@ -352,9 +353,9 @@ The notification sound (F6 → Notifications → Sound) goes with the notificati
 it (it lists the `sound` capability: GNOME's does, SwayNotificationCenter, mako and dunst do not), so the system's
 do-not-disturb silences both; ttyak's volume and speaker setting then do not apply. Where the server cannot, ttyak plays
 the sound itself — except `system`, the desktop's own sound, which then stays silent because there is none to play. With
-Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before every
-interruption, whoever plays the sound: SwayNotificationCenter, mako (a `do-not-disturb` or `dnd` mode), dunst (paused),
-GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
+Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before an
+interruption (the answer stands for the next ones for up to 2 seconds), whoever plays the sound: SwayNotificationCenter,
+mako (a `do-not-disturb` or `dnd` mode), dunst (paused), GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
 fires nothing: no notification, no sound, no bell. With any other server, or when it does not answer within a second,
 notifications go through. F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd` in
 `settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
@@ -381,7 +382,8 @@ the sound: `system` goes with the notification (where the server can play sounds
 played by ttyak, since the terminal can only ask for the desktop's sounds. Inside tmux the system's notifier shows them
 (tmux would hand the terminal's answer about a click to whichever pane is active), as in every other terminal. Whether a
 click can bring the window forward across workspaces is up to the desktop: the terminal asks for focus, and the window
-manager may only mark it urgent. `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
+manager may only mark it urgent. A real click in kitty is not tried yet (the terminal's report of one, sent in by
+hand, was). `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
 
 **A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
 does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above,
@@ -436,8 +438,9 @@ Windows has PowerShell's notifications turned off (they would vanish without a t
 its tag, in a group of its profile's own (two ttyaks on other profiles leave each other's alone): a newer one replaces
 it in place, and reading takes it off the screen and out of the notification centre (tried in the notification centre's
 list; on screen not tried yet). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
-brings the console's window forward as above (in Windows Terminal on the tab last used). A click on it later in the
-notification centre most likely does not reach ttyak (it has no COM activator registered, which takes an installer) and
+brings the console's window forward as above (in Windows Terminal on the tab last used) — not tried at the desktop yet
+(toasts don't show over ssh): the toast on screen, the click, where it lands and the window coming forward. A click
+on it later in the notification centre most likely does not reach ttyak (it has no COM activator registered, which takes an installer) and
 may start Windows PowerShell instead — not tried. Only the `system` sound goes with the toast (Windows' own, silenced
 with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
 profile — Windows 11's Do not disturb — read through an undocumented Windows state
@@ -748,7 +751,8 @@ preferences, overlay titles and the status-bar hints go through translation so f
 ## Scripting
 
 `ttyak ctl …` exposes the API for automation and tests: `whoami`, `channels`,
-`history`, `replies`, `post`, `react`, `pin`, `upload`, `search`, `listen`, `audio-devices`,
+`history`, `replies`, `post`, `react`, `pin`, `upload`, `search`, `listen`, `status` (below), `check` (see
+Requirements), `audio-devices`,
 `huddle-media`, `huddles` (the huddles happening now, `--recent` the latest ones, with ids shown as `C1`, `U1`, …)
 and a few research probes (`api`, `get`, `huddle-*`, `huddles --shape`) that redact secrets.
 
@@ -766,8 +770,8 @@ runs the profile it says `ttyak is not running` (`"running": false` in JSON) and
 and no authors, and ttyak removes it when it quits.
 
 ```sh
-ttyak --profile default ctl status --json | jq -r '"\(.mark) \(.for_you)"'   # a plain bar line: ◆ 2
-ttyak --profile default ctl status --json | jq -r .mark                      # the mark only
+ttyak ctl status --json | jq -r '"\(.mark) \(.for_you)"'   # a plain bar line: ◆ 2
+ttyak ctl status --json | jq -r .mark                      # the mark only
 ```
 
 ## Layout
