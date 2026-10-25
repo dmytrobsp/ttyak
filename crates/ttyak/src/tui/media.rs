@@ -130,14 +130,10 @@ impl Media {
         // A terminal that does not report its cell size (xterm by default) loses its sixel
         // support in the query above; ask for it on its own and take the size from the
         // window's pixel size.
-        // One more question, fenced by DA1: whether the terminal shows notifications itself (OSC 99; inside tmux only
-        // through its passthrough).
-        let (probe, linger) = match super::osc99::tmux_pane() {
-            None => (super::osc99::probe().to_string(), std::time::Duration::ZERO),
-            Some(_) if matches!(super::osc99::tmux_passthrough().trim(), "on" | "all") => (super::osc99::wrap_for_tmux(super::osc99::probe()), TMUX_LINGER),
-            Some(_) => (String::new(), std::time::Duration::ZERO),
-        };
-        let reply = device_attributes(&probe, linger);
+        // One more question, fenced by DA1: whether the terminal shows notifications itself (OSC 99; not asked inside
+        // tmux, where the system's notifier shows them).
+        let probe = if super::osc99::in_tmux() { "" } else { super::osc99::probe() };
+        let reply = device_attributes(probe);
         let osc99 = super::osc99::supported(&String::from_utf8_lossy(&reply));
         tracing::info!(osc99, "terminal notifications");
         let da1_sixel = picker.protocol_type() == ProtocolType::Halfblocks && da1_has_sixel(&reply);
@@ -269,15 +265,10 @@ fn da1_has_sixel(reply: &[u8]) -> bool {
     rest[..end].split(|b| *b == b';').any(|p| p == b"4")
 }
 
-/// How long the answer to a question passed through tmux is waited for after tmux's own DA1 answer (an internal wait:
-/// tmux answers DA1 itself, before the terminal outside answers what went through).
-const TMUX_LINGER: std::time::Duration = std::time::Duration::from_millis(300);
-
 /// Ask the terminal `before` and then for its device attributes (in raw mode), and give back all it answered: the
-/// answers come in the order asked, so DA1's ends them (then `linger` more, for an answer coming through tmux); gives
-/// up after a short wait.
+/// answers come in the order asked, so DA1's ends them; gives up after a short wait.
 #[cfg(unix)]
-fn device_attributes(before: &str, linger: std::time::Duration) -> Vec<u8> {
+fn device_attributes(before: &str) -> Vec<u8> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
     use std::io::Write;
     let mut out = std::io::stdout();
@@ -285,17 +276,9 @@ fn device_attributes(before: &str, linger: std::time::Duration) -> Vec<u8> {
         return Vec::new();
     }
     let stdin = rustix::stdio::stdin();
-    let mut deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let mut reply = Vec::new();
-    let mut fenced = false;
-    loop {
-        if !fenced && reply.ends_with(b"c") && reply.windows(3).any(|w| w == b"\x1b[?") {
-            fenced = true;
-            deadline = std::time::Instant::now() + linger;
-        }
-        if fenced && (linger.is_zero() || super::osc99::supported(&String::from_utf8_lossy(&reply))) {
-            break;
-        }
+    while !reply.ends_with(b"c") || !reply.windows(3).any(|w| w == b"\x1b[?") {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
             break;
@@ -315,7 +298,7 @@ fn device_attributes(before: &str, linger: std::time::Duration) -> Vec<u8> {
 }
 
 #[cfg(not(unix))]
-fn device_attributes(_before: &str, _linger: std::time::Duration) -> Vec<u8> {
+fn device_attributes(_before: &str) -> Vec<u8> {
     Vec::new()
 }
 
@@ -625,7 +608,7 @@ mod tests {
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[CellSize(None)], false, "WezTerm"), ["auto", "halfblocks"]);
         // Windows: DA1 is never asked on its own (`device_attributes` answers nothing there), so only the query counts —
         // Windows PowerShell's console answers nothing; Windows Terminal answers sixel.
-        assert!(!cfg!(windows) || device_attributes("", std::time::Duration::ZERO).is_empty());
+        assert!(!cfg!(windows) || device_attributes("").is_empty());
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Sixel, &[Sixel, cell], false, ""), ["auto", "sixel", "halfblocks"]);
     }

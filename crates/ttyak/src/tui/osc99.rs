@@ -59,11 +59,6 @@ pub fn close(id: &str) -> String {
     format!("\x1b]99;i={id}:p=close;\x1b\\")
 }
 
-/// `seq` through tmux's passthrough (`allow-passthrough` on), to the terminal outside.
-pub fn wrap_for_tmux(seq: &str) -> String {
-    format!("\x1bPtmux;{}\x1b\\", seq.replace('\x1b', "\x1b\x1b"))
-}
-
 /// What the terminal reported about a bubble.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Report {
@@ -73,9 +68,10 @@ pub enum Report {
 
 /// The report in an OSC payload from the terminal (`99;i=<id>;` clicked, also with a button's number after it;
 /// `99;i=<id>:p=close;` closed); None for anything else (the probe's answer, `p=alive`, the id 0 of a bubble sent
-/// without one).
+/// without one, and `p=close;untracked`: kitty on macOS says so right after showing a bubble — it cannot tell when it
+/// closes).
 pub fn report(osc: &str) -> Option<Report> {
-    let (meta, _) = osc.strip_prefix("99;")?.split_once(';')?;
+    let (meta, rest) = osc.strip_prefix("99;")?.split_once(';')?;
     let (mut id, mut kind) = (None, None);
     for kv in meta.split(':') {
         match kv.split_once('=') {
@@ -87,7 +83,7 @@ pub fn report(osc: &str) -> Option<Report> {
     let id = id.filter(|i| !i.is_empty() && *i != "0")?.to_string();
     match kind {
         None => Some(Report::Clicked(id)),
-        Some("close") => Some(Report::Closed(id)),
+        Some("close") if rest != "untracked" => Some(Report::Closed(id)),
         Some(_) => None,
     }
 }
@@ -106,14 +102,6 @@ pub fn sound_by(capabilities: &[String], sound: &str) -> SoundBy {
 /// kitty's sound name for a bubble whose sound `by` plays: the desktop's own, or none.
 pub fn sound_name(by: SoundBy) -> &'static str {
     if by == SoundBy::Notification { "system" } else { "silent" }
-}
-
-/// Whether tmux lets ttyak's bubbles out now: `allow-passthrough` (`tmux show -gv allow-passthrough`) is `on` or `all`,
-/// and `active` (`#{pane_active} #{window_active} #{session_attached}` of ttyak's pane) says the pane is the one shown
-/// (the terminal's report reaches the active pane only).
-pub fn tmux_allows(passthrough: &str, active: &str) -> bool {
-    let fields: Vec<&str> = active.split_whitespace().collect();
-    matches!(passthrough.trim(), "on" | "all") && fields.len() == 3 && fields.iter().all(|f| f.parse::<u32>().is_ok_and(|n| n > 0))
 }
 
 /// Whether the terminal's notifications may be used: `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's.
@@ -135,29 +123,10 @@ pub fn terminal_name() -> String {
     }
 }
 
-/// ttyak's tmux pane, when it runs inside tmux.
-pub fn tmux_pane() -> Option<String> {
-    std::env::var_os("TMUX")?;
-    std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty())
-}
-
-/// tmux's `allow-passthrough`, asked at start (before the event loop; empty when tmux does not answer).
-pub fn tmux_passthrough() -> String {
-    let out = std::process::Command::new("tmux").args(["show", "-gv", "allow-passthrough"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output();
-    out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
-}
-
-/// How long tmux is waited for when a bubble is sent (an internal wait).
-const TMUX_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// Whether tmux lets a bubble from `pane` out right now ([`tmux_allows`]); no answer within [`TMUX_WAIT`] counts as no.
-pub async fn tmux_lets_out(pane: &str) -> bool {
-    async fn tmux(args: &[&str]) -> String {
-        let out = tokio::process::Command::new("tmux").args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true).output().await;
-        out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
-    }
-    let asked = async { (tmux(&["show", "-gv", "allow-passthrough"]).await, tmux(&["display", "-p", "-t", pane, "#{pane_active} #{window_active} #{session_attached}"]).await) };
-    matches!(tokio::time::timeout(TMUX_WAIT, asked).await, Ok((passthrough, active)) if tmux_allows(&passthrough, &active))
+/// Whether ttyak runs inside tmux: its notifications then go through the system's notifier (tmux hands the terminal's
+/// answer to whichever pane is active, as typed keys at worst).
+pub fn in_tmux() -> bool {
+    std::env::var_os("TMUX").is_some_and(|v| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -227,8 +196,8 @@ mod tests {
         assert_eq!(report("99;i=w0-C1;"), Some(Report::Clicked("w0-C1".into())));
         assert_eq!(report("99;i=w0-C1;1"), Some(Report::Clicked("w0-C1".into())), "a button");
         assert_eq!(report("99;i=w0-C1:p=close;"), Some(Report::Closed("w0-C1".into())));
-        assert_eq!(report("99;i=w0-C1:p=close;untracked"), Some(Report::Closed("w0-C1".into())));
-        for other in ["99;i=w0-C1:p=alive;w0-C1", "99;i=ttyak-probe:p=?;a=focus", "99;i=0;", "99;;", "99;i=w0-C1", "52;c;aGk="] {
+        // kitty on macOS, right after showing it: it cannot tell when the bubble closes — no close.
+        for other in ["99;i=w0-C1:p=close;untracked", "99;i=w0-C1:p=alive;w0-C1", "99;i=ttyak-probe:p=?;a=focus", "99;i=0;", "99;;", "99;i=w0-C1", "52;c;aGk="] {
             assert_eq!(report(other), None, "{other}");
         }
     }
@@ -243,14 +212,6 @@ mod tests {
         for no in ["", "\x1b[?62;4;22c", "\x1b[?62;52;c", "garbage\x1b]99;", "\x1b]99;i=ttyak-probe:p=?;a=focus:p=title,body\x1b\\", "\x1b]99;i=ttyak-probe:p=?;a=focus,report:p=title\x1b\\", "\x1b]99;i=other:p=?;a=focus,report:p=title,body\x1b\\"] {
             assert!(!supported(no), "{no:?}");
         }
-    }
-
-    #[test]
-    fn tmux_doubles_escape() {
-        assert_eq!(wrap_for_tmux("\x1b]99;i=a:p=close;\x1b\\"), "\x1bPtmux;\x1b\x1b]99;i=a:p=close;\x1b\x1b\\\x1b\\");
-        assert!(tmux_allows("on\n", "1 1 1\n") && tmux_allows("all", "1 1 2"));
-        assert!(!tmux_allows("off", "1 1 1") && !tmux_allows("", "1 1 1"), "no passthrough");
-        assert!(!tmux_allows("on", "0 1 1") && !tmux_allows("on", "1 0 1") && !tmux_allows("on", "1 1 0") && !tmux_allows("on", ""), "not the pane shown");
     }
 
     #[test]

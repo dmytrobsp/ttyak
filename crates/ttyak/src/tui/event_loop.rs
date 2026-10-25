@@ -34,8 +34,6 @@ enum Net {
     /// Marking a conversation unread failed: Slack still has it read.
     MarkUnreadFailed { channel: String, error: String },
     Boot { boot: Value, users: Vec<User>, counts: Option<Value> },
-    /// A desktop notification was clicked.
-    NotificationClicked(super::notify::Target),
     /// A person looked up with `users.info`.
     UserInfo(User),
     /// The people shown, looked up again for their statuses (`status_refresh_secs`).
@@ -352,6 +350,8 @@ struct App {
     focus_reported: bool,
     /// The process's notifications and bell (shared with the other workspaces' watchers).
     notifier: super::notify::Notifier,
+    /// Where a click on any of this process's notifications goes: the run loop opens it in its workspace.
+    clicks: mpsc::UnboundedSender<super::others::Click>,
     /// Open @/#/: suggestion list.
     completion: Option<super::autocomplete::Completion>,
     /// Suggestions closed with Esc for this (composer, token start) until the token changes.
@@ -2776,12 +2776,12 @@ impl App {
         }
     }
 
-    /// What clicking a desktop notification about `target` does: open it here (a click
-    /// after switching workspace finds this session gone and does nothing).
+    /// What clicking a notification about `target` does: the run loop opens it in this workspace, switching back to it
+    /// when another one is on screen by then.
     fn on_click(&self, target: super::notify::Target) -> Box<dyn FnOnce() + Send> {
-        let net = self.net.clone();
+        let (clicks, workspace) = (self.clicks.clone(), self.workspace);
         Box::new(move || {
-            let _ = net.send(Net::NotificationClicked(target));
+            let _ = clicks.send((workspace, target));
         })
     }
 
@@ -4646,6 +4646,17 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
     }
 }
 
+/// A click on a notification of workspace `index` (whichever was on screen when it was shown): opened here, or in that
+/// workspace after switching there.
+fn take_click(app: &mut App, (index, target): super::others::Click) {
+    if index == app.workspace {
+        app.open_target(target);
+    } else {
+        *app.open_after.lock().unwrap_or_else(|e| e.into_inner()) = Some((index, target.into()));
+        app.switch_workspace(index);
+    }
+}
+
 /// Write what the terminal's notifications wait to have written to `out` (between draws, as the bell).
 fn write_notifications(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) {
     let output = notifier.take_output();
@@ -5009,7 +5020,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
     let notifier = super::notify::Notifier::new();
     super::others::spawn(sessions.clone(), shown.clone(), badges.clone(), wake.clone(), signed_out.clone(), notifier.clone());
     let (clicks_tx, mut clicks) = mpsc::unbounded_channel();
-    super::others::spawn_watchers(sessions.clone(), labels.clone(), shown.clone(), clicks_tx, signed_out.clone(), notifier.clone());
+    super::others::spawn_watchers(sessions.clone(), labels.clone(), shown.clone(), clicks_tx.clone(), signed_out.clone(), notifier.clone());
     let open_after: super::others::OpenAfter = Default::default();
     let logos: super::others::Logos = Default::default();
     super::others::spawn_logos(sessions.clone(), logos.clone(), signed_out.clone());
@@ -5023,7 +5034,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
     // Query the terminal before the event stream starts reading stdin.
     let mut media = super::media::Media::detect(&super::settings::load().0.messages.graphics);
     if media.osc99 && super::osc99::wanted() {
-        notifier.use_terminal(super::osc99::terminal_name(), super::osc99::tmux_pane());
+        notifier.use_terminal(super::osc99::terminal_name());
     }
     let mut clipboard = super::clipboard::Clipboard::default();
     let mut events = EventStream::new();
@@ -5059,7 +5070,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
         // A graphics mode this terminal cannot draw: said once, at the first workspace.
         keymap.1.extend(media.note.take());
         super::messages::set_open_key(keymap.0.first_shown(Context::Messages, Action::Open).unwrap_or_default());
-        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), &mut clicks, &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update, &title, &notifier).await?;
+        let (next, kept_media, kept_clipboard) = run_workspace(client, (labels.clone(), index, badges.clone(), open_after.clone(), logos.clone(), signed_out.clone(), addresses.clone()), (&clicks_tx, &mut clicks), &keymap, &settings, &mut terminal, &mut events, media, clipboard, histories.entry(index).or_default(), &mut update, &title, &notifier).await?;
         (media, clipboard) = (kept_media, kept_clipboard);
         match next {
             Some(i) => index = i,
@@ -5161,6 +5172,7 @@ impl App {
             terminal_focused: true,
             focus_reported: false,
             notifier,
+            clicks: mpsc::unbounded_channel().0,
             completion: None,
             completion_dismissed: None,
             path_suggestions: None,
@@ -5211,7 +5223,7 @@ impl App {
 async fn run_workspace(
     client: Client,
     workspaces: (Vec<String>, usize, super::others::Badges, super::others::OpenAfter, super::others::Logos, SignedOut, Vec<(String, String)>),
-    clicks: &mut mpsc::UnboundedReceiver<super::others::Click>,
+    clicks: (&mpsc::UnboundedSender<super::others::Click>, &mut mpsc::UnboundedReceiver<super::others::Click>),
     keymap: &(Keymap, Vec<String>),
     settings: &super::settings::Settings,
     terminal: &mut super::terminal::Tui,
@@ -5228,7 +5240,9 @@ async fn run_workspace(
     let mut rtm = slack_core::rtm::spawn(client.clone());
     media.thumbs.clear();
     let team_name = if workspaces.0.len() > 1 { format!("{}/{} {}", workspaces.1 + 1, workspaces.0.len(), workspaces.0[workspaces.1]) } else { client.session.team_name.clone() };
+    let (click_tx, clicks) = clicks;
     let mut app = App::new(client.clone(), net_tx.clone(), rtm.commands.clone(), media, clipboard, notifier.clone());
+    app.clicks = click_tx.clone();
     // The terminal's focus outlives the workspace shown.
     (app.focus_reported, app.terminal_focused) = match notifier.focus() {
         TermFocus::Unknown => (false, true),
@@ -5304,14 +5318,9 @@ async fn run_workspace(
                 crate::update::Report::Checked(checked) => app.update_checked(checked),
             },
             Some(event) = update.events.recv() => app.update_event(event),
-            Some((index, target)) = clicks.recv() => {
+            Some(click) = clicks.recv() => {
                 went = Went::Yes;
-                if index == app.workspace {
-                    app.open_target(target);
-                } else {
-                    *app.open_after.lock().unwrap_or_else(|e| e.into_inner()) = Some((index, target.into()));
-                    app.switch_workspace(index);
-                }
+                take_click(&mut app, click);
             }
             Some(ev) = rtm.events.recv() => handle_rtm(&mut app, ev),
             Some(ev) = async {
@@ -5428,10 +5437,10 @@ fn passive(ev: &Event) -> bool {
     }
 }
 
-/// Whether a reply goes somewhere you asked to go (a notification clicked, a link's conversation looked up, a DM
+/// Whether a reply goes somewhere you asked to go (a link's conversation looked up, a DM
 /// opened, a channel joined or created): a step in the history, as a key or a click is.
 fn goes_somewhere(msg: &Net) -> bool {
-    matches!(msg, Net::NotificationClicked(_) | Net::LinkConversation { .. } | Net::DmOpened(_) | Net::Joined { .. })
+    matches!(msg, Net::LinkConversation { .. } | Net::DmOpened(_) | Net::Joined { .. })
 }
 
 /// Whether a place in the history is no longer there: a conversation unknown now, archived, or left (a DM is
@@ -6648,7 +6657,6 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
 
 fn handle_net(app: &mut App, msg: Net) {
     match msg {
-        Net::NotificationClicked(target) => app.open_target(target),
         Net::Boot { boot, users, counts } => {
             for u in users {
                 app.ws.users.insert(u.id.clone(), u);
@@ -11156,44 +11164,72 @@ mod tests {
         assert_eq!((app.current.as_deref(), app.mode()), (Some("C2"), super::Mode::Normal));
     }
 
-    #[tokio::test]
-    async fn a_click_reported_by_the_terminal_lands_on_the_message() {
+    /// [`with_channels`] whose notifications kitty shows (in memory), with the run loop's click channel.
+    fn notified_by_kitty(ids: &[&str]) -> (super::App, tokio::sync::mpsc::UnboundedReceiver<super::super::others::Click>) {
+        let (mut app, _net) = with_channels(ids);
+        app.notifier = crate::tui::notify::Notifier::fake().0;
+        app.notifier.use_terminal("kitty".into());
+        let (clicks, clicked) = tokio::sync::mpsc::unbounded_channel();
+        app.clicks = clicks;
+        (app, clicked)
+    }
+
+    /// A for-you message in C1 at message `n` of [`long_c1`], while the terminal is unfocused; what kitty was asked.
+    async fn notify_c1(app: &mut super::App, n: usize) -> String {
         use super::super::attention::{Decision, Note};
         use super::super::notify::Target;
-        use crossterm::event::Event;
-        let (mut app, mut net) = with_channels(&["C1", "C2"]);
-        long_c1(&mut app, 30, 0);
-        app.notifier = crate::tui::notify::Notifier::fake().0;
-        app.notifier.use_terminal("kitty".into(), None);
-        app.jump_to("C2");
-        settle(&mut app, true);
-        assert!(super::handle_event(&mut app, Event::FocusLost));
-        let note = Note { key: app.bubble_key("C1"), title: "Bob in #chanC1".into(), body: "hi".into(), target: Target { channel: "C1".into(), ts: Some(top_ts(5)), thread_ts: None } };
+        assert!(super::handle_event(app, crossterm::event::Event::FocusLost));
+        let note = Note { key: app.bubble_key("C1"), title: "Bob in #chanC1".into(), body: "hi".into(), target: Target { channel: "C1".into(), ts: Some(top_ts(n)), thread_ts: None } };
         let gates = app.gates(false, 0.0);
         app.interrupt(Decision::ForYou(note), &gates);
         app.notifier.settled().await;
         let mut written = Vec::new();
         super::write_notifications(&app.notifier, &mut written);
-        assert!(String::from_utf8(written).unwrap().contains("\x1b]99;i=w0-C1:"), "kitty is asked to show it");
+        String::from_utf8(written).unwrap()
+    }
+
+    /// The next click the run loop is given, at most 5 s.
+    async fn next_click(clicked: &mut tokio::sync::mpsc::UnboundedReceiver<super::super::others::Click>) -> super::super::others::Click {
+        tokio::time::timeout(std::time::Duration::from_secs(5), clicked.recv()).await.expect("a click reaches the run loop").unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_click_reported_by_the_terminal_lands_on_the_message() {
+        use crossterm::event::Event;
+        let (mut app, mut clicked) = notified_by_kitty(&["C1", "C2"]);
+        long_c1(&mut app, 30, 0);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        assert!(notify_c1(&mut app, 5).await.contains("\x1b]99;i=w0-C1:"), "kitty is asked to show it");
         app.focus = super::Focus::Composer;
         app.composer.set("half typed");
         // kitty's report of the click (a=report), as it arrives from the terminal.
         assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
-        let clicked = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            loop {
-                if let Some(super::Net::NotificationClicked(target)) = net.recv().await {
-                    break target;
-                }
-            }
-        });
-        let target = clicked.await.expect("the click opens it");
-        super::handle_net(&mut app, super::Net::NotificationClicked(target));
+        let click = next_click(&mut clicked).await;
+        assert_eq!(click.0, 0, "this workspace's");
+        super::take_click(&mut app, click);
         settle(&mut app, true);
         assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
         assert_eq!(app.mode(), super::Mode::Normal);
         app.jump_to("C2");
         settle(&mut app, true);
         assert_eq!(app.composer.text(), "half typed", "the draft stays with its conversation");
+    }
+
+    #[tokio::test]
+    async fn a_click_on_a_bubble_of_the_workspace_left_goes_back_there() {
+        use crossterm::event::Event;
+        let (mut app, mut clicked) = notified_by_kitty(&["C1"]);
+        app.workspaces = vec!["one".into(), "two".into()];
+        notify_c1(&mut app, 5).await;
+        // Workspace 2 is on screen now (its own `App`; the click channel is the run loop's, the same).
+        app.workspace = 1;
+        assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
+        let click = next_click(&mut clicked).await;
+        assert_eq!(click.0, 0, "the bubble's workspace, not the one shown");
+        super::take_click(&mut app, click);
+        assert_eq!(app.switch_to, Some(0), "{}", app.status);
+        assert!(app.open_after.lock().unwrap().as_ref().is_some_and(|(i, _)| *i == 0), "opened there once it is up");
     }
 
     #[tokio::test]

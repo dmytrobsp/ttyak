@@ -278,63 +278,95 @@ impl Shown for Unwatched {
     }
 }
 
+/// How long after a bubble went out a close reported for its id is taken for the bubble it replaced (an internal wait:
+/// the terminal's report carries only the id, and a bubble dismissed just as a newer one went out is closed for good,
+/// so the newer one shows on its own).
+const CLOSE_GUARD: std::time::Duration = if cfg!(test) { std::time::Duration::ZERO } else { std::time::Duration::from_secs(1) };
+
 /// Bubbles through the terminal itself (OSC 99): their sequences wait for the run loop to write them between draws, and
 /// the terminal's reports end their waiters (a click focuses the terminal's window and tab).
 struct Terminal {
     /// What the terminal is called, for F6.
     name: String,
-    /// ttyak's tmux pane, inside tmux: the terminal is used only while tmux lets a bubble out.
-    tmux: Option<String>,
+    /// [`CLOSE_GUARD`] (tests change it).
+    guard: std::time::Duration,
     /// The sequences not written yet.
     out: Mutex<Vec<String>>,
     /// Wakes the run loop to write them.
     due: tokio::sync::Notify,
-    /// The click waiter of each bubble on screen, by its id: true clicked, false closed.
-    waiting: Mutex<HashMap<String, mpsc::UnboundedSender<bool>>>,
+    /// The click waiter of each bubble on screen that waits for a click, by its id.
+    waiting: Mutex<HashMap<String, Waiter>>,
+}
+
+/// Where the terminal's report about a bubble goes.
+struct Waiter {
+    /// True clicked, false closed.
+    answer: mpsc::UnboundedSender<bool>,
+    /// When the run loop wrote the bubble (None: not yet).
+    written: Option<std::time::Instant>,
 }
 
 impl Terminal {
-    fn new(name: String, tmux: Option<String>) -> Terminal {
-        Terminal { name, tmux, out: Mutex::default(), due: tokio::sync::Notify::new(), waiting: Mutex::default() }
-    }
-
-    /// Whether a bubble goes through the terminal now (inside tmux: while tmux lets it out).
-    async fn usable(&self) -> bool {
-        match &self.tmux {
-            None => true,
-            Some(pane) => osc99::tmux_lets_out(pane).await,
-        }
+    fn new(name: String, guard: std::time::Duration) -> Terminal {
+        Terminal { name, guard, out: Mutex::default(), due: tokio::sync::Notify::new(), waiting: Mutex::default() }
     }
 
     /// Hand `seq` to the run loop.
     fn write(&self, seq: String) {
-        let seq = if self.tmux.is_some() { osc99::wrap_for_tmux(&seq) } else { seq };
         self.out.lock().unwrap_or_else(|e| e.into_inner()).push(seq);
         self.due.notify_one();
     }
 
-    /// Show `bubble` as `id` (the same id replaces it on screen); the waiter of the one it replaces ends.
-    fn show(self: &Arc<Self>, id: String, bubble: &Bubble) -> Arc<dyn Shown> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.waiting.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), tx);
-        self.write(osc99::show(&id, &bubble.title, &bubble.body, Some(osc99::sound_name(bubble.by))));
-        tracing::debug!(id, "notification shown by the terminal");
-        Arc::new(OnTerminal { id, terminal: self.clone(), answers: Mutex::new(Some(rx)) })
+    /// The sequences to write now: the bubbles among them count as written from now on. (The waiters are locked first,
+    /// as in [`Terminal::show`], so a bubble is stamped only with its sequence.)
+    fn take(&self) -> Vec<String> {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        let out = std::mem::take(&mut *self.out.lock().unwrap_or_else(|e| e.into_inner()));
+        if !out.is_empty() {
+            let now = std::time::Instant::now();
+            for w in waiting.values_mut() {
+                w.written.get_or_insert(now);
+            }
+        }
+        out
     }
 
-    /// The terminal reported a click on a bubble, or its closing.
+    /// Show `bubble` as `id` (the same id replaces it on screen; the waiter of the one it replaces ends), waiting for a
+    /// click when it is clickable. Waiters that stopped waiting (after [`CLICK_WAIT`]) are dropped.
+    fn show(self: &Arc<Self>, id: String, bubble: &Bubble) -> Arc<dyn Shown> {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        waiting.retain(|_, w| !w.answer.is_closed());
+        let answers = bubble.clickable.then(|| {
+            let (answer, answers) = mpsc::unbounded_channel();
+            waiting.insert(id.clone(), Waiter { answer, written: None });
+            answers
+        });
+        if answers.is_none() {
+            waiting.remove(&id);
+        }
+        self.write(osc99::show(&id, &bubble.title, &bubble.body, Some(osc99::sound_name(bubble.by))));
+        drop(waiting);
+        tracing::debug!(id, "notification shown by the terminal");
+        Arc::new(OnTerminal { id, terminal: self.clone(), answers: Mutex::new(answers) })
+    }
+
+    /// The terminal reported a click on a bubble, or its closing (not the closing of the one a bubble written within
+    /// [`CLOSE_GUARD`] replaced: that one is still on screen).
     fn report(&self, report: osc99::Report) {
         let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
         match report {
             osc99::Report::Clicked(id) => {
                 tracing::debug!(id, "notification clicked in the terminal");
-                if let Some(tx) = waiting.remove(&id) {
-                    let _ = tx.send(true);
+                if let Some(w) = waiting.remove(&id) {
+                    let _ = w.answer.send(true);
                 }
             }
             osc99::Report::Closed(id) => {
-                if let Some(tx) = waiting.remove(&id) {
-                    let _ = tx.send(false);
+                let current = waiting.get(&id).is_some_and(|w| w.written.is_some_and(|at| at.elapsed() >= self.guard));
+                if let Some(w) = current.then(|| waiting.remove(&id)).flatten() {
+                    let _ = w.answer.send(false);
+                } else if waiting.contains_key(&id) {
+                    tracing::debug!(id, "a close for the bubble the terminal's newer one replaced");
                 }
             }
         }
@@ -441,6 +473,9 @@ enum Cmd {
     Ended { key: Key, generation: u64, gone: bool },
     #[cfg(test)]
     Settled(tokio::sync::oneshot::Sender<()>),
+    /// Whether `key` has a bubble on screen.
+    #[cfg(test)]
+    Live(Key, tokio::sync::oneshot::Sender<bool>),
 }
 
 /// When a bubble is withdrawn.
@@ -487,8 +522,6 @@ fn ts_order(ts: &str) -> Option<(u64, u64)> {
 /// A bubble on screen.
 struct Live {
     shown: Arc<dyn Shown>,
-    /// The terminal shows it (else the system's notifier).
-    on_terminal: bool,
     /// The message it shows (None: a huddle's start).
     at: Option<Place>,
     generation: u64,
@@ -592,7 +625,7 @@ impl Notifier {
             Some(SoundBy::None) => "nobody (the sound is off)",
         };
         if let Some(terminal) = terminal {
-            let shown_by = if terminal.tmux.is_some() { format!("{} (through tmux while ttyak's pane is shown, else the system's notifications)", terminal.name) } else { terminal.name.clone() };
+            let shown_by = terminal.name.clone();
             let click = format!("opens it in ttyak; {} brings its window and tab forward", terminal.name);
             return RouteInfo { shown_by, sound_by: sound_by.into(), click };
         }
@@ -630,11 +663,14 @@ impl Notifier {
         }
     }
 
-    /// From now on bubbles go through the terminal, `name`, itself (it answered the OSC 99 probe at start); inside tmux
-    /// (`tmux`: ttyak's pane) only while tmux lets them out, else through the system's notifier.
-    pub fn use_terminal(&self, name: String, tmux: Option<String>) {
-        tracing::info!(terminal = name, tmux = tmux.is_some(), "notifications shown by the terminal");
-        let _ = self.inner.shared.terminal.set(Arc::new(Terminal::new(name, tmux)));
+    /// From now on bubbles go through the terminal, `name`, itself (it answered the OSC 99 probe at start).
+    pub fn use_terminal(&self, name: String) {
+        self.use_terminal_with(name, CLOSE_GUARD);
+    }
+
+    fn use_terminal_with(&self, name: String, guard: std::time::Duration) {
+        tracing::info!(terminal = name, "notifications shown by the terminal");
+        let _ = self.inner.shared.terminal.set(Arc::new(Terminal::new(name, guard)));
     }
 
     /// An OSC reply from the terminal: a click on one of its bubbles (the bubble's click runs, as for the system's) or
@@ -647,7 +683,7 @@ impl Notifier {
 
     /// The sequences the terminal's bubbles wait to have written (the run loop writes them between draws).
     pub fn take_output(&self) -> Vec<String> {
-        self.inner.shared.terminal.get().map(|t| std::mem::take(&mut *t.out.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
+        self.inner.shared.terminal.get().map(|t| t.take()).unwrap_or_default()
     }
 
     /// Once a sequence waits to be written (never without the terminal's bubbles).
@@ -675,10 +711,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 if guard.bell {
                     ring_in(&shared, guard.epoch);
                 }
-                let terminal = match shared.terminal.get() {
-                    Some(t) if t.usable().await => Some(t.clone()),
-                    _ => None,
-                };
+                let terminal = shared.terminal.get().cloned();
                 if let (Some(sound), Some(environment), Some(_)) = (&bubble.sound, &environment, &terminal) {
                     bubble.by = osc99::sound_by(&environment.capabilities, sound);
                 } else if let (Some(sound), Some(environment)) = (&bubble.sound, &environment) {
@@ -694,10 +727,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 if let (SoundBy::Ttyak, Some(own)) = (bubble.by, own) {
                     backend.play(own);
                 }
-                // The bubble before it is replaced on the same route, and closed once this one is up on the other.
-                let before = key.as_ref().and_then(|k| live.get(k));
-                let elsewhere = before.is_some_and(|o| o.on_terminal != terminal.is_some());
-                bubble.replaces = before.filter(|_| !elsewhere).map(|o| o.shown.id());
+                bubble.replaces = key.as_ref().and_then(|k| live.get(k)).map(|o| o.shown.id());
                 let shown = match &terminal {
                     Some(t) => Ok(Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble))),
                     None => tokio::time::timeout(SERVER_WAIT, backend.show(bubble)).await,
@@ -718,19 +748,14 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 };
                 // The replaced bubble's waiter ends: the server keeps its id for the new one. (A click on the old one
                 // that came in just now is lost with it.)
-                if let Some(old) = key.as_ref().and_then(|k| live.remove(k)) {
-                    if let Some(w) = old.waiter {
-                        w.abort();
-                    }
-                    if elsewhere && tokio::time::timeout(SERVER_WAIT, old.shown.close()).await.is_err() {
-                        tracing::warn!("withdrawing a notification: the notification server did not answer");
-                    }
+                if let Some(w) = key.as_ref().and_then(|k| live.remove(k)).and_then(|o| o.waiter) {
+                    w.abort();
                 }
                 generation += 1;
                 let ended = key.clone().map(|k| (back.clone(), k, generation));
                 let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), f, ended)).abort_handle());
                 if let Some(key) = key {
-                    live.insert(key, Live { shown, on_terminal: terminal.is_some(), at, generation, waiter });
+                    live.insert(key, Live { shown, at, generation, waiter });
                 }
             }
             Cmd::Bell { dnd, epoch } => {
@@ -762,6 +787,8 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
             }
             #[cfg(test)]
             Cmd::Settled(done) => drop(done.send(())),
+            #[cfg(test)]
+            Cmd::Live(key, answer) => drop(answer.send(live.contains_key(&key))),
         }
     }
 }
@@ -1050,6 +1077,24 @@ pub mod fake {
             let (done, settled) = tokio::sync::oneshot::channel();
             self.send(Cmd::Settled(done));
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), settled).await;
+        }
+
+        /// Whether `key`'s bubble is still known (shown, replaced and withdrawn as one), once everything asked so far is
+        /// done.
+        pub async fn live(&self, key: &Key) -> bool {
+            let (answer, live) = tokio::sync::oneshot::channel();
+            self.send(Cmd::Live(key.clone(), answer));
+            tokio::time::timeout(std::time::Duration::from_secs(5), live).await.ok().and_then(|r| r.ok()).unwrap_or(false)
+        }
+
+        /// As [`Notifier::use_terminal`], a close reported within `guard` of a newer bubble with its id taken for the older's.
+        pub fn use_terminal_guarding(&self, name: String, guard: std::time::Duration) {
+            self.use_terminal_with(name, guard);
+        }
+
+        /// How many click waiters the terminal's bubbles keep.
+        pub fn waiting(&self) -> usize {
+            self.inner.shared.terminal.get().map_or(0, |t| t.waiting.lock().unwrap().len())
         }
 
         /// Once `done` holds (a click went through) and everything asked so far is done.
@@ -1467,7 +1512,7 @@ mod tests {
     /// A notifier whose bubbles kitty shows, on a server in memory (for the system's do-not-disturb and sound).
     fn on_terminal() -> (Notifier, Arc<fake::Server>) {
         let (n, server) = Notifier::fake();
-        n.use_terminal("kitty".into(), None);
+        n.use_terminal("kitty".into());
         (n, server)
     }
 
@@ -1515,9 +1560,7 @@ mod tests {
         // Closed by the user: gone, so a read has nothing to take away, and a click on it later does nothing.
         let _ = n.take_output();
         n.report("99;i=w0-D1:p=close;");
-        // (The waiter's end reaches the worker on its own.)
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        n.settled().await;
+        gone(&n, &Key { workspace: 0, channel: "D1".into() }).await;
         n.report("99;i=w0-D1;");
         n.read(&Key { workspace: 0, channel: "D1".into() }, None, "9.0");
         n.read(&Key { workspace: 0, channel: "D2".into() }, None, "9.0");
@@ -1554,6 +1597,75 @@ mod tests {
         n.show_guarded(note("D4", "4.0", None, "four"), sound("chime"), Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
         n.settled().await;
         assert!(n.take_output().is_empty() && server.calls().len() == 1 && !n.take_bell());
+    }
+
+    /// Once `key`'s bubble is forgotten (its waiter's end reached the worker), at most 5 s.
+    async fn gone(n: &Notifier, key: &Key) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while n.live(key).await && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn an_untracked_close_is_no_close() {
+        let (n, _server) = on_terminal();
+        let (clicked, on_click) = recorder();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        // kitty on macOS says, right after showing it, that it cannot tell when it closes.
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.settled().await;
+        n.report("99;i=w0-D1:p=close;untracked");
+        n.settled().await;
+        assert!(n.live(&key).await, "still on screen");
+        n.report("99;i=w0-D1;");
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert_eq!(*clicked.lock().unwrap(), ["one"], "still clickable");
+        n.show(note("D1", "2.0", None, "two"), None, on_click("two"));
+        n.settled().await;
+        n.report("99;i=w0-D1:p=close;untracked");
+        n.settled().await;
+        let _ = n.take_output();
+        n.read(&key, None, "2.0");
+        n.settled().await;
+        assert_eq!(n.take_output(), [osc99::close("w0-D1")], "still withdrawn by a read");
+    }
+
+    #[tokio::test]
+    async fn a_close_crossing_a_replace_leaves_the_newer_bubble() {
+        let (n, _server) = Notifier::fake();
+        n.use_terminal_guarding("kitty".into(), std::time::Duration::from_secs(10));
+        let (clicked, on_click) = recorder();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.settled().await;
+        n.show(note("D1", "2.0", None, "two"), None, on_click("two"));
+        n.settled().await;
+        let _ = n.take_output();
+        // The first was dismissed just as the second went out: kitty's close is about the first.
+        n.report("99;i=w0-D1:p=close;");
+        n.settled().await;
+        assert!(n.live(&key).await, "the newer one is still known");
+        n.report("99;i=w0-D1;");
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert_eq!(*clicked.lock().unwrap(), ["two"]);
+    }
+
+    #[tokio::test]
+    async fn only_bubbles_that_wait_for_a_click_keep_a_waiter() {
+        let (n, _server) = on_terminal();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);
+        n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);
+        n.settled().await;
+        assert_eq!(n.waiting(), 0, "the update notice without a click");
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|| {}));
+        n.settled().await;
+        assert_eq!(n.waiting(), 1, "one per bubble on screen");
+        n.withdraw(&key);
+        n.settled().await;
+        assert_eq!(n.waiting(), 0);
     }
 
     #[test]
