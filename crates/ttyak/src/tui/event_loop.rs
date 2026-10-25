@@ -3518,9 +3518,14 @@ impl App {
         use super::notify::Target;
         let n = &self.ws.settings.notifications;
         if !n.desktop {
-            self.status = super::prefs::test_refused();
+            // No bubble, but the bell's help says it rings with desktop notifications off: the test tries it.
+            if n.bell {
+                self.notifier.test_bell(n.follow_system_dnd);
+            }
+            self.status = super::prefs::test_skipped(n.bell);
             return;
         }
+        let held = n.follow_system_dnd && self.prefs.as_ref().is_some_and(|p| p.machine.lock().unwrap_or_else(|e| e.into_inner()).dnd_on == Some(true));
         let (title, body) = super::prefs::test_words();
         let note = Note { key: Key::test(), title, body, target: Target::test() };
         // The pause and the schedule are about Slack's messages: a test is for the route. (The bell is the delayed one below.)
@@ -3531,31 +3536,47 @@ impl App {
         if n.bell {
             self.notifier.test_bell(n.follow_system_dnd);
         }
-        self.status = super::prefs::test_sent(n.bell);
+        self.status = if held { super::prefs::test_held() } else { super::prefs::test_sent(n.bell) };
     }
 
     /// Read what F6 → Notifications shows about this machine, in the background: the route (at once), how the window is
     /// brought forward (the window manager's tools are asked, once) and what the system says about do-not-disturb.
     fn read_machine(&mut self) {
+        let (notifier, sound) = (self.notifier.clone(), self.ws.settings.notifications.sound.clone());
+        let route = move || (notifier.route(&sound), notifier.via_terminal(), notifier.route_known());
+        self.read_machine_with(route, || super::raise::describe(&super::raise::detect(&super::raise::env())));
+    }
+
+    /// [`App::read_machine`] with `route` (the route, whether the terminal shows the bubbles, whether the server is found) and
+    /// `raise` (how the window comes forward, asked once) given: both are asked off the loop's thread, which may take a while
+    /// (Windows' toast settings, macOS' Launch Services, the window manager's tools).
+    fn read_machine_with(&mut self, route: impl FnOnce() -> (super::notify::RouteInfo, bool, bool) + Send + 'static, raise: impl FnOnce() -> String + Send + 'static) {
         let Some(p) = self.prefs.as_ref() else { return };
         let machine = p.machine.clone();
-        let (route, known) = (self.notifier.route(&self.ws.settings.notifications.sound), self.notifier.route_known());
-        let now = std::time::Instant::now();
-        let ask_raise = {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        // Not read again while this one is under way.
+        machine.lock().unwrap_or_else(|e| e.into_inner()).read_at = Some(std::time::Instant::now());
+        let shared = machine.clone();
+        drop(runtime.spawn_blocking(move || {
+            let (info, via_terminal, known) = route();
+            let ask_raise = {
+                let mut m = shared.lock().unwrap_or_else(|e| e.into_inner());
+                (m.route, m.via_terminal) = (Some(info), via_terminal);
+                // The server is still being looked for: read again soon.
+                if !known {
+                    m.read_at = std::time::Instant::now().checked_sub(super::prefs::MACHINE_REREAD - std::time::Duration::from_secs(1));
+                }
+                !std::mem::replace(&mut m.raise_asked, true)
+            };
+            if ask_raise {
+                let text = raise();
+                shared.lock().unwrap_or_else(|e| e.into_inner()).raise = Some(text);
+            }
+        }));
+        self.notifier.read_system_dnd(move |text, on| {
             let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
-            (m.route, m.via_terminal) = (Some(route), self.notifier.via_terminal());
-            // The server is still being looked for: read again soon.
-            m.read_at = Some(if known { now } else { now.checked_sub(super::prefs::MACHINE_REREAD - std::time::Duration::from_secs(1)).unwrap_or(now) });
-            !std::mem::replace(&mut m.raise_asked, true)
-        };
-        if ask_raise {
-            let machine = machine.clone();
-            std::thread::spawn(move || {
-                let text = super::raise::describe(&super::raise::detect(&super::raise::env()));
-                machine.lock().unwrap_or_else(|e| e.into_inner()).raise = Some(text);
-            });
-        }
-        self.notifier.read_system_dnd(move |text| machine.lock().unwrap_or_else(|e| e.into_inner()).dnd = Some(text));
+            (m.dnd, m.dnd_on) = (Some(text), on);
+        });
     }
 
     /// Change the notification schedule: shown at once, then written after any earlier change
@@ -11454,6 +11475,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_slow_route_is_not_waited_for() {
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        let route = || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            (crate::tui::notify::RouteInfo { shown_by: "slow".into(), sound_by: "ttyak".into(), click: "opens it".into() }, false, true)
+        };
+        let started = std::time::Instant::now();
+        app.read_machine_with(route, || "via nothing".into());
+        assert!(started.elapsed() < std::time::Duration::from_millis(200), "the loop does not wait for the route: {:?}", started.elapsed());
+        assert!(app.prefs.as_ref().unwrap().machine.lock().unwrap().route.is_none(), "not there yet");
+        for _ in 0..300 {
+            if app.prefs.as_ref().unwrap().machine.lock().unwrap().route.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let p = app.prefs.as_ref().unwrap();
+        assert_eq!(p.machine_value(super::super::prefs::Field::ShownBy).as_deref(), Some("slow · sound played by ttyak"));
+    }
+
+    #[tokio::test]
+    async fn the_test_notification_says_when_the_system_holds_it_back() {
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        app.prefs.as_ref().unwrap().machine.lock().unwrap().dnd_on = Some(true);
+        app.ws.settings.notifications.follow_system_dnd = true;
+        app.send_test_notification();
+        assert!(app.status.contains("held back by the system's do-not-disturb"), "{}", app.status);
+        // Not followed, or not on: sent.
+        app.ws.settings.notifications.follow_system_dnd = false;
+        app.send_test_notification();
+        assert_eq!(app.status, "sent a test notification");
+        app.ws.settings.notifications.follow_system_dnd = true;
+        app.prefs.as_ref().unwrap().machine.lock().unwrap().dnd_on = Some(false);
+        app.send_test_notification();
+        assert_eq!(app.status, "sent a test notification");
+    }
+
+    #[tokio::test]
+    async fn with_desktop_notifications_off_the_test_still_rings_the_bell() {
+        use crossterm::event::Event;
+        use super::super::notify::fake::Call;
+        let (mut app, server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        app.ws.settings.notifications.desktop = false;
+        app.ws.settings.notifications.bell = true;
+        let mut out = Vec::new();
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        app.send_test_notification();
+        assert!(app.status.contains("no bubble sent") && app.status.contains("the bell follows in 3 s"), "{}", app.status);
+        tokio::time::sleep(std::time::Duration::from_millis(3200)).await;
+        app.notifier.settled().await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "the bell rings even with desktop notifications off");
+        assert!(!server.calls().iter().any(|c| matches!(c, Call::Show { .. })), "no bubble");
+        // Bell off too: only the note.
+        app.ws.settings.notifications.bell = false;
+        app.send_test_notification();
+        assert!(app.status.contains("no bubble sent") && !app.status.contains("bell"), "{}", app.status);
+    }
+
+    #[tokio::test]
     async fn the_machine_rows_are_read_in_the_background() {
         use super::super::prefs::Field;
         let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
@@ -11463,7 +11547,15 @@ mod tests {
         assert!(p.machine_due());
         assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("reading…"));
         app.read_machine();
-        app.notifier.settled().await;
+        // Read off the loop's thread: it is there a moment later.
+        for _ in 0..500 {
+            let m = app.prefs.as_ref().unwrap().machine.lock().unwrap();
+            if m.route.is_some() && m.dnd.is_some() {
+                break;
+            }
+            drop(m);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         let p = app.prefs.as_ref().unwrap();
         assert!(!p.machine_due(), "just read");
         assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("can't tell"), "the fake server can't be asked");

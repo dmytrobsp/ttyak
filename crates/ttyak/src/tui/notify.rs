@@ -932,7 +932,7 @@ enum Cmd {
     /// Find out what the notification server is and can do.
     Probe,
     /// Ask the system whether it holds notifications back and tell F6 in words (`system_dnd::describe`).
-    ReadDnd(Box<dyn FnOnce(String) + Send>),
+    ReadDnd(Box<dyn FnOnce(String, Option<bool>) + Send>),
     /// Close `key`'s bubble, `how` says when.
     Withdraw { key: Key, how: Withdrawal },
     /// The waiter of `key`'s bubble `generation` ended; `gone`: it was clicked or closed.
@@ -1117,8 +1117,8 @@ impl Notifier {
         self.inner.shared.terminal.get().is_some()
     }
 
-    /// Ask the system about do-not-disturb in the background: `done` gets the answer in words (never waits for the UI).
-    pub fn read_system_dnd(&self, done: impl FnOnce(String) + Send + 'static) {
+    /// Ask the system about do-not-disturb in the background: `done` gets the answer in words and as asked (never waits for the UI).
+    pub fn read_system_dnd(&self, done: impl FnOnce(String, Option<bool>) + Send + 'static) {
         self.send(Cmd::ReadDnd(Box::new(done)));
     }
 
@@ -1356,7 +1356,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
             Cmd::ReadDnd(done) => {
                 let environment = environment(&backend, &shared).await;
                 let answer = backend.suppressed(environment.server.clone()).await;
-                done(system_dnd::describe(&environment.server, answer));
+                done(system_dnd::describe(&environment.server, answer), answer);
             }
             Cmd::Withdraw { key, how } => {
                 let covered = live.get(&key).is_some_and(|l| how.takes(l.at.as_ref()));
@@ -2246,7 +2246,7 @@ mod tests {
         server.set_server(system_dnd::Server::Swaync);
         let read = |n: &Notifier| {
             let (tx, rx) = std::sync::mpsc::channel();
-            n.read_system_dnd(move |text| drop(tx.send(text)));
+            n.read_system_dnd(move |text, _| drop(tx.send(text)));
             rx
         };
         for (answer, says) in [(Some(false), "swaync: off"), (Some(true), "swaync: on"), (None, "swaync: can't tell")] {
@@ -2263,20 +2263,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_test_bell_rings_later_and_only_in_its_period() {
+    async fn the_test_bell_rings_later_and_is_dropped_once_focus_changes() {
         let (n, _server) = Notifier::fake();
         n.set_focus(TermFocus::Unfocused);
         n.test_bell_after(std::time::Duration::from_millis(40), false);
         assert!(!n.take_bell(), "not yet");
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(n.take_bell());
-        // Focus changed meanwhile: the bell is for the period it was asked in.
+        // Rung, but the terminal is focused again before the run loop writes it: dropped.
         n.test_bell_after(std::time::Duration::from_millis(40), true);
-        n.set_focus(TermFocus::Focused);
-        n.set_focus(TermFocus::Unfocused);
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         n.settled().await;
-        assert!(n.take_bell(), "asked in the period it was decided");
+        n.set_focus(TermFocus::Focused);
+        assert!(!n.take_bell(), "the bell is for the focus period it rang in");
     }
 
     #[tokio::test]

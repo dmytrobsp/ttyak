@@ -41,6 +41,17 @@ const MAX_KEPT_ROWS: u16 = 14;
 /// Blank cells between the columns of a value or key line.
 const GAP: usize = 2;
 
+/// [`help`] for a row that shows a value read from the machine (cut to the row's width there): `shown`, if any, is given in
+/// full before the explanation.
+pub fn help_shown(field: Field, ws: &Workspace, keys: &Keymap, shown: Option<&str>) -> Help {
+    let mut h = help(field, ws, keys);
+    if let (Some(value), Field::ShownBy | Field::ClickResult | Field::SystemDnd) = (shown, field) {
+        // First, so a help cut for room never loses it.
+        h.lines.splice(0..0, [HelpLine::Text(value.to_string()), HelpLine::Blank]);
+    }
+    h
+}
+
 /// The help of a field, with the user's current keys named in it.
 pub fn help(field: Field, ws: &Workspace, keys: &Keymap) -> Help {
     build(field, ws, keys, &|s| super::i18n::tr(s).into_owned())
@@ -760,6 +771,22 @@ mod tests {
         assert!(key_lines(&help(Field::SystemDnd, &Workspace::default(), &keys())).is_empty(), "shown only");
         let bell = help(Field::Bell, &Workspace::default(), &keys());
         assert!(matches!(&bell.lines[0], HelpLine::Text(t) if t.contains("focus_on_activate") && t.contains("Off by default")), "{bell:?}");
+    }
+
+    #[test]
+    fn a_shown_value_is_in_full_in_the_help() {
+        let long = "nothing: the terminal's app isn't known, and macOS 26 refuses notifications sent as Finder (macOS's default) · sound played by the notification";
+        for f in [Field::ShownBy, Field::ClickResult, Field::SystemDnd] {
+            let h = help_shown(f, &Workspace::default(), &keys(), Some(long));
+            // Wrapped at a narrow width, every word is still there, in order.
+            let shown = layout(&h, 30).iter().map(plain).collect::<Vec<_>>().join(" ");
+            let words: Vec<&str> = long.split_whitespace().collect();
+            assert_eq!(shown.split_whitespace().take(words.len()).collect::<Vec<_>>(), words, "{f:?}: first, whole: {shown}");
+            assert!(box_height(&h, 30, 40).is_some());
+        }
+        // Other rows, and no value: unchanged.
+        assert_eq!(help_shown(Field::Bell, &Workspace::default(), &keys(), Some(long)), help(Field::Bell, &Workspace::default(), &keys()));
+        assert_eq!(help_shown(Field::ShownBy, &Workspace::default(), &keys(), None), help(Field::ShownBy, &Workspace::default(), &keys()));
     }
 
     #[test]

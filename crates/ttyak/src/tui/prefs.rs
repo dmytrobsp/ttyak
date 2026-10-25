@@ -640,7 +640,17 @@ const NOTHING_TO_RUN: &str = "nothing to run: ttyak updates itself once a new ve
 const UNDER_WAY: &str = "a check is under way";
 const UPDATE_WORDS: &[&str] = &[ONE_DAY, DAYS, HOURS, MINUTES, SECS, SECS_IN_WORDS, TAKEN_AS, NO_ANSWER, NO_ANSWER_TAKEN_AS, NO_DATA, NO_DATA_TAKEN_AS, VERSION_ROW, BY_SCRIPT, BY_HOMEBREW, BY_SCOOP, BY_WINGET, BY_CHOCOLATEY, BY_PACMAN, BY_DEB, BY_RPM, BY_HAND, UPDATE_BELOW, UPDATE_ITSELF, CHECK_IDLE, CHECKING, UP_TO_DATE, IS_OUT, NOT_CHECKED, NOT_RUNNING, OPEN_UPDATE, VERSION_ONLY, NOTHING_TO_RUN_BELOW, NOTHING_TO_RUN, UNDER_WAY];
 
+/// The label of `field` on category `category`'s page.
+fn page_label(category: usize, field: Field) -> String {
+    match field {
+        // The pause, here beside the schedule (Availability keeps "Notifications").
+        Field::Notifications if CATEGORIES.get(category).is_some_and(|c| c.0 == "Notifications") => super::i18n::tr(PAUSE_ROW).into_owned(),
+        f => f.label(),
+    }
+}
+
 /// F6 → Notifications' "On this machine": words beyond the labels.
+const PAUSE_ROW: &str = "Pause notifications";
 const TEST_ROW: &str = "{key} sends one";
 const READING: &str = "reading…";
 const SHOWN_BY_ROW: &str = "{shown_by} · sound played by {sound_by}";
@@ -650,9 +660,11 @@ const TEST_TITLE: &str = "ttyak test notification";
 const TEST_BODY: &str = "If you can see this, notifications from ttyak reach you here.";
 const TEST_SENT: &str = "sent a test notification";
 const TEST_SENT_BELL: &str = "sent a test notification; the bell follows in {secs} s if the terminal is then unfocused";
-const TEST_DESKTOP_OFF: &str = "desktop notifications are off: there is no test notification to show";
+const TEST_SKIPPED: &str = "desktop notifications are off: no bubble sent";
+const TEST_SKIPPED_BELL: &str = "desktop notifications are off: no bubble sent; the bell follows in {secs} s if the terminal is then unfocused";
+const TEST_HELD: &str = "held back by the system's do-not-disturb";
 const TEST_CLICKED: &str = "the test notification was clicked: that is how a click reaches ttyak here";
-const MACHINE_WORDS: &[&str] = &[TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_DESKTOP_OFF, TEST_CLICKED];
+const MACHINE_WORDS: &[&str] = &[PAUSE_ROW, TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_SKIPPED, TEST_SKIPPED_BELL, TEST_HELD, TEST_CLICKED];
 
 /// How long what F6 → Notifications read about this machine stands before it is read again (an internal wait: the system's
 /// do-not-disturb changes while the page is open).
@@ -670,6 +682,8 @@ pub struct Machine {
     pub raise_asked: bool,
     /// What the system says about do-not-disturb, in words.
     pub dnd: Option<String>,
+    /// The system's do-not-disturb is on, as last read (None: can't tell, or not read yet).
+    pub dnd_on: Option<bool>,
     /// When the last read started; None: not read yet.
     pub read_at: Option<Instant>,
 }
@@ -694,8 +708,14 @@ pub fn test_sent(bell: bool) -> String {
     super::i18n::tr(if bell { TEST_SENT_BELL } else { TEST_SENT }).replace("{secs}", &super::notify::TEST_BELL_AFTER.as_secs().to_string())
 }
 
-pub fn test_refused() -> String {
-    super::i18n::tr(TEST_DESKTOP_OFF).into_owned()
+/// The status line after the test with desktop notifications off (`bell`: the bell follows).
+pub fn test_skipped(bell: bool) -> String {
+    super::i18n::tr(if bell { TEST_SKIPPED_BELL } else { TEST_SKIPPED }).replace("{secs}", &super::notify::TEST_BELL_AFTER.as_secs().to_string())
+}
+
+/// The status line when the system's do-not-disturb holds the test back.
+pub fn test_held() -> String {
+    super::i18n::tr(TEST_HELD).into_owned()
 }
 
 pub fn test_clicked() -> String {
@@ -1444,9 +1464,10 @@ impl Prefs {
         let sections = if keys_shown { super::keymap::keys_tree(keys) } else { Vec::new() };
         let tree_row = |i: usize| sections.iter().flat_map(|s| &s.rows).find(|r| r.info == i);
         let icons = ws.settings.which_key.icons;
+        let category = self.category;
         let label_of = |field: &Field| match field {
             Field::Binding(i) if keys_shown => tree_row(*i).map_or_else(String::new, |r| if icons { format!("  {} {}", r.icon, r.label) } else { format!("  {}", r.label) }),
-            f => f.label(),
+            f => page_label(category, *f),
         };
         let list_area = if keys_shown {
             // The filter's key (`/`) and, while it has the focus, a cursor.
@@ -1524,7 +1545,7 @@ impl Prefs {
         // The selected item's help under a blank row, indented like the rows; too little room: none.
         let below = Rect { x: right.x + 1, y: list_area.y + shown + 1, width: right.width.saturating_sub(1), height: list_area.height.saturating_sub(shown + 1) };
         if let Some(field) = fields.get(self.selected) {
-            let help = if keys_shown && self.filter_focused { super::prefs_help::filter_help(keys) } else { super::prefs_help::help(*field, ws, keys) };
+            let help = if keys_shown && self.filter_focused { super::prefs_help::filter_help(keys) } else { super::prefs_help::help_shown(*field, ws, keys, self.machine_value(*field).as_deref()) };
             if let Some(height) = super::prefs_help::box_height(&help, below.width, below.height) {
                 super::prefs_help::draw(f, Rect { height, ..below }, &help);
             }
@@ -1869,9 +1890,18 @@ mod tests {
     }
 
     #[test]
+    fn the_pause_row_is_called_what_it_does_on_the_notifications_page() {
+        let notifications = CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap();
+        assert_eq!(page_label(0, Field::Notifications), "Notifications", "Availability: as before");
+        assert_eq!(page_label(notifications, Field::Notifications), "Pause notifications");
+        assert_eq!(page_label(notifications, Field::Schedule), "Notification schedule");
+        assert!(super::super::i18n::translatable().iter().any(|w| w == "Pause notifications"));
+    }
+
+    #[test]
     fn the_machine_words_are_translatable() {
         let words = super::super::i18n::translatable();
-        for want in [TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_DESKTOP_OFF, TEST_CLICKED] {
+        for want in [TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_SKIPPED, TEST_SKIPPED_BELL, TEST_HELD, TEST_CLICKED] {
             assert!(words.iter().any(|w| w == want), "{want}");
         }
         // The route's words (all platforms) and the system's.
