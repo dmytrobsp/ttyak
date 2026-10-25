@@ -258,13 +258,23 @@ pub fn should_notify(state: &State, latest: &Latest) -> bool {
 /// release it found), the later version notified and the later one seen, so a state that could not be
 /// written still counts.
 pub fn with_floor(disk: State, kept: &State) -> State {
-    let later = |d: Option<String>, k: &Option<String>| match (version_of(d.as_deref()), version_of(k.as_deref())) {
+    let known = if kept.last_check > disk.last_check { kept.known.clone() } else { disk.known };
+    State { last_check: disk.last_check.max(kept.last_check), notified: later(disk.notified, &kept.notified), known, seen: later(disk.seen, &kept.seen) }
+}
+
+/// `next` (what a check just found) with the later version seen of it and `kept` (written while it ran); the rest is
+/// the check's, even when `kept`'s check looks later (the clock set back).
+pub fn with_seen_kept(next: State, kept: &State) -> State {
+    State { seen: later(next.seen, &kept.seen), ..next }
+}
+
+/// The later of two versions as `updates.json` keeps them (`d`'s when neither is later or `k` is no version).
+fn later(d: Option<String>, k: &Option<String>) -> Option<String> {
+    match (version_of(d.as_deref()), version_of(k.as_deref())) {
         (Some(dv), Some(kv)) if kv.cmp_precedence(&dv).is_gt() => k.clone(),
         (None, Some(_)) => k.clone(),
         _ => d,
-    };
-    let known = if kept.last_check > disk.last_check { kept.known.clone() } else { disk.known };
-    State { last_check: disk.last_check.max(kept.last_check), notified: later(disk.notified, &kept.notified), known, seen: later(disk.seen, &kept.seen) }
+    }
 }
 
 /// What a check at `now` that ended with `result` leaves: the state to write (before anything is
@@ -417,7 +427,7 @@ where
         }
         if let Some((next, newer, checked)) = ran {
             // With what was written while it ran (a version seen).
-            let next = with_floor(next, &kept);
+            let next = with_seen_kept(next, &kept);
             kept = next.clone();
             // Only once it is written: never notified twice.
             let saved = save_state(&path, &next);
@@ -1102,6 +1112,19 @@ mod tests {
         let mut upper = state.clone();
         upper.known.as_mut().unwrap().sha256 = "AB12".repeat(16);
         assert!(remembered(&upper, &now, "x86_64-linux", DOWNLOAD_URL).is_some(), "hex in either case");
+    }
+
+    #[test]
+    fn a_fresh_answer_keeps_only_the_version_seen_meanwhile() {
+        // Written while the check ran, with a later clock than the check's (set back since): only its seen counts.
+        let (kept, _) = after_check(&State::default(), 500, &v("0.10.0"), Ok(latest("0.10.1")));
+        let kept = with_seen(kept, &v("0.10.1"));
+        let (fresh, _) = after_check(&kept, 100, &v("0.10.0"), Ok(latest("0.10.0")));
+        let next = with_seen_kept(fresh, &kept);
+        assert_eq!((next.last_check, next.known, next.seen.as_deref()), (100, None, Some("0.10.1")), "the fresh \"nothing newer\" stands");
+        let (fresh, _) = after_check(&State::default(), 100, &v("0.10.0"), Ok(latest("0.10.2")));
+        let next = with_seen_kept(fresh, &kept);
+        assert_eq!((next.known.map(|k| k.version), next.seen.as_deref()), (Some("0.10.2".into()), Some("0.10.1")));
     }
 
     #[test]
