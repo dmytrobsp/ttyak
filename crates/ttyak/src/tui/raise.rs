@@ -199,7 +199,7 @@ enum TabMove {
     AlreadySelected(usize),
     /// The tab can't be selected through UI Automation.
     NoPattern(usize),
-    /// The raise gave up waiting for UI Automation: nothing is selected after it.
+    /// The raise gave up waiting for UI Automation: no select is started after it.
     Late,
     Missing,
     Several(usize),
@@ -285,7 +285,7 @@ const TERMINAL_CLASS: &str = "CASCADIA_HOSTING_WINDOW_CLASS";
 const AUTOMATION_WAIT: Duration = Duration::from_millis(1500);
 
 /// Select Windows Terminal's tab titled `title` in the console's window, when that is Windows Terminal's: UI
-/// Automation, at most [`COMMAND_WAIT`] (once given up, a late answer selects nothing). Logged; nothing else happens
+/// Automation, at most [`COMMAND_WAIT`] (once given up, a late answer starts no select). Logged; nothing else happens
 /// when it can't.
 #[cfg(windows)]
 fn select_tab(title: &str) {
