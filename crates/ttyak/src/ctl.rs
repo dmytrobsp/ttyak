@@ -232,7 +232,7 @@ async fn self_update(url: Option<&str>) -> Result<()> {
     use crate::tui::update_view::Offer;
     let url = url.map(str::to_string).or_else(|| std::env::var(crate::update::URL_ENV).ok().filter(|u| !u.is_empty())).unwrap_or_else(|| crate::update::URL.to_string());
     let platform = crate::install::platform().ok_or_else(|| anyhow!("ttyak is not released for this platform"))?;
-    let latest = crate::update::parse(&crate::update::fetch(&url, crate::update::check_timeout()).await?, platform)?;
+    let latest = crate::update::parse(&crate::update::fetch(&url, crate::update::check_timeout()).await?, platform, &crate::update::download_base())?;
     let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))?;
     if !crate::update::newer(&current, &latest) {
         println!("ttyak {current} is the newest");

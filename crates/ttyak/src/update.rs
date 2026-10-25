@@ -89,8 +89,9 @@ pub struct Asset {
     pub sha256: String,
 }
 
-/// The newest release described in `json`, with `platform`'s archive (an error when it has none).
-pub fn parse(json: &str, platform: &str) -> Result<Latest> {
+/// The newest release described in `json`, with `platform`'s archive (an error when it has none, or when it is not
+/// the one a self-update would take: see [`own_archive`]).
+pub fn parse(json: &str, platform: &str, downloads: &str) -> Result<Latest> {
     // (Its `notes` link is not read: the release's page is built from the version.)
     #[derive(Deserialize)]
     struct Feed {
@@ -103,7 +104,18 @@ pub fn parse(json: &str, platform: &str) -> Result<Latest> {
     let asset = feed.assets.remove(platform).with_context(|| format!("latest.json: no archive for {platform}"))?;
     // What is downloaded and checked is refused, never cleaned up.
     ensure!(!asset.url.chars().chain(asset.sha256.chars()).any(hidden), "latest.json: a control character or an invisible format character in the archive's address or SHA256");
+    own_archive(&version, &asset, platform, downloads).context("latest.json")?;
     Ok(Latest { version, date: printable(&feed.date), asset })
+}
+
+/// Whether `asset` is what a self-update takes for `version`: `platform`'s archive of that release under the release
+/// folders' parent `downloads`, with a SHA256 of 64 hex digits (said for a fresh feed and a remembered release alike,
+/// so neither offers an update the download would refuse).
+fn own_archive(version: &Version, asset: &Asset, platform: &str, downloads: &str) -> Result<()> {
+    let own = archive_url(downloads, version, platform);
+    ensure!(asset.url == own, "the archive for {platform} is {}, not the release's {own}", asset.url);
+    ensure!(asset.sha256.len() == 64 && asset.sha256.bytes().all(|b| b.is_ascii_hexdigit()), "the archive's SHA256 is not 64 hex digits");
+    Ok(())
 }
 
 /// A character that is not shown as itself: a control (C0 with ESC, DEL, C1), a format character
@@ -187,11 +199,9 @@ impl Known {
     /// under the release folders' parent `downloads`, or its SHA256 is not 64 hex digits.
     fn latest(&self, platform: &str, downloads: &str) -> Option<Latest> {
         let version = Version::parse(&self.version).ok()?;
-        let sha256_ok = self.sha256.len() == 64 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit());
-        if self.url != archive_url(downloads, &version, platform) || !sha256_ok {
-            return None;
-        }
-        Some(Latest { version, date: printable(&self.date), asset: Asset { url: self.url.clone(), sha256: self.sha256.clone() } })
+        let asset = Asset { url: self.url.clone(), sha256: self.sha256.clone() };
+        own_archive(&version, &asset, platform, downloads).ok()?;
+        Some(Latest { version, date: printable(&self.date), asset })
     }
 }
 
@@ -303,10 +313,10 @@ pub fn after_check(state: &State, now: u64, current: &Version, result: Result<La
     (next, Some(Found { latest, notify, desktop: notify }))
 }
 
-/// A check of `url` when one is due under `settings`, for `platform`: what [`after_check`] gives;
-/// None when the check is off, not due or ttyak is not released for this platform (nothing is
+/// A check of `url` when one is due under `settings`, for `platform` (its archive under `downloads`): what
+/// [`after_check`] gives; None when the check is off, not due or ttyak is not released for this platform (nothing is
 /// fetched then).
-pub async fn check<F, Fut>(settings: &crate::tui::settings::Updates, state: &State, now: u64, current: &Version, platform: Option<&str>, url: &str, fetch: F) -> Option<(State, Option<Found>)>
+pub async fn check<F, Fut>(settings: &crate::tui::settings::Updates, state: &State, now: u64, current: &Version, platform: Option<&str>, downloads: &str, url: &str, fetch: F) -> Option<(State, Option<Found>)>
 where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = Result<String>>,
@@ -315,20 +325,20 @@ where
     if !settings.check || !due(state, now, settings.check_every_secs) {
         return None;
     }
-    let result = fetch(url.to_string()).await.and_then(|json| parse(&json, platform));
+    let result = fetch(url.to_string()).await.and_then(|json| parse(&json, platform, downloads));
     Some(after_check(state, now, current, result))
 }
 
-/// A check asked for (F6 → Updates → Check now) of `url` for `platform`: due or not, with the check
+/// A check asked for (F6 → Updates → Check now) of `url` for `platform` (under `downloads`): due or not, with the check
 /// off too. What [`after_check`] gives, the newer version never to notify (the page shows it, so it
 /// counts as notified and seen), and what to say.
-pub async fn check_now<F, Fut>(state: &State, now: u64, current: &Version, platform: Option<&str>, url: &str, fetch: F) -> (State, Option<Found>, Checked)
+pub async fn check_now<F, Fut>(state: &State, now: u64, current: &Version, platform: Option<&str>, downloads: &str, url: &str, fetch: F) -> (State, Option<Found>, Checked)
 where
     F: FnOnce(String) -> Fut,
     Fut: Future<Output = Result<String>>,
 {
     let Some(platform) = platform else { return (state.clone(), None, Checked::Failed("ttyak is not released for this platform".into())) };
-    let result = fetch(url.to_string()).await.and_then(|json| parse(&json, platform));
+    let result = fetch(url.to_string()).await.and_then(|json| parse(&json, platform, downloads));
     let failed = result.as_ref().err().map(|e| format!("{e:#}"));
     let (mut next, found) = after_check(state, now, current, result);
     if let Some(f) = &found {
@@ -401,10 +411,10 @@ where
         let ran = {
             let checking = async {
                 if asked {
-                    let (next, newer, checked) = check_now(&state, now, &current, platform, &url, &fetch).await;
+                    let (next, newer, checked) = check_now(&state, now, &current, platform, &downloads, &url, &fetch).await;
                     Some((next, newer, Some(checked)))
                 } else {
-                    check(&settings, &state, now, &current, platform, &url, &fetch).await.map(|(next, newer)| (next, newer, None))
+                    check(&settings, &state, now, &current, platform, &downloads, &url, &fetch).await.map(|(next, newer)| (next, newer, None))
                 }
             };
             tokio::pin!(checking);
@@ -647,7 +657,7 @@ struct Release {
 }
 
 /// The release folders' parent: [`DOWNLOAD_URL`], or [`DOWNLOAD_URL_ENV`]'s.
-fn download_base() -> String {
+pub fn download_base() -> String {
     let base = std::env::var(DOWNLOAD_URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| DOWNLOAD_URL.to_string());
     base.trim_end_matches('/').to_string()
 }
@@ -928,7 +938,7 @@ mod tests {
 
     const FEED: &str = r#"{"name":"ttyak","version":"0.10.2","date":"2026-11-01","notes":"https://github.com/dmytrobsp/ttyak/releases/tag/v0.10.2",
         "assets":{"x86_64-linux":{"url":"https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip","sha256":"ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12"},
-                  "aarch64-macos":{"url":"https://example.invalid/mac.zip","sha256":"cd34"}}}"#;
+                  "aarch64-macos":{"url":"https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-aarch64-macos.zip","sha256":"cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34"}}}"#;
 
     fn latest(v: &str) -> Latest {
         Latest { version: Version::parse(v).unwrap(), date: "2026-11-01".into(), asset: Asset { url: format!("{DOWNLOAD_URL}/v{v}/ttyak-{v}-x86_64-linux.zip"), sha256: "ab12".repeat(16) } }
@@ -945,12 +955,12 @@ mod tests {
 
     #[test]
     fn parses_latest() {
-        let l = parse(FEED, "x86_64-linux").unwrap();
+        let l = parse(FEED, "x86_64-linux", DOWNLOAD_URL).unwrap();
         assert_eq!(l.version, v("0.10.2"));
         assert_eq!(l.date, "2026-11-01");
         assert_eq!(page_at(PAGES_URL, &l.version), "https://github.com/dmytrobsp/ttyak/releases/tag/v0.10.2");
         assert_eq!(l.asset, Asset { url: "https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip".into(), sha256: "ab12".repeat(16) });
-        assert_eq!(parse(FEED, "aarch64-macos").unwrap().asset.sha256, "cd34");
+        assert_eq!(parse(FEED, "aarch64-macos", DOWNLOAD_URL).unwrap().asset.sha256, "cd34".repeat(16));
     }
 
     /// The feed packaging/render.py writes (packaging/test_render.py keeps this copy equal to its output): every
@@ -959,7 +969,7 @@ mod tests {
     fn parses_the_rendered_feed() {
         let rendered = include_str!("../testdata/latest.json");
         for platform in ["x86_64-linux", "aarch64-linux", "x86_64-macos", "aarch64-macos", "x86_64-windows"] {
-            let l = parse(rendered, platform).unwrap();
+            let l = parse(rendered, platform, DOWNLOAD_URL).unwrap();
             assert_eq!((&l.version, l.date.as_str()), (&v("0.11.0"), "2026-11-01"));
             // The page ttyak builds from the version is the one render.py names.
             let notes = serde_json::from_str::<serde_json::Value>(rendered).unwrap()["notes"].as_str().unwrap().to_string();
@@ -970,16 +980,38 @@ mod tests {
         }
     }
 
+    /// A fresh feed is checked as a self-update checks it, as a remembered release is: only this platform's archive of
+    /// that release under the release folders' parent, with a SHA256 of 64 hex digits; never an update the download
+    /// would refuse.
+    #[test]
+    fn only_the_release_s_own_archive_is_offered() {
+        let feed = |platform: &str, url: &str, sha: &str| format!(r#"{{"version":"0.10.2","date":"","notes":"","assets":{{"{platform}":{{"url":"{url}","sha256":"{sha}"}}}}}}"#);
+        let own = "https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip";
+        let sha = "ab12".repeat(16);
+        assert!(parse(&feed("x86_64-linux", own, &sha), "x86_64-linux", DOWNLOAD_URL).is_ok());
+        for (url, sha) in [
+            ("https://example.invalid/ttyak.zip", sha.as_str()),
+            ("https://github.com/dmytrobsp/ttyak/releases/download/v0.10.1/ttyak-0.10.1-x86_64-linux.zip", &sha),
+            ("https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-aarch64-macos.zip", &sha),
+            (own, "ab12"),
+            (own, &"xy12".repeat(16)),
+        ] {
+            let e = parse(&feed("x86_64-linux", url, sha), "x86_64-linux", DOWNLOAD_URL).unwrap_err();
+            assert!(format!("{e:#}").starts_with("latest.json: "), "{url} {sha}: {e:#}");
+        }
+        assert!(parse(&feed("x86_64-linux", own, &sha), "x86_64-linux", "http://127.0.0.1:9").is_err(), "another release folder");
+    }
+
     #[test]
     fn missing_platform_is_an_error() {
-        let e = parse(FEED, "x86_64-windows").unwrap_err();
+        let e = parse(FEED, "x86_64-windows", DOWNLOAD_URL).unwrap_err();
         assert!(format!("{e:#}").contains("x86_64-windows"), "{e:#}");
     }
 
     #[test]
     fn malformed_is_an_error() {
         for bad in ["", "<html>404</html>", "{}", r#"{"version":"ten","date":"","notes":"","assets":{"x86_64-linux":{"url":"u","sha256":"s"}}}"#, r#"{"version":"0.10.2","date":"","notes":"","assets":{"x86_64-linux":{"url":"u"}}}"#] {
-            assert!(parse(bad, "x86_64-linux").is_err(), "{bad:?}");
+            assert!(parse(bad, "x86_64-linux", DOWNLOAD_URL).is_err(), "{bad:?}");
         }
     }
 
@@ -1147,7 +1179,7 @@ mod tests {
     async fn a_restart_brings_back_the_known_update_and_its_pill_until_seen() {
         let dir = Temp::new("restart");
         let path = dir.0.join("updates.json");
-        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux"));
+        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux", DOWNLOAD_URL));
         save_state(&path, &state).unwrap();
         async fn next(r: &mut tokio::sync::mpsc::UnboundedReceiver<Report>) -> Option<Report> {
             tokio::time::timeout(Duration::from_secs(5), r.recv()).await.unwrap()
@@ -1185,7 +1217,7 @@ mod tests {
     async fn a_version_seen_is_written_while_a_check_runs() {
         let dir = Temp::new("seen-busy");
         let path = dir.0.join("updates.json");
-        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux"));
+        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux", DOWNLOAD_URL));
         save_state(&path, &state).unwrap();
         // Due at once; its answer comes only when the test lets it.
         let gate = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -1271,13 +1303,13 @@ mod tests {
         let off = Updates { check: false, ..Default::default() };
         let old = State::default();
         let now = v("0.10.0");
-        assert_eq!(check(&off, &old, 1_000_000, &now, Some("x86_64-linux"), "http://127.0.0.1:9/latest.json", fetch).await, None);
+        assert_eq!(check(&off, &old, 1_000_000, &now, Some("x86_64-linux"), DOWNLOAD_URL, "http://127.0.0.1:9/latest.json", fetch).await, None);
         let on = Updates::default();
         let recent = State { last_check: 999_000, notified: None, ..Default::default() };
-        assert_eq!(check(&on, &recent, 1_000_000, &now, Some("x86_64-linux"), "http://127.0.0.1:9/latest.json", fetch).await, None, "not due");
-        assert_eq!(check(&on, &old, 1_000_000, &now, None, "http://127.0.0.1:9/latest.json", fetch).await, None, "no release for this platform");
+        assert_eq!(check(&on, &recent, 1_000_000, &now, Some("x86_64-linux"), DOWNLOAD_URL, "http://127.0.0.1:9/latest.json", fetch).await, None, "not due");
+        assert_eq!(check(&on, &old, 1_000_000, &now, None, DOWNLOAD_URL, "http://127.0.0.1:9/latest.json", fetch).await, None, "no release for this platform");
         assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
-        let (next, shown) = check(&on, &old, 1_000_000, &now, Some("x86_64-linux"), "http://127.0.0.1:9/latest.json", fetch).await.unwrap();
+        let (next, shown) = check(&on, &old, 1_000_000, &now, Some("x86_64-linux"), DOWNLOAD_URL, "http://127.0.0.1:9/latest.json", fetch).await.unwrap();
         assert_eq!((next.last_check, notified(shown).map(|l| l.version)), (1_000_000, Some(v("0.10.2"))));
         assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
@@ -1289,21 +1321,21 @@ mod tests {
         // Not due and never notified: checked all the same, known, never to notify; seen on the
         // page, it counts as notified (no notice for it later).
         let recent = State { last_check: 999_000, notified: None, ..Default::default() };
-        let (next, found, checked) = check_now(&recent, 1_000_000, &now, Some("x86_64-linux"), URL, fetch).await;
+        let (next, found, checked) = check_now(&recent, 1_000_000, &now, Some("x86_64-linux"), DOWNLOAD_URL, URL, fetch).await;
         assert_eq!(checked, Checked::Out(v("0.10.2")));
         assert_eq!(found.map(|f| (f.latest.version, f.notify)), Some((v("0.10.2"), false)));
         assert_eq!((next.last_check, next.notified.as_deref(), next.seen.as_deref()), (1_000_000, Some("0.10.2"), Some("0.10.2")), "shown on the page: seen, no pill after a restart");
-        let (_, later) = after_check(&next, 2_000_000, &now, parse(FEED, "x86_64-linux"));
+        let (_, later) = after_check(&next, 2_000_000, &now, parse(FEED, "x86_64-linux", DOWNLOAD_URL));
         assert!(later.is_some_and(|f| !f.notify), "the next check says nothing");
         // Notified before: still never to notify.
-        let (_, found, _) = check_now(&State { last_check: 0, notified: Some("0.10.1".into()), ..Default::default() }, 5, &now, Some("x86_64-linux"), URL, fetch).await;
+        let (_, found, _) = check_now(&State { last_check: 0, notified: Some("0.10.1".into()), ..Default::default() }, 5, &now, Some("x86_64-linux"), DOWNLOAD_URL, URL, fetch).await;
         assert!(found.is_some_and(|f| !f.notify));
         // Up to date; no answer; no release for this platform (nothing fetched).
-        let (_, found, checked) = check_now(&recent, 1_000_000, &v("0.10.2"), Some("x86_64-linux"), URL, fetch).await;
+        let (_, found, checked) = check_now(&recent, 1_000_000, &v("0.10.2"), Some("x86_64-linux"), DOWNLOAD_URL, URL, fetch).await;
         assert_eq!((found, checked), (None, Checked::UpToDate));
-        let (next, found, checked) = check_now(&recent, 1_000_000, &now, Some("x86_64-linux"), URL, |_| async { Err(anyhow::anyhow!("offline")) }).await;
+        let (next, found, checked) = check_now(&recent, 1_000_000, &now, Some("x86_64-linux"), DOWNLOAD_URL, URL, |_| async { Err(anyhow::anyhow!("offline")) }).await;
         assert_eq!((next.last_check, found, checked), (1_000_000, None, Checked::Failed("offline".into())));
-        let (next, found, checked) = check_now(&recent, 1_000_000, &now, None, URL, |_| async { panic!("fetched") }).await;
+        let (next, found, checked) = check_now(&recent, 1_000_000, &now, None, DOWNLOAD_URL, URL, |_| async { panic!("fetched") }).await;
         assert_eq!((next, found, checked), (recent.clone(), None, Checked::Failed("ttyak is not released for this platform".into())));
     }
 
@@ -1312,15 +1344,15 @@ mod tests {
         // ESC sequences (clear the screen, a hidden link), BEL, a C1 CSI, bidi overrides and isolates,
         // zero-width characters and a line separator in the text shown.
         let feed = r#"{"version":"9.9.9","date":"2026-11-01\u001b[2J\u202e","notes":"https://x.invalid/\u001b]8;;https://evil.invalid\u0007notes\u009b31m\u2066\u2069\u200b\u200f\u2028\u2029\ufeff",
-            "assets":{"x86_64-linux":{"url":"https://x.invalid/a.zip","sha256":"ab12"}}}"#;
-        let l = parse(feed, "x86_64-linux").unwrap();
+            "assets":{"x86_64-linux":{"url":"https://github.com/dmytrobsp/ttyak/releases/download/v9.9.9/ttyak-9.9.9-x86_64-linux.zip","sha256":"ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12"}}}"#;
+        let l = parse(feed, "x86_64-linux", DOWNLOAD_URL).unwrap();
         assert_eq!(l.date, "2026-11-01[2J");
         assert!(!format!("{l:?}").contains("evil"), "the feed's link is not kept: {l:?}");
         assert_eq!(printable("a\u{1b}b\u{7f}c\u{85}d\u{9f}e\tf\u{202a}\u{202d}\u{2067}\u{200e}\u{ad} ü 🎉"), "abcdef ü 🎉", "C0, DEL, C1 and format characters go; the rest stays");
         // In what is downloaded and checked: refused, never cleaned up.
         for (url, sha) in [("https://x.invalid/a.zip\\u0000", "ab12"), ("https://x.invalid/a.zip", "ab12\\r\\n"), ("https://x.invalid/\\u001b[2Ja.zip", "ab12"), ("https://x.invalid/a.zip", "ab\\u202e12")] {
             let feed = format!(r#"{{"version":"9.9.9","date":"","notes":"","assets":{{"x86_64-linux":{{"url":"{url}","sha256":"{sha}"}}}}}}"#);
-            let e = parse(&feed, "x86_64-linux").unwrap_err();
+            let e = parse(&feed, "x86_64-linux", DOWNLOAD_URL).unwrap_err();
             assert!(format!("{e:#}").contains("control character"), "{url} {sha}: {e:#}");
         }
     }
