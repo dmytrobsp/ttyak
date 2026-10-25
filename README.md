@@ -360,7 +360,8 @@ it (it lists the `sound` capability: GNOME's does, SwayNotificationCenter, mako 
 do-not-disturb silences both; ttyak's volume and speaker setting then do not apply. Where the server cannot, ttyak plays
 the sound itself — except `system`, the desktop's own sound, which then stays silent because there is none to play. With
 Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before an
-interruption (the answer stands for the next ones for up to 2 seconds), whoever plays the sound: SwayNotificationCenter,
+interruption (the answer stands for the next ones for up to 2 seconds, so a burst of messages asks once — and a
+do-not-disturb switched on or off just before may be missed for that long), whoever plays the sound: SwayNotificationCenter,
 mako (a `do-not-disturb` or `dnd` mode), dunst (paused), GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
 fires nothing: no notification, no sound, no bell, and a huddle invitation's ring keeps quiet (asked when it starts
 ringing; it rings if no answer comes within 2 seconds) — except on Windows, where the toast still goes out without its

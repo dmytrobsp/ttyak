@@ -132,7 +132,7 @@ pub struct Environment {
 pub const ASK_WAIT: Duration = Duration::from_millis(if cfg!(test) { 300 } else { 1000 });
 
 /// The session bus, connected once and kept (every question would otherwise connect anew); forgotten when a call on it
-/// fails, so the next question connects again.
+/// says the connection is gone ([`connection_gone`]), so the next question connects again.
 #[cfg(target_os = "linux")]
 static BUS: std::sync::Mutex<Option<zbus::Connection>> = std::sync::Mutex::new(None);
 
@@ -149,6 +149,34 @@ async fn bus() -> zbus::Result<zbus::Connection> {
 #[cfg(target_os = "linux")]
 fn forget_bus() {
     *BUS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Whether `e` says the bus connection itself is gone (its socket failed or closed, the bus says it is disconnected),
+/// not only that the server said no.
+#[cfg(target_os = "linux")]
+fn connection_gone(e: &zbus::Error) -> bool {
+    use zbus::fdo;
+    match e {
+        zbus::Error::InputOutput(_) | zbus::Error::Connection(..) | zbus::Error::Handshake(_) => true,
+        zbus::Error::FDO(e) => match &**e {
+            fdo::Error::ZBus(e) => connection_gone(e),
+            fdo::Error::Disconnected(_) | fdo::Error::IOError(_) | fdo::Error::NoServer(_) => true,
+            _ => false,
+        },
+        zbus::Error::MethodError(name, ..) => matches!(name.as_str(), "org.freedesktop.DBus.Error.Disconnected" | "org.freedesktop.DBus.Error.IOError" | "org.freedesktop.DBus.Error.NoServer"),
+        _ => false,
+    }
+}
+
+/// `ask`'s answer on the kept bus connection; None on any error, and the connection forgotten when the error says it is
+/// gone (the next question connects again).
+#[cfg(target_os = "linux")]
+async fn on_bus<T, F: std::future::Future<Output = zbus::Result<T>>>(ask: impl FnOnce(zbus::Connection) -> F) -> Option<T> {
+    let answer = ask(bus().await.ok()?).await;
+    if answer.as_ref().is_err_and(connection_gone) {
+        forget_bus();
+    }
+    answer.ok()
 }
 
 /// The server answering on the session bus; Windows' own on Windows. (Windows and macOS: their toasts carry the sound,
@@ -326,24 +354,20 @@ async fn run(program: &str, args: &[&str]) -> Option<String> {
 
 #[cfg(target_os = "linux")]
 async fn swaync() -> Option<bool> {
-    let conn = bus().await.ok()?;
-    let cc = zbus::Proxy::new(&conn, "org.erikreider.swaync.cc", "/org/erikreider/swaync/cc", "org.erikreider.swaync.cc").await.ok()?;
-    let answer = cc.call("GetDnd", &()).await;
-    if matches!(&answer, Err(zbus::Error::InputOutput(_))) {
-        forget_bus();
-    }
-    answer.ok()
+    on_bus(|conn| async move {
+        let cc = zbus::Proxy::new(&conn, "org.erikreider.swaync.cc", "/org/erikreider/swaync/cc", "org.erikreider.swaync.cc").await?;
+        cc.call("GetDnd", &()).await
+    })
+    .await
 }
 
 #[cfg(target_os = "linux")]
 async fn kde() -> Option<bool> {
-    let conn = bus().await.ok()?;
-    let n = zbus::Proxy::new(&conn, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications").await.ok()?;
-    let answer = n.get_property("Inhibited").await;
-    if matches!(&answer, Err(zbus::Error::InputOutput(_))) {
-        forget_bus();
-    }
-    answer.ok()
+    on_bus(|conn| async move {
+        let n = zbus::Proxy::new(&conn, "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications").await?;
+        n.get_property("Inhibited").await
+    })
+    .await
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -466,6 +490,21 @@ mod tests {
         let answer = suppressed(&found.server).await;
         println!("Windows: Focus Assist's profile {:?}, notification state {:?} -> suppressed {answer:?}", focus_assist_profile(), windows_state());
         assert!(answer.is_some(), "Windows answers");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_connection_that_is_gone_is_told_from_a_refusal() {
+        use std::sync::Arc;
+        use zbus::fdo;
+        let io = || zbus::Error::InputOutput(Arc::new(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "socket closed")));
+        for gone in [io(), zbus::Error::Handshake("x".into()), zbus::Error::FDO(Box::new(fdo::Error::Disconnected("x".into()))), zbus::Error::FDO(Box::new(fdo::Error::IOError("x".into()))), zbus::Error::FDO(Box::new(fdo::Error::NoServer("x".into()))), zbus::Error::FDO(Box::new(fdo::Error::ZBus(io())))] {
+            assert!(connection_gone(&gone), "{gone:?}");
+        }
+        // The server's own refusals: the connection stays.
+        for kept in [zbus::Error::InterfaceNotFound, zbus::Error::InvalidReply, zbus::Error::Failure("x".into()), zbus::Error::FDO(Box::new(fdo::Error::ServiceUnknown("x".into()))), zbus::Error::FDO(Box::new(fdo::Error::UnknownMethod("x".into())))] {
+            assert!(!connection_gone(&kept), "{kept:?}");
+        }
     }
 
     #[tokio::test]
