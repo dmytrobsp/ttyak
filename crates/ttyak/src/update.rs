@@ -1,7 +1,8 @@
 //! The update check: `latest.json` from the site, read with a plain GET (nothing about you is
 //! sent), at most every `check_every_secs` (`[updates]` in settings.toml). A newer version is
-//! notified once, ever: the last one notified is kept in `<data>/updates.json`. And the
-//! self-update of a copy the install script put in a folder ttyak can write.
+//! notified once, ever: the last one notified is kept in `<data>/updates.json`, with the newer
+//! version found (known again at the next start) and the last one seen. And the self-update of
+//! a copy the install script put in a folder ttyak can write.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -118,11 +119,11 @@ pub fn newer(current: &Version, latest: &Latest) -> bool {
     latest.version.pre.is_empty() && latest.version.cmp_precedence(current).is_gt()
 }
 
-/// A version newer than this ttyak, as a check found it.
+/// A version newer than this ttyak, as a check found it (or the last run knew it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
     pub latest: Latest,
-    /// Not notified before: the status line's pill for this run.
+    /// Not notified before (at the start: not seen): the status line's pill for this run.
     pub notify: bool,
     /// And the desktop notification: only once `updates.json` says so, so no later run notifies it again.
     pub desktop: bool,
@@ -154,6 +155,65 @@ pub struct State {
     pub last_check: u64,
     /// The last version notified.
     pub notified: Option<String>,
+    /// The newer release the last answered check found: known again at the next start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known: Option<Known>,
+    /// The last version whose update screen was opened (or Check now showed): no pill for it at the next start.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
+}
+
+/// A [`Latest`] as `updates.json` keeps it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Known {
+    pub version: String,
+    pub date: String,
+    pub url: String,
+    pub sha256: String,
+}
+
+impl Known {
+    fn of(latest: &Latest) -> Known {
+        Known { version: latest.version.to_string(), date: latest.date.clone(), url: latest.asset.url.clone(), sha256: latest.asset.sha256.clone() }
+    }
+
+    /// The release, read as the feed is (a hand-edited file too): None when its version is no version or its archive's
+    /// address or SHA256 has a character [`hidden`] names.
+    fn latest(&self) -> Option<Latest> {
+        let version = Version::parse(&self.version).ok()?;
+        if self.url.chars().chain(self.sha256.chars()).any(hidden) {
+            return None;
+        }
+        Some(Latest { version, date: printable(&self.date), asset: Asset { url: self.url.clone(), sha256: self.sha256.clone() } })
+    }
+}
+
+/// `version` (a version as `updates.json` keeps it) parsed.
+fn version_of(version: Option<&str>) -> Option<Version> {
+    version.and_then(|v| Version::parse(v).ok())
+}
+
+/// What ttyak knew at its last run (in `state`): the newer version, its pill again when its update screen was not
+/// opened (never a second desktop notice); None when none is known or this ttyak is that version or newer.
+pub fn remembered(state: &State, current: &Version) -> Option<Found> {
+    let latest = state.known.as_ref()?.latest().filter(|l| newer(current, l))?;
+    let notify = version_of(state.seen.as_deref()).is_none_or(|seen| latest.version.cmp_precedence(&seen).is_gt());
+    Some(Found { latest, notify, desktop: false })
+}
+
+/// `state` with `version` seen (the later of it and the one there).
+pub fn with_seen(state: State, version: &Version) -> State {
+    let later = version_of(state.seen.as_deref()).is_none_or(|seen| version.cmp_precedence(&seen).is_gt());
+    if later { State { seen: Some(version.to_string()), ..state } } else { state }
+}
+
+/// What the app asks of the background check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ask {
+    /// Check now (F6 → Updates).
+    CheckNow,
+    /// This version's update screen was opened: written down, so a restart brings no pill back.
+    Seen(Version),
 }
 
 /// `<data>/updates.json`.
@@ -186,16 +246,17 @@ pub fn should_notify(state: &State, latest: &Latest) -> bool {
     state.notified.as_deref().and_then(|v| Version::parse(v).ok()).is_none_or(|notified| latest.version.cmp_precedence(&notified).is_gt())
 }
 
-/// `disk` with `kept` (what this run last wrote, or tried to) as its floor: the later check and
-/// the later version notified, so a state that could not be written still counts.
+/// `disk` with `kept` (what this run last wrote, or tried to) as its floor: the later check (and the
+/// release it found), the later version notified and the later one seen, so a state that could not be
+/// written still counts.
 pub fn with_floor(disk: State, kept: &State) -> State {
-    let version = |s: &State| s.notified.as_deref().and_then(|v| Version::parse(v).ok());
-    let notified = match (version(&disk), version(kept)) {
-        (Some(d), Some(k)) if k.cmp_precedence(&d).is_gt() => kept.notified.clone(),
-        (None, Some(_)) => kept.notified.clone(),
-        _ => disk.notified,
+    let later = |d: Option<String>, k: &Option<String>| match (version_of(d.as_deref()), version_of(k.as_deref())) {
+        (Some(dv), Some(kv)) if kv.cmp_precedence(&dv).is_gt() => k.clone(),
+        (None, Some(_)) => k.clone(),
+        _ => d,
     };
-    State { last_check: disk.last_check.max(kept.last_check), notified }
+    let known = if kept.last_check > disk.last_check { kept.known.clone() } else { disk.known };
+    State { last_check: disk.last_check.max(kept.last_check), notified: later(disk.notified, &kept.notified), known, seen: later(disk.seen, &kept.seen) }
 }
 
 /// What a check at `now` that ended with `result` leaves: the state to write (before anything is
@@ -212,8 +273,11 @@ pub fn after_check(state: &State, now: u64, current: &Version, result: Result<La
         }
     };
     if !newer(current, &latest) {
+        // Answered: nothing newer is known any more.
+        next.known = None;
         return (next, None);
     }
+    next.known = Some(Known::of(&latest));
     let notify = should_notify(state, &latest);
     if notify {
         next.notified = Some(latest.version.to_string());
@@ -239,7 +303,7 @@ where
 
 /// A check asked for (F6 → Updates → Check now) of `url` for `platform`: due or not, with the check
 /// off too. What [`after_check`] gives, the newer version never to notify (the page shows it, so it
-/// counts as notified), and what to say.
+/// counts as notified and seen), and what to say.
 pub async fn check_now<F, Fut>(state: &State, now: u64, current: &Version, platform: Option<&str>, url: &str, fetch: F) -> (State, Option<Found>, Checked)
 where
     F: FnOnce(String) -> Fut,
@@ -248,7 +312,10 @@ where
     let Some(platform) = platform else { return (state.clone(), None, Checked::Failed("ttyak is not released for this platform".into())) };
     let result = fetch(url.to_string()).await.and_then(|json| parse(&json, platform));
     let failed = result.as_ref().err().map(|e| format!("{e:#}"));
-    let (next, found) = after_check(state, now, current, result);
+    let (mut next, found) = after_check(state, now, current, result);
+    if let Some(f) = &found {
+        next = with_seen(next, &f.latest.version);
+    }
     let checked = match (&found, failed) {
         (_, Some(e)) => Checked::Failed(e),
         (Some(f), None) => Checked::Out(f.latest.version.clone()),
@@ -278,9 +345,10 @@ fn wait(settings: &crate::tui::settings::Updates, state: &State, now: u64) -> Du
 
 /// Check in the background, the first time at once when due, then as it comes due (the settings
 /// read again each time; a broken settings.toml means the defaults, as everywhere in ttyak), and at
-/// once on a request on `asks` (Check now). Each newer version a check finds is sent on `reports`,
-/// to be notified only once written down; a check asked for also says how it ended.
-pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::sync::mpsc::UnboundedReceiver<()>) {
+/// once on a request on `asks` (Check now; a version seen is written down). Each newer version a
+/// check finds is sent on `reports`, to be notified only once written down, and first of all the one
+/// the last run knew; a check asked for also says how it ended.
+pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::sync::mpsc::UnboundedReceiver<Ask>) {
     let Some(path) = state_path() else { return };
     let current = Version::parse(env!("CARGO_PKG_VERSION")).expect("the package version is semver");
     let url = std::env::var(URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| URL.to_string());
@@ -290,14 +358,22 @@ pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::s
 /// [`spawn`]'s task, with `path` for `updates.json`, `fetch` for the GET and `settings` for
 /// `[updates]`; it ends when the app is gone. All the requests that came before a check ends are
 /// answered by that one check.
-async fn run<F, Fut>(path: PathBuf, platform: Option<&str>, url: String, current: Version, reports: tokio::sync::mpsc::UnboundedSender<Report>, mut asks: tokio::sync::mpsc::UnboundedReceiver<()>, fetch: F, settings: impl Fn() -> crate::tui::settings::Updates)
+async fn run<F, Fut>(path: PathBuf, platform: Option<&str>, url: String, current: Version, reports: tokio::sync::mpsc::UnboundedSender<Report>, mut asks: tokio::sync::mpsc::UnboundedReceiver<Ask>, fetch: F, settings: impl Fn() -> crate::tui::settings::Updates)
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<String>>,
 {
+    // What the last run knew, at once (before any check, which may be hours away).
+    if let Some(found) = remembered(&load_state(&path), &current) {
+        if reports.send(Report::Found(found)).is_err() {
+            return;
+        }
+    }
     // What this run last wrote (or tried to): a floor under what the file says.
     let mut kept = State::default();
     let mut asked = false;
+    // The versions whose update screen was opened, still to write down.
+    let mut seen = Vec::new();
     loop {
         let settings = settings();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -306,7 +382,7 @@ where
         let ran = if asked {
             let (next, newer, checked) = check_now(&state, now, &current, platform, &url, &fetch).await;
             // Pressed while it ran: answered by it.
-            while asks.try_recv().is_ok() {}
+            drain(&mut asks, &mut seen);
             Some((next, newer, Some(checked)))
         } else {
             check(&settings, &state, now, &current, platform, &url, &fetch).await.map(|(next, newer)| (next, newer, None))
@@ -332,18 +408,42 @@ where
             }
             state = next;
         }
+        if !seen.is_empty() {
+            state = seen.drain(..).fold(state, |s, v| with_seen(s, &v));
+            kept = state.clone();
+            if let Err(e) = save_state(&path, &state) {
+                tracing::debug!("update check: {}: {e:#}", path.display());
+            }
+        }
         asked = tokio::select! {
             () = tokio::time::sleep(wait(&settings, &state, now)) => false,
             ask = asks.recv() => match ask {
-                Some(()) => {
-                    while asks.try_recv().is_ok() {}
-                    true
-                }
+                Some(ask) => take(ask, &mut seen) | drain(&mut asks, &mut seen),
                 // The app is gone.
                 None => return,
             },
         };
     }
+}
+
+/// `ask` taken: true for a Check now; a version seen goes to `seen`.
+fn take(ask: Ask, seen: &mut Vec<Version>) -> bool {
+    match ask {
+        Ask::CheckNow => true,
+        Ask::Seen(version) => {
+            seen.push(version);
+            false
+        }
+    }
+}
+
+/// What waits on `asks` taken: true when a Check now is among it.
+fn drain(asks: &mut tokio::sync::mpsc::UnboundedReceiver<Ask>, seen: &mut Vec<Version>) -> bool {
+    let mut check = false;
+    while let Ok(ask) = asks.try_recv() {
+        check |= take(ask, seen);
+    }
+    check
 }
 
 /// The executable in the release archive (its top level).
@@ -847,28 +947,28 @@ mod tests {
         let ci = latest("0.10.0+ci.1");
         assert!(!newer(&v("0.10.0"), &ci));
         assert!(!newer(&v("0.10.0+ci.1"), &latest("0.10.0")));
-        assert!(!should_notify(&State { last_check: 0, notified: Some("0.10.0".into()) }, &ci), "the same version notified");
+        assert!(!should_notify(&State { last_check: 0, notified: Some("0.10.0".into()), ..Default::default() }, &ci), "the same version notified");
         assert!(newer(&v("0.10.0+ci.1"), &latest("0.10.1")));
     }
 
     #[test]
     fn a_failed_save_still_means_once() {
         // updates.json could not be written: nothing on disk, the last check kept in memory.
-        let kept = State { last_check: 500, notified: Some("9.9.9".into()) };
+        let kept = State { last_check: 500, notified: Some("9.9.9".into()), ..Default::default() };
         let state = with_floor(State::default(), &kept);
         assert_eq!(state, kept);
         assert!(!due(&state, 600, 86_400), "not again within the day");
         assert!(!should_notify(&state, &latest("9.9.9")), "never a second notice");
         // Another ttyak wrote a later check meanwhile: the later of each wins.
-        let disk = State { last_check: 900, notified: Some("9.9.10".into()) };
+        let disk = State { last_check: 900, notified: Some("9.9.10".into()), ..Default::default() };
         assert_eq!(with_floor(disk.clone(), &kept), disk);
-        assert_eq!(with_floor(State { last_check: 900, notified: None }, &kept), State { last_check: 900, notified: Some("9.9.9".into()) });
-        assert_eq!(with_floor(State { last_check: 100, notified: Some("0.1.0".into()) }, &kept), kept);
+        assert_eq!(with_floor(State { last_check: 900, notified: None, ..Default::default() }, &kept), State { last_check: 900, notified: Some("9.9.9".into()), ..Default::default() });
+        assert_eq!(with_floor(State { last_check: 100, notified: Some("0.1.0".into()), ..Default::default() }, &kept), kept);
     }
 
     #[test]
     fn due_after_the_interval_only() {
-        let s = State { last_check: 1_000, notified: None };
+        let s = State { last_check: 1_000, notified: None, ..Default::default() };
         assert!(!due(&s, 1_000, 86_400) && !due(&s, 87_399, 86_400));
         assert!(due(&s, 87_400, 86_400) && due(&s, 200_000, 86_400));
         assert!(due(&State::default(), 1_000, 86_400), "never checked");
@@ -877,7 +977,7 @@ mod tests {
 
     #[test]
     fn notified_once() {
-        let s = State { last_check: 0, notified: Some("0.10.1".into()) };
+        let s = State { last_check: 0, notified: Some("0.10.1".into()), ..Default::default() };
         assert!(!should_notify(&s, &latest("0.10.1")));
         assert!(!should_notify(&s, &latest("0.10.0")), "older than the one notified");
         assert!(should_notify(&s, &latest("0.10.2")));
@@ -896,7 +996,7 @@ mod tests {
         assert_eq!(notified(shown), Some(latest("0.10.1")));
         save_state(&path, &next).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap(), serde_json::json!({"last_check": 50, "notified": "0.10.1"}));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap(), serde_json::json!({"last_check": 50, "notified": "0.10.1", "known": {"version": "0.10.1", "date": "2026-11-01", "url": "u", "sha256": "s"}}));
         let (again, shown) = after_check(&load_state(&path), 90_000, &v("0.10.0"), Ok(latest("0.10.1")));
         assert_eq!((again.last_check, again.notified.as_deref()), (90_000, Some("0.10.1")));
         assert_eq!(shown, Some(Found { latest: latest("0.10.1"), notify: false, desktop: false }), "the next run knows of it and says nothing");
@@ -908,16 +1008,99 @@ mod tests {
 
     #[test]
     fn state_written_before_notifying() {
-        let old = State { last_check: 10, notified: Some("0.10.1".into()) };
+        let old = State { last_check: 10, notified: Some("0.10.1".into()), ..Default::default() };
         let (next, shown) = after_check(&old, 500, &v("0.10.0"), Ok(latest("0.10.2")));
         assert_eq!(notified(shown), Some(latest("0.10.2")));
-        assert_eq!(next, State { last_check: 500, notified: Some("0.10.2".into()) }, "the state to write names what is shown");
+        assert_eq!((next.last_check, next.notified.as_deref()), (500, Some("0.10.2")), "the state to write names what is shown");
         let (next, shown) = after_check(&old, 600, &v("0.10.0"), Err(anyhow::anyhow!("offline")));
-        assert_eq!((next, shown), (State { last_check: 600, notified: Some("0.10.1".into()) }, None), "a failed check counts as the day's");
+        assert_eq!((next, shown), (State { last_check: 600, notified: Some("0.10.1".into()), ..Default::default() }, None), "a failed check counts as the day's");
         let (next, shown) = after_check(&old, 700, &v("0.10.2"), Ok(latest("0.10.2")));
         assert_eq!((next.notified.as_deref(), shown), (Some("0.10.1"), None), "not newer than this ttyak");
         let (next, shown) = after_check(&old, 800, &v("0.10.0"), Ok(latest("0.10.1")));
         assert_eq!((next.notified.as_deref(), shown), (Some("0.10.1"), Some(Found { latest: latest("0.10.1"), notify: false, desktop: false })), "notified before: known, not notified again");
+    }
+
+    #[test]
+    fn a_known_update_is_remembered_across_restarts() {
+        let now = v("0.10.0");
+        let (next, _) = after_check(&State::default(), 50, &now, Ok(latest("0.10.1")));
+        // Written and read back, as at the next start.
+        let dir = Temp::new("known");
+        let path = dir.0.join("updates.json");
+        save_state(&path, &next).unwrap();
+        let state = load_state(&path);
+        assert_eq!(remembered(&state, &now), Some(Found { latest: latest("0.10.1"), notify: true, desktop: false }), "the pill again, never a second desktop notice");
+        // Its update screen was opened: known, no pill.
+        let seen = State { seen: Some("0.10.1".into()), ..state.clone() };
+        assert_eq!(remembered(&seen, &now), Some(Found { latest: latest("0.10.1"), notify: false, desktop: false }));
+        // Installed: this ttyak is that version (or newer).
+        assert_eq!(remembered(&state, &v("0.10.1")), None);
+        // A failed check keeps it; one that answers with nothing newer forgets it.
+        let (failed, _) = after_check(&state, 90_000, &now, Err(anyhow::anyhow!("offline")));
+        assert_eq!(remembered(&failed, &now), remembered(&state, &now));
+        let (pulled, _) = after_check(&state, 90_000, &now, Ok(latest("0.10.0")));
+        assert_eq!(remembered(&pulled, &now), None);
+        // A newer one found takes its place, its pill again.
+        let (newer_one, _) = after_check(&seen, 90_000, &now, Ok(latest("0.10.2")));
+        assert_eq!(remembered(&newer_one, &now).map(|f| (f.latest.version, f.notify)), Some((v("0.10.2"), true)));
+        // A hand-edited file is read as the feed is: what is downloaded and checked is refused.
+        let mut edited = newer_one.clone();
+        edited.known.as_mut().unwrap().url = "https://x.invalid/\u{1b}[2Ja.zip".into();
+        assert_eq!(remembered(&edited, &now), None);
+        edited.known.as_mut().unwrap().version = "ten".into();
+        assert_eq!(remembered(&edited, &now), None);
+    }
+
+    #[test]
+    fn seen_is_kept_with_the_later_check() {
+        let mut seen = State { seen: Some("0.10.1".into()), ..Default::default() };
+        seen = with_seen(seen, &v("0.10.0"));
+        assert_eq!(seen.seen.as_deref(), Some("0.10.1"), "never back to an older one");
+        seen = with_seen(seen, &v("0.10.2"));
+        assert_eq!(seen.seen.as_deref(), Some("0.10.2"));
+        // What this run wrote and the file: the later version seen, the later check's known release.
+        let (disk, _) = after_check(&State::default(), 900, &v("0.10.0"), Ok(latest("0.10.3")));
+        let kept = State { last_check: 500, seen: Some("0.10.2".into()), ..Default::default() };
+        let both = with_floor(disk.clone(), &kept);
+        assert_eq!((both.seen.as_deref(), both.known), (Some("0.10.2"), disk.known.clone()));
+        let (later, _) = after_check(&State::default(), 1_000, &v("0.10.0"), Ok(latest("0.10.0")));
+        assert_eq!(with_floor(disk, &later).known, None, "the later check found nothing newer");
+    }
+
+    #[tokio::test]
+    async fn a_restart_brings_back_the_known_update_and_its_pill_until_seen() {
+        let dir = Temp::new("restart");
+        let path = dir.0.join("updates.json");
+        let (state, _) = after_check(&State::default(), 50, &v("0.10.0"), parse(FEED, "x86_64-linux"));
+        save_state(&path, &state).unwrap();
+        async fn next(r: &mut tokio::sync::mpsc::UnboundedReceiver<Report>) -> Option<Report> {
+            tokio::time::timeout(Duration::from_secs(5), r.recv()).await.unwrap()
+        }
+        // The check off: known from updates.json alone, nothing fetched.
+        let off = || Updates { check: false, ..Default::default() };
+        let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
+        let found = next(&mut reports).await;
+        assert!(matches!(&found, Some(Report::Found(Found { latest, notify: true, desktop: false })) if latest.version == v("0.10.2")), "{found:?}");
+        // Its update screen opened: written down.
+        asks_tx.send(Ask::Seen(v("0.10.2"))).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while load_state(&path).seen.is_none() {
+            assert!(std::time::Instant::now() < until, "seen never written");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(load_state(&path).known, state.known, "still known");
+        drop(asks_tx);
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
+        // The next start: known, no pill.
+        let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
+        let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
+        let found = next(&mut reports).await;
+        assert!(matches!(&found, Some(Report::Found(Found { notify: false, desktop: false, .. }))), "{found:?}");
+        drop(asks_tx);
+        tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -935,7 +1118,7 @@ mod tests {
         let now = v("0.10.0");
         assert_eq!(check(&off, &old, 1_000_000, &now, Some("x86_64-linux"), "http://127.0.0.1:9/latest.json", fetch).await, None);
         let on = Updates::default();
-        let recent = State { last_check: 999_000, notified: None };
+        let recent = State { last_check: 999_000, notified: None, ..Default::default() };
         assert_eq!(check(&on, &recent, 1_000_000, &now, Some("x86_64-linux"), "http://127.0.0.1:9/latest.json", fetch).await, None, "not due");
         assert_eq!(check(&on, &old, 1_000_000, &now, None, "http://127.0.0.1:9/latest.json", fetch).await, None, "no release for this platform");
         assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
@@ -950,15 +1133,15 @@ mod tests {
         let now = v("0.10.0");
         // Not due and never notified: checked all the same, known, never to notify; seen on the
         // page, it counts as notified (no notice for it later).
-        let recent = State { last_check: 999_000, notified: None };
+        let recent = State { last_check: 999_000, notified: None, ..Default::default() };
         let (next, found, checked) = check_now(&recent, 1_000_000, &now, Some("x86_64-linux"), URL, fetch).await;
         assert_eq!(checked, Checked::Out(v("0.10.2")));
         assert_eq!(found.map(|f| (f.latest.version, f.notify)), Some((v("0.10.2"), false)));
-        assert_eq!(next, State { last_check: 1_000_000, notified: Some("0.10.2".into()) });
+        assert_eq!((next.last_check, next.notified.as_deref(), next.seen.as_deref()), (1_000_000, Some("0.10.2"), Some("0.10.2")), "shown on the page: seen, no pill after a restart");
         let (_, later) = after_check(&next, 2_000_000, &now, parse(FEED, "x86_64-linux"));
         assert!(later.is_some_and(|f| !f.notify), "the next check says nothing");
         // Notified before: still never to notify.
-        let (_, found, _) = check_now(&State { last_check: 0, notified: Some("0.10.1".into()) }, 5, &now, Some("x86_64-linux"), URL, fetch).await;
+        let (_, found, _) = check_now(&State { last_check: 0, notified: Some("0.10.1".into()), ..Default::default() }, 5, &now, Some("x86_64-linux"), URL, fetch).await;
         assert!(found.is_some_and(|f| !f.notify));
         // Up to date; no answer; no release for this platform (nothing fetched).
         let (_, found, checked) = check_now(&recent, 1_000_000, &v("0.10.2"), Some("x86_64-linux"), URL, fetch).await;
@@ -996,7 +1179,7 @@ mod tests {
         let max = read(u64::MAX, u64::MAX, u64::MAX);
         assert_eq!((max.check_every_secs, max.check_timeout_secs, max.download_timeout_secs), (u64::MAX, MAX_CHECK_TIMEOUT_SECS, MAX_DOWNLOAD_TIMEOUT_SECS));
         assert_eq!(read(86_400, 10, 30), Updates::default(), "the defaults as they are");
-        let s = State { last_check: 1_000, notified: None };
+        let s = State { last_check: 1_000, notified: None, ..Default::default() };
         assert_eq!(wait(&max, &s, 1_000), Duration::from_secs(3_600), "no overflow: at most an hour");
         assert_eq!(wait(&least, &s, 1_000), Duration::from_secs(3_600), "0: an hour, never a tight loop");
         assert!(!due(&s, 2_000, u64::MAX) && due(&s, 999, u64::MAX));
@@ -1010,16 +1193,16 @@ mod tests {
         let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
         let fetched = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         // Two presses before it runs, two more while it fetches.
-        asks_tx.send(()).unwrap();
-        asks_tx.send(()).unwrap();
+        asks_tx.send(Ask::CheckNow).unwrap();
+        asks_tx.send(Ask::CheckNow).unwrap();
         let fetch = {
             // (Weak: the channel still closes when the test lets go of it.)
             let (fetched, asks_tx) = (fetched.clone(), asks_tx.downgrade());
             move |_url: String| {
                 fetched.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if let Some(asks_tx) = asks_tx.upgrade() {
-                    let _ = asks_tx.send(());
-                    let _ = asks_tx.send(());
+                    let _ = asks_tx.send(Ask::CheckNow);
+                    let _ = asks_tx.send(Ask::CheckNow);
                 }
                 async { Ok(FEED.to_string()) }
             }
@@ -1034,7 +1217,7 @@ mod tests {
         assert!(tokio::time::timeout(Duration::from_millis(300), reports.recv()).await.is_err(), "no second check");
         assert_eq!(fetched.load(std::sync::atomic::Ordering::SeqCst), 1);
         // A press after it: checked again.
-        asks_tx.send(()).unwrap();
+        asks_tx.send(Ask::CheckNow).unwrap();
         assert!(matches!(next(&mut reports).await, Ok(Some(Report::Found(_)))));
         drop(asks_tx);
         tokio::time::timeout(Duration::from_secs(5), task).await.unwrap().unwrap();
@@ -1111,7 +1294,7 @@ mod tests {
 
     #[test]
     fn waits_until_due_at_most_an_hour() {
-        let s = State { last_check: 1_000, notified: None };
+        let s = State { last_check: 1_000, notified: None, ..Default::default() };
         let every = |secs| Updates { check: true, check_every_secs: secs, ..Default::default() };
         assert_eq!(wait(&every(86_400), &s, 1_000), Duration::from_secs(3_600));
         assert_eq!(wait(&every(600), &s, 1_000), Duration::from_secs(600));

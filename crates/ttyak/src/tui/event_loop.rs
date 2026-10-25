@@ -265,7 +265,7 @@ struct App {
     /// For the update notification's click and the self-update's end (see [`Update`]).
     update_events: mpsc::UnboundedSender<super::update_view::UpdateEvent>,
     /// Asks the background check for a check at once (F6 → Updates → Check now).
-    update_asks: mpsc::UnboundedSender<()>,
+    update_asks: mpsc::UnboundedSender<crate::update::Ask>,
     /// The Activity view (Ctrl+A), shown while `view` is Activity.
     activity: super::activity::Activity,
     /// The save dialog (`␣s`).
@@ -2836,9 +2836,9 @@ impl App {
         }
     }
 
-    /// The update check found a newer ttyak: known from now on (for the update screen) and, when not
-    /// notified before, for this run the status line's pill and, once updates.json says so, a silent
-    /// desktop notification (when they are on; quiet hours and keywords are about messages, so it
+    /// The update check found a newer ttyak (or the last run knew it): known from now on (for the update screen) and,
+    /// when not notified before (at the start: not seen), for this run the status line's pill and, once updates.json
+    /// says so, a silent desktop notification (when they are on; quiet hours and keywords are about messages, so it
     /// never sounds; a click opens the update screen). One this run has put in place is offered no more.
     fn update_found(&mut self, found: crate::update::Found) {
         let crate::update::Found { latest, notify, desktop } = found;
@@ -2858,13 +2858,16 @@ impl App {
     }
 
     /// Open the update screen for the newer version known (the notification, the status line's
-    /// pill and F6 lead here); the pill goes. One already open (a download going on) stays as it is.
+    /// pill and F6 lead here); the pill goes, also for later runs (the version is written down as
+    /// seen). One already open (a download going on) stays as it is.
     fn open_update_screen(&mut self) {
         let Some(latest) = self.update_available.clone() else {
             self.status = super::i18n::tr(super::update_view::NOTHING_KNOWN).into_owned();
             return;
         };
         self.update_pill = false;
+        // (The background check gone: only this run's pill goes.)
+        let _ = self.update_asks.send(crate::update::Ask::Seen(latest.version.clone()));
         if self.update_view.is_none() {
             self.update_view = Some(super::update_view::UpdateView::new(latest, crate::install::current()));
         }
@@ -2886,7 +2889,7 @@ impl App {
         let Some(p) = self.prefs.as_mut() else { return };
         match p.update_action(&self.keys) {
             Some(UpdateAction::CheckNow) => {
-                p.update.check = match self.update_asks.send(()) {
+                p.update.check = match self.update_asks.send(crate::update::Ask::CheckNow) {
                     Ok(()) => CheckNow::Running,
                     Err(_) => CheckNow::Done(crate::update::Checked::Failed(super::i18n::tr(super::prefs::NOT_RUNNING).into_owned())),
                 };
@@ -5141,7 +5144,7 @@ struct Update {
     /// Newer versions and how a Check now ended, from [`crate::update::spawn`].
     found: mpsc::UnboundedReceiver<crate::update::Report>,
     /// Check now's requests, to [`crate::update::spawn`].
-    asks: mpsc::UnboundedSender<()>,
+    asks: mpsc::UnboundedSender<crate::update::Ask>,
     /// The update notification's clicks and the self-update's end.
     events: mpsc::UnboundedReceiver<super::update_view::UpdateEvent>,
     events_tx: mpsc::UnboundedSender<super::update_view::UpdateEvent>,
@@ -8955,6 +8958,18 @@ mod tests {
         app.update_view = None;
         assert!(!status(&mut app).contains('⬆'));
         assert_eq!(app.update_available, Some(latest));
+    }
+
+    #[tokio::test]
+    async fn opening_the_update_screen_writes_the_version_seen() {
+        let (mut app, _net) = test_app();
+        app.ws.settings.notifications.desktop = false;
+        let (asks_tx, mut asks) = tokio::sync::mpsc::unbounded_channel();
+        app.update_asks = asks_tx;
+        super::handle_net(&mut app, super::Net::UpdateKnown(crate::update::Found { latest: new_version(), notify: true, desktop: false }));
+        assert!(asks.try_recv().is_err());
+        app.open_update_screen();
+        assert!(matches!(asks.try_recv(), Ok(crate::update::Ask::Seen(v)) if v == semver::Version::new(9, 9, 9)), "so a restart brings no pill back");
     }
 
     #[tokio::test]
