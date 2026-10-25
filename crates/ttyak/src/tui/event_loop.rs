@@ -3182,7 +3182,7 @@ impl App {
         if ring.last_ring.is_none_or(|t| t.elapsed() >= RING_EVERY) {
             ring.last_ring = Some(std::time::Instant::now());
             let s = &self.ws.settings;
-            super::sound::play(&s.huddle.ring_sound, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+            super::sound::play(&s.huddle.ring_sound, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
         }
     }
 
@@ -3360,7 +3360,7 @@ impl App {
         if field == Some(super::prefs::Field::SoundVolume) {
             let s = &self.ws.settings;
             let name = if super::sound::samples(&s.notifications.sound).is_empty() { "chime" } else { s.notifications.sound.as_str() };
-            super::sound::play(name, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+            super::sound::play(name, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
         }
     }
 
@@ -3470,6 +3470,13 @@ impl App {
             self.update_preference();
             return;
         }
+        if let Some(action) = p.machine_action(&self.keys) {
+            match action {
+                super::prefs::MachineAction::Test => self.send_test_notification(),
+                super::prefs::MachineAction::Note(note) => self.status = note,
+            }
+            return;
+        }
         let on_slack = p.on_slack(&self.keys);
         let change = p.change(&mut self.ws, current.as_deref(), &self.keys);
         if !on_slack {
@@ -3501,6 +3508,54 @@ impl App {
                 self.save_notification_pref("global_keywords", words, None, false);
             }
         }
+    }
+
+    /// F6 → Notifications → Send a test notification: a note like one for you through the real route, with its sound as
+    /// set, and (bell on) the bell [`super::notify::TEST_BELL_AFTER`] later if the terminal is then unfocused. It is no
+    /// conversation's: a click opens nothing but brings the window forward as for any other.
+    fn send_test_notification(&mut self) {
+        use super::attention::{Decision, Gates, Key, Note, Switches, TermFocus};
+        use super::notify::Target;
+        let n = &self.ws.settings.notifications;
+        if !n.desktop {
+            self.status = super::prefs::test_refused();
+            return;
+        }
+        let (title, body) = super::prefs::test_words();
+        let note = Note { key: Key::test(), title, body, target: Target::test() };
+        // The pause and the schedule are about Slack's messages: a test is for the route. (The bell is the delayed one below.)
+        let gates = Gates { paused: false, system_dnd: false, viewing: false, focus: TermFocus::Unknown };
+        let out = super::attention::outputs(&Decision::ForYou(note.clone()), &gates, &Switches::of(n));
+        let click = self.on_click(Target::test());
+        super::notify::interrupt(&self.notifier, note, &out, &self.ws.settings, click);
+        if n.bell {
+            self.notifier.test_bell(n.follow_system_dnd);
+        }
+        self.status = super::prefs::test_sent(n.bell);
+    }
+
+    /// Read what F6 → Notifications shows about this machine, in the background: the route (at once), how the window is
+    /// brought forward (the window manager's tools are asked, once) and what the system says about do-not-disturb.
+    fn read_machine(&mut self) {
+        let Some(p) = self.prefs.as_ref() else { return };
+        let machine = p.machine.clone();
+        let (route, known) = (self.notifier.route(&self.ws.settings.notifications.sound), self.notifier.route_known());
+        let now = std::time::Instant::now();
+        let ask_raise = {
+            let mut m = machine.lock().unwrap_or_else(|e| e.into_inner());
+            (m.route, m.via_terminal) = (Some(route), self.notifier.via_terminal());
+            // The server is still being looked for: read again soon.
+            m.read_at = Some(if known { now } else { now.checked_sub(super::prefs::MACHINE_REREAD - std::time::Duration::from_secs(1)).unwrap_or(now) });
+            !std::mem::replace(&mut m.raise_asked, true)
+        };
+        if ask_raise {
+            let machine = machine.clone();
+            std::thread::spawn(move || {
+                let text = super::raise::describe(&super::raise::detect(&super::raise::env()));
+                machine.lock().unwrap_or_else(|e| e.into_inner()).raise = Some(text);
+            });
+        }
+        self.notifier.read_system_dnd(move |text| machine.lock().unwrap_or_else(|e| e.into_inner()).dnd = Some(text));
     }
 
     /// Change the notification schedule: shown at once, then written after any earlier change
@@ -4655,6 +4710,11 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
 /// this workspace has booted, or in that workspace after switching there. True when the window is to be brought
 /// forward: the system notifier's bubble (the terminal brings its own forward itself).
 fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool {
+    // F6's test notification leads nowhere: the window comes forward and that is all.
+    if target.is_test() {
+        app.status = super::prefs::test_clicked();
+        return on == super::notify::ClickedOn::System;
+    }
     if index == app.workspace && !app.loading {
         app.open_target(target);
     } else {
@@ -5287,7 +5347,7 @@ async fn run_workspace(
         // Alone in the huddle for a while: a quiet melody loops until someone joins.
         let s = &app.ws.settings;
         let wait = Duration::from_secs(s.huddle.alone_secs.max(1) as u64);
-        let (name, device, volume) = (s.huddle.alone_sound.clone(), super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume * super::prefs::ALONE_VOLUME / 100);
+        let (name, device, volume) = (s.huddle.alone_sound.clone(), super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume * super::prefs::ALONE_VOLUME / 100);
         if let Some(call) = app.call.as_mut().filter(|c| c.connected) {
             if call.alone_tick(wait, || super::sound::play_looping(&name, device, volume)) {
                 tracing::debug!("alone in the huddle: reminder loops");
@@ -5309,6 +5369,9 @@ async fn run_workspace(
         app.request_activity_page();
         app.request_huddles();
         app.refresh_dnd();
+        if app.prefs.as_ref().is_some_and(|p| p.machine_due()) {
+            app.read_machine();
+        }
         let which_key_due = app.which_key_due();
         let recording_due = app.recording_due();
         // You went somewhere (a key, a click, a notification): a step in the history.
@@ -5352,7 +5415,7 @@ async fn run_workspace(
                 // The join sound, once the huddle is connected.
                 if matches!(ev, huddle::session::SessionEvent::Connected) && !app.call.as_ref().is_some_and(|c| c.connected) {
                     let s = &app.ws.settings;
-                    super::sound::play(&s.huddle.join_sound, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+                    super::sound::play(&s.huddle.join_sound, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
                 }
                 match ev {
                     huddle::session::SessionEvent::Reconnecting => app.status = "huddle connection lost — joining again…".into(),
@@ -5365,7 +5428,7 @@ async fn run_workspace(
                     let s = &app.ws.settings;
                     let name = if joined > 0 { Some(&s.huddle.someone_joined) } else if left > 0 { Some(&s.huddle.someone_left) } else { None };
                     if let Some(name) = name.filter(|_| !ended) {
-                        super::sound::play(name, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+                        super::sound::play(name, super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
                     }
                 }
                 if ended {
@@ -11301,6 +11364,118 @@ mod tests {
         let target = super::super::notify::Target { channel: "C1".into(), ts: None, thread_ts: None };
         assert!(super::take_click(&mut app, (0, target, ClickedOn::System)));
         assert_eq!(app.switch_to, Some(0), "{}", app.status);
+    }
+
+    /// F6 open on Notifications, with desktop notifications and a sound on.
+    fn on_the_notifications_page(app: &mut super::App) {
+        use super::super::prefs::{CATEGORIES, Prefs};
+        app.ws.settings.notifications.desktop = true;
+        app.ws.settings.notifications.sound = "chime".into();
+        let mut p = Prefs::default();
+        p.category = CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap();
+        app.prefs = Some(p);
+    }
+
+    #[tokio::test]
+    async fn the_test_notification_goes_through_the_route_with_its_sound() {
+        use super::super::attention::Key;
+        use super::super::notify::{fake::Call, ClickedOn};
+        let (mut app, server, mut clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        app.send_test_notification();
+        app.notifier.settled().await;
+        let calls = server.calls();
+        let Some(Call::Show { title, sound, clickable, .. }) = calls.iter().find(|c| matches!(c, Call::Show { .. })) else { panic!("{calls:?}") };
+        assert_eq!((title.as_str(), sound.as_deref(), *clickable), ("ttyak test notification", Some("chime"), true));
+        assert!(calls.contains(&Call::Play("chime".into())), "ttyak plays the sound where the server can't: {calls:?}");
+        assert!(app.notifier.live(&Key::test()).await, "under its own key");
+        assert!(!app.notifier.live(&app.bubble_key("C1")).await, "no conversation's");
+        // Again: replaces itself.
+        app.send_test_notification();
+        app.notifier.settled().await;
+        assert!(server.calls().iter().any(|c| matches!(c, Call::Show { replaces: Some(1), .. })), "{:?}", server.calls());
+        // A click: nothing opens, F6 stays, the window is brought forward (the system's bubble).
+        app.current = Some("C1".into());
+        server.click(1);
+        let click = next_click(&mut clicked).await;
+        assert!(click.1.is_test() && click.2 == ClickedOn::System);
+        assert!(super::take_click(&mut app, click), "raised by the route");
+        assert_eq!(app.current.as_deref(), Some("C1"), "opened nothing");
+        assert!(app.prefs.is_some(), "F6 stays");
+        assert!(app.status.contains("test notification was clicked"), "{}", app.status);
+        // The terminal's own: it raised itself.
+        assert!(!super::take_click(&mut app, (0, super::super::notify::Target::test(), ClickedOn::Terminal)));
+    }
+
+    #[tokio::test]
+    async fn the_test_notification_is_silent_with_the_sound_off_and_refused_with_desktop_off() {
+        use super::super::notify::fake::Call;
+        let (mut app, server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        app.ws.settings.notifications.sound = "off".into();
+        app.send_test_notification();
+        app.notifier.settled().await;
+        let calls = server.calls();
+        assert!(matches!(calls.as_slice(), [Call::Show { sound: None, .. }]), "{calls:?}");
+        app.ws.settings.notifications.desktop = false;
+        app.send_test_notification();
+        app.notifier.settled().await;
+        assert_eq!(server.calls().len(), 1, "nothing more");
+        assert!(app.status.contains("desktop notifications are off"), "{}", app.status);
+    }
+
+    #[tokio::test]
+    async fn the_test_notifications_bell_follows_three_seconds_later_if_unfocused() {
+        use crossterm::event::Event;
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        assert_eq!(super::super::notify::TEST_BELL_AFTER, std::time::Duration::from_secs(3));
+        app.ws.settings.notifications.bell = true;
+        let mut out = Vec::new();
+        assert!(super::handle_event(&mut app, Event::FocusLost));
+        app.send_test_notification();
+        assert!(app.status.contains("the bell follows in 3 s"), "{}", app.status);
+        app.notifier.settled().await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert!(out.is_empty(), "not at once");
+        tokio::time::sleep(std::time::Duration::from_millis(3200)).await;
+        app.notifier.settled().await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "3 s later, unfocused, bell on: one bell");
+        // Back in the terminal before the bell is due: dropped. With the bell off: none sent at all.
+        app.send_test_notification();
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        tokio::time::sleep(std::time::Duration::from_millis(3200)).await;
+        super::ring_bell(&app.notifier, &mut out);
+        assert_eq!(out, b"\x07", "focused again: no second bell");
+        app.ws.settings.notifications.bell = false;
+        app.send_test_notification();
+        assert!(!app.status.contains("bell"), "{}", app.status);
+    }
+
+    #[tokio::test]
+    async fn the_machine_rows_are_read_in_the_background() {
+        use super::super::prefs::Field;
+        let (mut app, _server, _clicked) = notified_by_the_system(&["C1"]);
+        on_the_notifications_page(&mut app);
+        let keys = app.keys.clone();
+        let p = app.prefs.as_ref().unwrap();
+        assert!(p.machine_due());
+        assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("reading…"));
+        app.read_machine();
+        app.notifier.settled().await;
+        let p = app.prefs.as_ref().unwrap();
+        assert!(!p.machine_due(), "just read");
+        assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("can't tell"), "the fake server can't be asked");
+        assert!(p.machine_value(Field::ShownBy).unwrap().contains("sound played by"), "{:?}", p.machine_value(Field::ShownBy));
+        assert!(p.machine_value(Field::ClickResult).unwrap().starts_with("opens it in ttyak"), "{:?}", p.machine_value(Field::ClickResult));
+        // Enter on a shown row says so; on the test row it sends one.
+        let mut p = app.prefs.take().unwrap();
+        for (field, test) in [(Field::ShownBy, false), (Field::ClickResult, false), (Field::SystemDnd, false), (Field::TestNotification, true)] {
+            p.selected = p.fields(&keys).iter().position(|f| *f == field).unwrap();
+            assert_eq!(p.machine_action(&keys) == Some(super::super::prefs::MachineAction::Test), test, "{field:?}");
+        }
+        app.prefs = Some(p);
     }
 
     #[tokio::test]

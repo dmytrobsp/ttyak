@@ -63,6 +63,14 @@ pub enum Field {
     Bell,
     TitleMark,
     FollowSystemDnd,
+    /// On this machine (shown only): who shows the notifications and plays their sound.
+    ShownBy,
+    /// On this machine (shown only): what a click on one does.
+    ClickResult,
+    /// On this machine (shown only): what the system says about do-not-disturb.
+    SystemDnd,
+    /// On this machine: send a test notification (Enter).
+    TestNotification,
     /// Slack: the level for the conversation on screen.
     ConversationLevel,
     /// Slack: the default level for channels.
@@ -156,8 +164,9 @@ pub const CATEGORIES: &[(&str, &[Field])] = &[
     ("Appearance", &[Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive]),
     ("Messages & media", &[Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir]),
     ("Language & region", &[Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language]),
-    ("Notifications", &[Field::Desktop, Field::Sound, Field::Bell, Field::TitleMark, Field::FollowSystemDnd, Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips]),
-    ("Audio & video", &[Field::Input, Field::Output, Field::HuddleVolume, Field::SoundVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera]),
+    // What notifies you (on Slack) · how you are told · quiet · on this machine (shown only, and the test).
+    ("Notifications", &[Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::Desktop, Field::Sound, Field::SoundVolume, Field::Bell, Field::TitleMark, Field::Notifications, Field::Schedule, Field::FollowSystemDnd, Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification]),
+    ("Audio & video", &[Field::Input, Field::Output, Field::HuddleVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera]),
     ("Huddles", &[Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs]),
     // The Update row only while a newer version is known (see `Prefs::fields`).
     ("Updates", &[Field::UpdateVersion, Field::UpdateCheck, Field::UpdateEvery, Field::UpdateCheckTimeout, Field::UpdateTimeout, Field::UpdateCheckNow, Field::UpdateCommand, Field::UpdateOpen]),
@@ -233,6 +242,10 @@ impl Field {
             Field::Bell => "Bell when not focused",
             Field::TitleMark => "Mark in the tab title",
             Field::FollowSystemDnd => "Follow the system's do-not-disturb",
+            Field::ShownBy => "Notifications shown by",
+            Field::ClickResult => "A click",
+            Field::SystemDnd => "System do-not-disturb",
+            Field::TestNotification => "Send a test notification",
             Field::ConversationLevel => "This conversation notifies about",
             Field::ChannelDefault => "Channels notify about (default)",
             Field::Keywords => "Keywords",
@@ -332,6 +345,9 @@ impl Field {
             Field::Bell => yes(s.notifications.bell),
             Field::TitleMark => yes(s.notifications.title_mark),
             Field::FollowSystemDnd => yes(s.notifications.follow_system_dnd),
+            // Read in the background (`Prefs::machine_value`).
+            Field::ShownBy | Field::ClickResult | Field::SystemDnd => String::new(),
+            Field::TestNotification => super::i18n::tr(TEST_ROW).replace("{key}", &keys.first_key(super::keymap::Context::Preferences, Action::Open).unwrap_or_else(|| "Enter".into())),
             Field::ConversationLevel => match current {
                 Some(c) => {
                     let mpim = ws.conversations.get(c).is_some_and(|c| c.is_mpim);
@@ -387,7 +403,7 @@ impl Field {
             Field::Input => device(&s.audio.input),
             Field::Output => device(&s.audio.output),
             Field::HuddleVolume => format!("{}%", s.audio.huddle_volume),
-            Field::SoundVolume => format!("{}%", s.audio.sound_volume),
+            Field::SoundVolume => format!("{}%", s.notifications.sound_volume),
             Field::MicGain => format!("{}%", s.audio.mic_gain),
             Field::SpeakingThreshold => s.audio.speaking_threshold_db.map_or("off".into(), |d| format!("{d} dB")),
             Field::NoiseSuppression => yes(s.audio.noise_suppression),
@@ -429,7 +445,7 @@ impl Field {
         let a = &mut s.audio;
         match self {
             Field::HuddleVolume => a.huddle_volume = step(VOLUMES, a.huddle_volume, up, wrap),
-            Field::SoundVolume => a.sound_volume = step(VOLUMES, a.sound_volume, up, wrap),
+            Field::SoundVolume => s.notifications.sound_volume = step(VOLUMES, s.notifications.sound_volume, up, wrap),
             Field::RingTimeout => s.huddle.ring_timeout_secs = step(RING_TIMEOUTS, s.huddle.ring_timeout_secs, up, wrap),
             Field::AloneSecs => s.huddle.alone_secs = step(ALONE_SECS, s.huddle.alone_secs, up, wrap),
             Field::PreviewRefresh => s.messages.preview_refresh_secs = step(PREVIEW_REFRESH, s.messages.preview_refresh_secs, up, wrap),
@@ -496,6 +512,8 @@ impl Field {
             Field::Bell => s.notifications.bell ^= true,
             Field::TitleMark => s.notifications.title_mark ^= true,
             Field::FollowSystemDnd => s.notifications.follow_system_dnd ^= true,
+            // Not settings: see `Prefs::machine_action`.
+            Field::ShownBy | Field::ClickResult | Field::SystemDnd | Field::TestNotification => {}
             Field::WhichKeyShow => s.which_key.show ^= true,
             Field::WhichKeyIcons => s.which_key.icons ^= true,
             Field::WhichKeyCorner => {
@@ -514,12 +532,12 @@ impl Field {
                 };
                 *slot = next_sound(slot);
                 let name = slot.clone();
-                super::sound::play(&name, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+                super::sound::play(&name, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
             }
             Field::RingSound => {
                 let sounds = super::sound::RING_SOUNDS;
                 s.huddle.ring_sound = sounds[sounds.iter().position(|x| *x == s.huddle.ring_sound).map_or(0, |i| (i + 1) % sounds.len())].into();
-                super::sound::play(&s.huddle.ring_sound, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+                super::sound::play(&s.huddle.ring_sound, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
             }
             Field::RingTimeout => {
                 self.adjust(s, true, true);
@@ -528,7 +546,7 @@ impl Field {
             Field::AloneSound => {
                 let sounds = super::sound::ALONE_SOUNDS;
                 s.huddle.alone_sound = sounds[sounds.iter().position(|x| *x == s.huddle.alone_sound).map_or(0, |i| (i + 1) % sounds.len())].into();
-                super::sound::play(&s.huddle.alone_sound, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume * ALONE_VOLUME / 100);
+                super::sound::play(&s.huddle.alone_sound, Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume * ALONE_VOLUME / 100);
             }
             Field::AloneSecs => {
                 self.adjust(s, true, true);
@@ -538,7 +556,7 @@ impl Field {
                 let i = sounds.iter().position(|x| *x == s.notifications.sound).map_or(0, |i| (i + 1) % sounds.len());
                 s.notifications.sound = sounds[i].into();
                 // Let the user hear it.
-                super::sound::play(sounds[i], Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.audio.sound_volume);
+                super::sound::play(sounds[i], Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
             }
             // Slack-side: see `Prefs::change`.
             Field::ConversationLevel | Field::ChannelDefault | Field::Keywords | Field::Vips | Field::Status | Field::Away | Field::Notifications | Field::Schedule | Field::ScheduleHours | Field::ScheduleDay(_) | Field::Leader | Field::InsertLeader | Field::GroupHeader(_) | Field::Binding(_) => {}
@@ -621,6 +639,68 @@ const NOTHING_TO_RUN_BELOW: &str = "nothing to run: use Update below";
 const NOTHING_TO_RUN: &str = "nothing to run: ttyak updates itself once a new version is out";
 const UNDER_WAY: &str = "a check is under way";
 const UPDATE_WORDS: &[&str] = &[ONE_DAY, DAYS, HOURS, MINUTES, SECS, SECS_IN_WORDS, TAKEN_AS, NO_ANSWER, NO_ANSWER_TAKEN_AS, NO_DATA, NO_DATA_TAKEN_AS, VERSION_ROW, BY_SCRIPT, BY_HOMEBREW, BY_SCOOP, BY_WINGET, BY_CHOCOLATEY, BY_PACMAN, BY_DEB, BY_RPM, BY_HAND, UPDATE_BELOW, UPDATE_ITSELF, CHECK_IDLE, CHECKING, UP_TO_DATE, IS_OUT, NOT_CHECKED, NOT_RUNNING, OPEN_UPDATE, VERSION_ONLY, NOTHING_TO_RUN_BELOW, NOTHING_TO_RUN, UNDER_WAY];
+
+/// F6 → Notifications' "On this machine": words beyond the labels.
+const TEST_ROW: &str = "{key} sends one";
+const READING: &str = "reading…";
+const SHOWN_BY_ROW: &str = "{shown_by} · sound played by {sound_by}";
+const CLICK_ROW: &str = "{click}; bringing the window forward: {raise}";
+const SHOWN_ONLY: &str = "this is only shown here: nothing to change";
+const TEST_TITLE: &str = "ttyak test notification";
+const TEST_BODY: &str = "If you can see this, notifications from ttyak reach you here.";
+const TEST_SENT: &str = "sent a test notification";
+const TEST_SENT_BELL: &str = "sent a test notification; the bell follows in {secs} s if the terminal is then unfocused";
+const TEST_DESKTOP_OFF: &str = "desktop notifications are off: there is no test notification to show";
+const TEST_CLICKED: &str = "the test notification was clicked: that is how a click reaches ttyak here";
+const MACHINE_WORDS: &[&str] = &[TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_DESKTOP_OFF, TEST_CLICKED];
+
+/// How long what F6 → Notifications read about this machine stands before it is read again (an internal wait: the system's
+/// do-not-disturb changes while the page is open).
+pub const MACHINE_REREAD: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What F6 → Notifications → On this machine shows, read in the background (the system and the window manager are asked
+/// off the UI's thread) and filled in as the answers come.
+#[derive(Debug, Default)]
+pub struct Machine {
+    pub route: Option<super::notify::RouteInfo>,
+    /// The terminal shows the bubbles itself (and brings its own window forward).
+    pub via_terminal: bool,
+    /// How the window is brought forward ("via kitty and Hyprland"), once found (asked once).
+    pub raise: Option<String>,
+    pub raise_asked: bool,
+    /// What the system says about do-not-disturb, in words.
+    pub dnd: Option<String>,
+    /// When the last read started; None: not read yet.
+    pub read_at: Option<Instant>,
+}
+
+/// What Enter does on a row of "On this machine".
+#[derive(Debug, Clone, PartialEq)]
+pub enum MachineAction {
+    /// Send the test notification.
+    Test,
+    /// Say something in the status line.
+    Note(String),
+}
+
+/// The test notification's words: its title and body, and what the status line says after it was sent, was refused, or was clicked.
+pub fn test_words() -> (String, String) {
+    use super::i18n::tr;
+    (tr(TEST_TITLE).into_owned(), tr(TEST_BODY).into_owned())
+}
+
+/// `bell`: the bell is on, so it follows.
+pub fn test_sent(bell: bool) -> String {
+    super::i18n::tr(if bell { TEST_SENT_BELL } else { TEST_SENT }).replace("{secs}", &super::notify::TEST_BELL_AFTER.as_secs().to_string())
+}
+
+pub fn test_refused() -> String {
+    super::i18n::tr(TEST_DESKTOP_OFF).into_owned()
+}
+
+pub fn test_clicked() -> String {
+    super::i18n::tr(TEST_CLICKED).into_owned()
+}
 
 /// The Version row: `version` and how this copy got here.
 fn version_row(version: &str, method: Method) -> String {
@@ -798,13 +878,13 @@ fn recording_label(keys: &Keymap, seq: &[Key]) -> String {
 /// Category names and fixed labels, for translation templates.
 pub fn translatable() -> Vec<String> {
     let all = [
-        Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive, Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir, Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language, Field::Desktop, Field::Sound, Field::Bell, Field::TitleMark, Field::FollowSystemDnd,
+        Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive, Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir, Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language, Field::Desktop, Field::Sound, Field::Bell, Field::TitleMark, Field::FollowSystemDnd, Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification,
         Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::Status, Field::Away, Field::Notifications, Field::Schedule, Field::ScheduleHours, Field::Input, Field::Output,
         Field::HuddleVolume, Field::SoundVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera, Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs,
         Field::UpdateVersion, Field::UpdateCheck, Field::UpdateEvery, Field::UpdateCheckTimeout, Field::UpdateTimeout, Field::UpdateCheckNow, Field::UpdateCommand, Field::UpdateOpen,
     ];
     let all = [&all[..], &(0..7).map(Field::ScheduleDay).collect::<Vec<_>>()].concat();
-    CATEGORIES.iter().map(|c| c.0).chain(["Keys", LEADER_LABEL, INSERT_LEADER_LABEL, RECORD_START, RECORD_DONE, "filter", "to filter", "to change", "Enter keep · Esc clear"]).chain(UPDATE_WORDS.iter().copied()).chain(all.iter().chain(KEYS_SETTINGS).map(|f| f.fixed_label())).chain(super::prefs_help::strings()).map(String::from).collect()
+    CATEGORIES.iter().map(|c| c.0).chain(["Keys", LEADER_LABEL, INSERT_LEADER_LABEL, RECORD_START, RECORD_DONE, "filter", "to filter", "to change", "Enter keep · Esc clear"]).chain(UPDATE_WORDS.iter().copied()).chain(MACHINE_WORDS.iter().copied()).chain(all.iter().chain(KEYS_SETTINGS).map(|f| f.fixed_label())).chain(super::prefs_help::strings()).map(String::from).collect()
 }
 
 #[derive(Debug, Default)]
@@ -847,6 +927,8 @@ pub struct Prefs {
     schedule: Option<slack_core::dnd::ScheduleDays>,
     /// F6 → Updates beyond the settings.
     pub update: UpdatePage,
+    /// F6 → Notifications → On this machine, as far as it was read.
+    pub machine: std::sync::Arc<std::sync::Mutex<Machine>>,
 }
 
 impl Prefs {
@@ -940,6 +1022,36 @@ impl Prefs {
             Field::UpdateOpen => Some(UpdateAction::Open),
             _ => None,
         }
+    }
+
+    /// What a shown-only row of F6 → Notifications → On this machine shows (None for the other rows).
+    pub fn machine_value(&self, field: Field) -> Option<String> {
+        use super::i18n::tr;
+        let m = self.machine.lock().unwrap_or_else(|e| e.into_inner());
+        let route = |f: &dyn Fn(&super::notify::RouteInfo) -> String| m.route.as_ref().map_or_else(|| tr(READING).into_owned(), f);
+        Some(match field {
+            Field::ShownBy => route(&|r| tr(SHOWN_BY_ROW).replace("{shown_by}", &r.shown_by).replace("{sound_by}", &r.sound_by)),
+            Field::ClickResult => route(&|r| match (&m.raise, m.via_terminal) {
+                (Some(raise), false) => tr(CLICK_ROW).replace("{click}", &r.click).replace("{raise}", raise),
+                _ => r.click.clone(),
+            }),
+            Field::SystemDnd => m.dnd.clone().unwrap_or_else(|| tr(READING).into_owned()),
+            _ => return None,
+        })
+    }
+
+    /// Enter on the selected row of "On this machine": what to do (None on other rows).
+    pub fn machine_action(&self, keys: &Keymap) -> Option<MachineAction> {
+        match self.selected_field(keys)? {
+            Field::ShownBy | Field::ClickResult | Field::SystemDnd => Some(MachineAction::Note(super::i18n::tr(SHOWN_ONLY).into_owned())),
+            Field::TestNotification => Some(MachineAction::Test),
+            _ => None,
+        }
+    }
+
+    /// Whether F6 → Notifications is shown and what it read about this machine is missing or old: it is to be read.
+    pub fn machine_due(&self) -> bool {
+        CATEGORIES.get(self.category).is_some_and(|c| c.0 == "Notifications") && self.machine.lock().unwrap_or_else(|e| e.into_inner()).read_at.is_none_or(|at| at.elapsed() >= MACHINE_REREAD)
     }
 
     /// Whether Availability is shown (its rows follow the schedule).
@@ -1378,7 +1490,7 @@ impl Prefs {
                     // A group's icon (`i` changes it).
                     Field::GroupHeader(s) => sections.get(*s).and_then(|s| keys.group(s.prefix.as_ref()?)).map(|g| g.1).unwrap_or_default(),
                     Field::Binding(i) if keys_shown => tree_row(*i).map(|r| r.keys.clone()).filter(|k| !k.is_empty()).unwrap_or_else(|| "(unbound)".into()),
-                    _ => self.update_value(*field).unwrap_or_else(|| field.value(ws, current, keys)),
+                    _ => self.update_value(*field).or_else(|| self.machine_value(*field)).unwrap_or_else(|| field.value(ws, current, keys)),
                 },
             };
             let line = match field {
@@ -1392,7 +1504,7 @@ impl Prefs {
                     let label = fit(&label_of(field), label_w.saturating_sub(1), false);
                     let left = value_w.saturating_sub(value.width() + 2);
                     // Only shown, never changed: dim.
-                    let style = if *field == Field::UpdateVersion { dim } else { good };
+                    let style = if matches!(field, Field::UpdateVersion | Field::ShownBy | Field::ClickResult | Field::SystemDnd) { dim } else { good };
                     let mut spans = vec![Span::raw(format!(" {label}{}", " ".repeat(label_w.saturating_sub(label.width())))), Span::styled(value, style)];
                     // A binding's description, dim, where there is room.
                     if let (Field::Binding(i), true, true) = (field, keys_shown, left > 4) {
@@ -1666,7 +1778,7 @@ mod tests {
     fn slack_side_changes() {
         let mut ws = Workspace::default();
         let mut p = Prefs { category: 4, ..Default::default() };
-        p.selected = 5;
+        p.selected = 0;
         assert_eq!(p.change(&mut ws, Some("C1"), &Keymap::default()), Some(SlackChange::ConversationLevel { channel: "C1".into(), level: "everything".into() }), "default → everything");
         let mut cycle = Vec::new();
         for _ in 0..4 {
@@ -1676,15 +1788,97 @@ mod tests {
         }
         assert_eq!(cycle, ["everything", "mentions_dms", "nothing", "default"], "back to the default after nothing");
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), None, "no conversation, no change");
-        p.selected = 6;
+        p.selected = 1;
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), Some(SlackChange::ChannelDefault("nothing".into())));
-        p.selected = 7;
+        p.selected = 2;
         ws.notify.keywords = vec!["a".into()];
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), None, "Enter starts editing");
         assert_eq!(p.editing.as_deref(), Some("a"));
         p.editing = Some(" deploy ,, release notes ".into());
         assert_eq!(p.change(&mut ws, None, &Keymap::default()), Some(SlackChange::Keywords("deploy,release notes".into())));
         assert!(p.editing.is_none() && p.on_slack(&Keymap::default()));
+    }
+
+    #[test]
+    fn notifications_is_the_one_place() {
+        use Field::*;
+        let fields = |name: &str| CATEGORIES.iter().find(|c| c.0 == name).unwrap().1;
+        assert_eq!(fields("Notifications"), [ConversationLevel, ChannelDefault, Keywords, Vips, Desktop, Sound, SoundVolume, Bell, TitleMark, Notifications, Schedule, FollowSystemDnd, ShownBy, ClickResult, SystemDnd, TestNotification]);
+        assert!(!fields("Audio & video").contains(&SoundVolume), "moved");
+        assert!(fields("Availability").contains(&Notifications) && fields("Availability").contains(&Schedule), "still in Availability");
+        for f in [ShownBy, ClickResult, SystemDnd, TestNotification] {
+            assert!(translatable().iter().any(|t| *t == f.fixed_label()), "{f:?}");
+        }
+        // The notification sound's volume is a notification setting now.
+        let mut s = Settings::default();
+        assert!(SoundVolume.adjust(&mut s, false, false) && s.notifications.sound_volume < 100);
+        assert_eq!(SoundVolume.value(&Workspace { settings: s.clone(), ..Default::default() }, None, &Keymap::default()), format!("{}%", s.notifications.sound_volume));
+    }
+
+    #[test]
+    fn the_machine_rows_only_show() {
+        use Field::*;
+        let keys = Keymap::default();
+        let mut ws = Workspace::default();
+        let before = ws.settings.clone();
+        for f in [ShownBy, ClickResult, SystemDnd, TestNotification] {
+            let mut s = before.clone();
+            f.change(&mut s, &(Vec::new(), Vec::new()));
+            assert!(!f.adjust(&mut s, true, true));
+            assert_eq!(s, before, "{f:?} changes nothing");
+        }
+        let mut p = Prefs { category: CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap(), ..Default::default() };
+        for f in [ShownBy, ClickResult, SystemDnd] {
+            p.selected = p.fields(&keys).iter().position(|x| *x == f).unwrap();
+            assert!(matches!(p.machine_action(&keys), Some(MachineAction::Note(_))), "{f:?}");
+            assert_eq!(p.change(&mut ws, None, &keys), None);
+            assert_eq!(ws.settings, before);
+        }
+        p.selected = p.fields(&keys).iter().position(|x| *x == TestNotification).unwrap();
+        assert_eq!(p.machine_action(&keys), Some(MachineAction::Test));
+        p.category = 0;
+        p.selected = 0;
+        assert_eq!(p.machine_action(&keys), None, "other rows: nothing");
+    }
+
+    #[test]
+    fn the_machine_rows_say_what_was_read() {
+        use super::super::notify::RouteInfo;
+        let route = |click: &str| RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: click.into() };
+        let p = Prefs::default();
+        assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("reading…"));
+        assert_eq!(p.machine_value(Field::ShownBy).as_deref(), Some("reading…"));
+        assert_eq!(p.machine_value(Field::SoundVolume), None);
+        {
+            let mut m = p.machine.lock().unwrap();
+            m.route = Some(route("opens it in ttyak"));
+            m.dnd = Some("swaync: off".into());
+        }
+        assert_eq!(p.machine_value(Field::ShownBy).as_deref(), Some("kitty · sound played by ttyak"));
+        assert_eq!(p.machine_value(Field::SystemDnd).as_deref(), Some("swaync: off"));
+        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak"), "how the window comes forward not known yet");
+        p.machine.lock().unwrap().raise = Some("via kitty and Hyprland".into());
+        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; bringing the window forward: via kitty and Hyprland"));
+        // The terminal's own bubbles: it brings its window forward itself.
+        {
+            let mut m = p.machine.lock().unwrap();
+            (m.route, m.via_terminal) = (Some(route("opens it in ttyak; kitty brings its window and tab forward")), true);
+        }
+        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; kitty brings its window and tab forward"));
+        assert!(Field::TestNotification.value(&Workspace::default(), None, &Keymap::default()).ends_with("sends one"));
+    }
+
+    #[test]
+    fn the_machine_words_are_translatable() {
+        let words = super::super::i18n::translatable();
+        for want in [TEST_ROW, READING, SHOWN_BY_ROW, CLICK_ROW, SHOWN_ONLY, TEST_TITLE, TEST_BODY, TEST_SENT, TEST_SENT_BELL, TEST_DESKTOP_OFF, TEST_CLICKED] {
+            assert!(words.iter().any(|w| w == want), "{want}");
+        }
+        // The route's words (all platforms) and the system's.
+        for want in super::super::notify::ROUTE_WORDS.iter().chain(super::super::system_dnd::WORDS) {
+            assert!(words.iter().any(|w| w == want), "{want}");
+        }
+        assert!(words.iter().any(|w| w == "opens it in ttyak; {terminal} brings its window and tab forward"));
     }
 
     #[test]

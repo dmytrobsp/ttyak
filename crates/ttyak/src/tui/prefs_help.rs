@@ -165,14 +165,14 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("Shows you as away on Slack, whatever you are doing, until you switch it off. Kept on Slack.");
         }
         Field::Notifications => {
-            b.text("Pauses the notifications Slack sends you, or lets them through again. Kept on Slack.").blank();
+            b.text("Pauses the notifications Slack sends you, or lets them through again. Kept on Slack. The same setting as in Availability.").blank();
             b.change("pause for 30 minutes, or resume");
             let keys = format!("{} {}", b.key_of(Action::Increase), b.key_of(Action::Decrease));
             b.key(keys, "lengthen or shorten a running pause: 30 min, 1 h, 2 h, 8 h");
         }
         Field::Schedule => {
             b.text("The hours you receive notifications; outside them they are paused. Changes are saved to Slack at once.").blank();
-            b.value("off", "notifications come at any time").value("every day", "the same hours every day").value("weekdays", "the hours on Monday to Friday: paused from each of those evenings to the next morning, so from Saturday morning to Monday evening notifications come at any time").value("custom", "hours of its own for each day, listed below").blank();
+            b.value("off", "notifications come at any time").value("every day", "the same hours every day").value("weekdays", "the hours on Monday to Friday: paused from each of those evenings to the next morning, so from Saturday morning to Monday evening notifications come at any time").value("custom", "hours of its own for each day, listed under it in Availability").blank();
             b.step("change the kind");
         }
         Field::ScheduleHours => {
@@ -259,7 +259,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("Shows a desktop notification for a message that notifies you, as the levels below decide.");
         }
         Field::Bell => {
-            b.text("Rings the terminal's bell with a notification while the terminal is not focused: terminals turn it into an urgent mark (the window manager or bar highlights the window) and tmux flags the window. Some desktops bring the window forward and switch to its workspace on a bell instead (kitty's default window_alert_on_bell with Hyprland's misc:focus_on_activate = 1), and kitty may also beep (enable_audio_bell). It rings even with desktop notifications off, never while notifications are paused, nor in a terminal that never said whether it has the focus. Off by default.");
+            b.text("Rings the terminal's bell with a notification while the terminal is not focused: terminals turn it into an urgent mark (the window manager or bar highlights the window) and tmux flags the window. Some desktops bring the window forward and switch to its workspace on a bell instead (kitty's default window_alert_on_bell with Hyprland's misc:focus_on_activate = 1), and kitty may also beep (enable_audio_bell). It rings even with desktop notifications off, never while notifications are paused, nor in a terminal that never said whether it has the focus. Off by default; Send a test notification below tries it.");
         }
         Field::TitleMark => {
             b.text("Puts a mark in front of the terminal's tab title: ○ nothing unread, ● something unread, ◆ something for you (a direct message or a mention). Your terminal's own title comes back when ttyak ends. In tmux this needs set-titles on.");
@@ -268,9 +268,22 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("Holds back every notification, its sound and the bell while the system's do-not-disturb is on, as ttyak's own pause does. ttyak asks the notification server each time: SwayNotificationCenter, mako (a do-not-disturb or dnd mode), dunst (paused), GNOME (banners off) and KDE (notifications inhibited) can be asked; with any other, or when the server does not answer, notifications go through. Off: only ttyak's own pause and schedule hold them back.");
         }
         Field::Sound => {
-            b.text("The sound played with each notification. How loud is Notification sound volume under Audio & video. Where the notification server plays sounds itself (it lists the sound capability), the sound goes with the notification, so the system's do-not-disturb silences it too; the volume and speaker set here then do not apply. Otherwise ttyak plays it; then system, the desktop's own sound, stays silent, as ttyak has none to play.").blank();
+            b.text("The sound played with each notification. How loud is the volume below. Where the notification server plays sounds itself (it lists the sound capability), the sound goes with the notification, so the system's do-not-disturb silences it too; the volume and speaker set here then do not apply. Otherwise ttyak plays it; then system, the desktop's own sound, stays silent, as ttyak has none to play.").blank();
             b.value("off", "silent").value("chime, ping, knock", "built-in sounds").value("system", "the desktop's own notification sound").blank();
             b.change("the next sound, played for you to hear");
+        }
+        Field::ShownBy => {
+            b.text("Who shows ttyak's notifications on this machine and who plays their sound: the terminal itself where it can (kitty, over OSC 99), else the system's notifications. Found out when this page opens; shown only.");
+        }
+        Field::ClickResult => {
+            b.text("What happens when you click a notification: it opens the message in ttyak, and the window is brought forward by the terminal, or by ttyak through the window manager (the tools it found are named). Shown only.");
+        }
+        Field::SystemDnd => {
+            b.text("What the system says about do-not-disturb right now, as Follow the system's do-not-disturb reads it: the notification server's own state (swaync, mako, dunst, GNOME, KDE) or Windows' Focus Assist; can't tell when the server can't be asked. Read in the background, again every few seconds while this page is open. Shown only.");
+        }
+        Field::TestNotification => {
+            b.text("Sends a notification like one for you, through the same route and with the sound set above, to check this machine's setup. A few seconds later the bell rings, if the terminal is then not focused and the bell is on: switch away to see it. Clicking the notification opens nothing in ttyak but brings the window forward the same way, so the click can be checked too.").blank();
+            b.change("send the test notification");
         }
         Field::ConversationLevel => {
             b.text("What notifies you in the conversation on screen. Kept on Slack; it needs a conversation open.").blank();
@@ -303,7 +316,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.step("change it in steps, 0 to 200 %");
         }
         Field::SoundVolume => {
-            b.text("How loud notification and huddle sounds play; you hear the new level as you set it.").blank();
+            b.text("How loud notification sounds play, and the huddle's own sounds (joining, someone coming or going, an invitation ringing); you hear the new level as you set it. Where the notification server plays the sound itself, it sets its own volume and this does not apply.").blank();
             b.step("change it in steps, 0 to 200 %");
         }
         Field::MicGain => {
@@ -731,6 +744,22 @@ mod tests {
         assert_eq!(lines.len(), 4);
         assert!(plain(&lines[3]).ends_with('…'), "{:?}", plain(&lines[3]));
         assert_eq!(fitted(layout(&lines_of(3), 40), 4, 40).len(), 3, "a help that fits is untouched");
+    }
+
+    #[test]
+    fn the_machine_rows_and_the_moved_volume_are_explained() {
+        for f in [Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification, Field::SoundVolume] {
+            let first = match &help(f, &Workspace::default(), &keys()).lines[0] {
+                HelpLine::Text(t) => t.clone(),
+                other => panic!("{other:?}"),
+            };
+            assert!(strings().iter().any(|s| *s == first), "{f:?}: {first}");
+            assert!(crate::tui::prefs::translatable().contains(&first), "{f:?}");
+        }
+        assert!(key_lines(&help(Field::TestNotification, &Workspace::default(), &keys())).len() == 1, "Enter sends it");
+        assert!(key_lines(&help(Field::SystemDnd, &Workspace::default(), &keys())).is_empty(), "shown only");
+        let bell = help(Field::Bell, &Workspace::default(), &keys());
+        assert!(matches!(&bell.lines[0], HelpLine::Text(t) if t.contains("focus_on_activate") && t.contains("Off by default")), "{bell:?}");
     }
 
     #[test]

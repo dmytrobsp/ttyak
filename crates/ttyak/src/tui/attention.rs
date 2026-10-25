@@ -18,6 +18,13 @@ pub struct Key {
     pub channel: String,
 }
 
+impl Key {
+    /// F6's test notification's: no conversation's, so it replaces only itself.
+    pub fn test() -> Key {
+        Key { workspace: usize::MAX, channel: "ttyak-test".into() }
+    }
+}
+
 /// What a for-you event shows, and where a click on it lands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Note {

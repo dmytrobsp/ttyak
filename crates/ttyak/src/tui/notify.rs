@@ -11,6 +11,7 @@ use slack_core::types::Message;
 use tokio::sync::mpsc;
 
 use super::attention::{self, Decision, Key, Note, Outputs, TermFocus};
+use super::i18n::tr;
 use super::osc99;
 use super::state::Workspace;
 use super::system_dnd::{self, Environment, Server, SoundBy};
@@ -73,6 +74,16 @@ pub enum ClickedOn {
 pub type OnClick = Box<dyn FnOnce(ClickedOn) + Send>;
 
 impl Target {
+    /// What F6's test notification leads to: nowhere (a click only brings the window forward).
+    pub fn test() -> Target {
+        Target { channel: String::new(), ts: None, thread_ts: None }
+    }
+
+    /// Whether this is [`Target::test`]'s.
+    pub fn is_test(&self) -> bool {
+        self.channel.is_empty() && self.ts.is_none()
+    }
+
     pub fn message(channel: &str, m: &Message) -> Target {
         Target { channel: channel.to_string(), ts: Some(m.ts.clone()), thread_ts: m.thread_ts.clone().filter(|_| m.is_reply()) }
     }
@@ -168,7 +179,7 @@ impl Sound {
     /// The notification sound the settings pick, on the speaker and at the volume they pick.
     pub fn of(settings: &super::settings::Settings) -> Sound {
         let device = super::settings::Settings::device(huddle::devices::OUTPUT_ENV, &settings.audio.output);
-        Sound { name: settings.notifications.sound.clone(), device, volume: settings.audio.sound_volume }
+        Sound { name: settings.notifications.sound.clone(), device, volume: settings.notifications.sound_volume }
     }
 }
 
@@ -920,6 +931,8 @@ enum Cmd {
     Bell { dnd: bool, epoch: u64 },
     /// Find out what the notification server is and can do.
     Probe,
+    /// Ask the system whether it holds notifications back and tell F6 in words (`system_dnd::describe`).
+    ReadDnd(Box<dyn FnOnce(String) + Send>),
     /// Close `key`'s bubble, `how` says when.
     Withdraw { key: Key, how: Withdrawal },
     /// The waiter of `key`'s bubble `generation` ended; `gone`: it was clicked or closed.
@@ -982,8 +995,7 @@ struct Live {
     waiter: Option<tokio::task::AbortHandle>,
 }
 
-/// How notifications reach the user on this machine, for F6's "On this machine" (Tasks 8–12 fill in their routes).
-#[allow(dead_code)] // read by F6, wired in after this
+/// How notifications reach the user on this machine, for F6's "On this machine", in the current language.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteInfo {
     pub shown_by: String,
@@ -1063,40 +1075,66 @@ impl Notifier {
 
     /// How bubbles, their sound (the settings' `sound`) and clicks go on this machine. (The server is looked for the first
     /// time this is asked: until it is found, the sound's route reads "not known yet".)
-    #[allow(dead_code)] // read by F6, wired in after this
     pub fn route(&self, sound: &str) -> RouteInfo {
-        let click = "opens it in ttyak";
         let environment = self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if environment.is_none() && !self.inner.shared.probed.swap(true, Ordering::Relaxed) {
             self.send(Cmd::Probe);
         }
         let terminal = self.inner.shared.terminal.get();
-        let sound_by = match environment.map(|e| if terminal.is_some() { osc99::sound_by(&e.capabilities, sound) } else { system_dnd::sound_route(&e.capabilities, sound) }) {
-            None => "not known yet",
-            Some(SoundBy::Notification) => "the notification",
-            Some(SoundBy::Ttyak) if sound == "system" => "nobody (the server has no sound of its own to play)",
-            Some(SoundBy::Ttyak) => "ttyak",
-            Some(SoundBy::None) => "nobody (the sound is off)",
-        };
+        let sound_by = tr(match environment.map(|e| if terminal.is_some() { osc99::sound_by(&e.capabilities, sound) } else { system_dnd::sound_route(&e.capabilities, sound) }) {
+            None => SOUND_NOT_KNOWN,
+            Some(SoundBy::Notification) => SOUND_BY_NOTIFICATION,
+            Some(SoundBy::Ttyak) if sound == "system" => SOUND_BY_NOBODY_SYSTEM,
+            Some(SoundBy::Ttyak) => SOUND_BY_TTYAK,
+            Some(SoundBy::None) => SOUND_BY_NOBODY_OFF,
+        })
+        .into_owned();
         if let Some(terminal) = terminal {
-            let shown_by = terminal.name.clone();
-            let click = format!("opens it in ttyak; {} brings its window and tab forward", terminal.name);
-            return RouteInfo { shown_by, sound_by: sound_by.into(), click };
+            let click = tr(CLICK_TERMINAL).replace("{terminal}", &terminal.name);
+            return RouteInfo { shown_by: terminal.name.clone(), sound_by, click };
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = click;
             let (shown_by, click) = mac_route(mac::sender(), mac::listening());
-            return RouteInfo { shown_by, sound_by: sound_by.into(), click };
+            return RouteInfo { shown_by, sound_by, click };
         }
         #[cfg(windows)]
         {
-            let _ = click;
             let (shown_by, click) = windows_route(toast::setting());
-            return RouteInfo { shown_by, sound_by: sound_by.into(), click };
+            return RouteInfo { shown_by, sound_by, click };
         }
         #[cfg(all(unix, not(target_os = "macos")))]
-        RouteInfo { shown_by: "the system's notifications".into(), sound_by: sound_by.into(), click: click.into() }
+        RouteInfo { shown_by: tr(SHOWN_BY_SYSTEM).into_owned(), sound_by, click: tr(CLICK_SYSTEM).into_owned() }
+    }
+
+    /// Whether the notification server has been found (until then the sound's route reads "not known yet").
+    pub fn route_known(&self) -> bool {
+        self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    /// Whether the terminal shows the bubbles itself (and so brings its own window forward on a click).
+    pub fn via_terminal(&self) -> bool {
+        self.inner.shared.terminal.get().is_some()
+    }
+
+    /// Ask the system about do-not-disturb in the background: `done` gets the answer in words (never waits for the UI).
+    pub fn read_system_dnd(&self, done: impl FnOnce(String) + Send + 'static) {
+        self.send(Cmd::ReadDnd(Box::new(done)));
+    }
+
+    /// F6's test notification: the bell, [`TEST_BELL_AFTER`] from now, when the terminal is then unfocused (`dnd`: unless
+    /// the system is not to be disturbed then).
+    pub fn test_bell(&self, dnd: bool) {
+        self.test_bell_in(TEST_BELL_AFTER, dnd);
+    }
+
+    fn test_bell_in(&self, after: std::time::Duration, dnd: bool) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let notifier = self.clone();
+        drop(runtime.spawn(async move {
+            tokio::time::sleep(after).await;
+            if dnd { notifier.ring_unless_quiet() } else { notifier.ring() }
+        }));
     }
 
     /// Ask for the bell (the run loop writes it between draws).
@@ -1167,18 +1205,16 @@ impl Notifier {
 #[cfg(any(windows, test))]
 fn windows_route(setting: Option<i32>) -> (String, String) {
     let off = match setting {
-        Some(1) => Some("Windows PowerShell's notifications are turned off (Settings → System → Notifications)"),
-        Some(2) => Some("notifications are turned off for this user (Settings → System → Notifications)"),
-        Some(3) => Some("notifications are turned off by group policy"),
-        Some(4) => Some("Windows PowerShell's app manifest turns notifications off"),
+        Some(1) => Some(WIN_OFF_APP),
+        Some(2) => Some(WIN_OFF_USER),
+        Some(3) => Some(WIN_OFF_POLICY),
+        Some(4) => Some(WIN_OFF_MANIFEST),
         _ => None,
     };
     if let Some(why) = off {
-        return (format!("nothing: {why}"), "nothing to click".into());
+        return (tr(NOTHING_WHY).replace("{why}", &tr(why)), tr(NOTHING_TO_CLICK).into_owned());
     }
-    let shown_by = "Windows' notifications, as Windows PowerShell's (ttyak has no app id of its own)".into();
-    let click = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification centre: not tried; likely not)".into();
-    (shown_by, click)
+    (tr(WIN_SHOWN).into_owned(), tr(WIN_CLICK).into_owned())
 }
 
 /// macOS's route for F6: who shows the bubbles, sent as app `sender`, and what a click does (`clicks`: ttyak hears
@@ -1194,20 +1230,50 @@ fn mac_route(sender: &str, clicks: bool) -> (String, String) {
         _ => "Finder",
     };
     let refused = match name {
-        "Finder" => Some("the terminal's app isn't known, and macOS 26 refuses notifications sent as Finder (macOS's default)"),
-        "kitty" => Some("macOS 26 refuses notifications sent as kitty (in kitty itself ttyak uses kitty's own)"),
+        "Finder" => Some(MAC_OFF_FINDER),
+        "kitty" => Some(MAC_OFF_KITTY),
         _ => None,
     };
     if let Some(why) = refused {
-        return (format!("nothing: {why}"), "nothing to click".into());
+        return (tr(NOTHING_WHY).replace("{why}", &tr(why)), tr(NOTHING_TO_CLICK).into_owned());
     }
-    let tried = if name == "Terminal" { "" } else { "; not tried: macOS 26 may refuse them" };
-    let shown_by = format!("macOS's notifications, as {name}'s (only where {name}'s notifications are allowed in System Settings, and not while the screen is shared unless allowed there{tried})");
+    let tried = if name == "Terminal" { String::new() } else { tr(MAC_NOT_TRIED).into_owned() };
+    let shown_by = tr(MAC_SHOWN).replace("{name}", name).replace("{tried}", &tried);
     // (Terminal's and iTerm2's tab by AppleScript; the others' app with its front window. Tried: Terminal.)
-    let forward = if matches!(name, "Terminal" | "iTerm2") { format!("{name}'s tab") } else { name.to_string() };
-    let click = if clicks { format!("opens it in ttyak and brings {forward} forward (up to 32 waiting at once)") } else { format!("brings {name} forward (ttyak isn't told)") };
+    let forward = if matches!(name, "Terminal" | "iTerm2") { tr(MAC_TAB).replace("{name}", name) } else { name.to_string() };
+    let click = if clicks { tr(MAC_CLICK_HEARD).replace("{forward}", &forward) } else { tr(MAC_CLICK_UNHEARD).replace("{name}", name) };
     (shown_by, click)
 }
+
+/// F6's "On this machine" words: how bubbles, their sound and clicks go. (On every platform, for the locale template.)
+const SOUND_NOT_KNOWN: &str = "not known yet";
+const SOUND_BY_NOTIFICATION: &str = "the notification";
+const SOUND_BY_NOBODY_SYSTEM: &str = "nobody (the server has no sound of its own to play)";
+const SOUND_BY_TTYAK: &str = "ttyak";
+const SOUND_BY_NOBODY_OFF: &str = "nobody (the sound is off)";
+const SHOWN_BY_SYSTEM: &str = "the system's notifications";
+const CLICK_SYSTEM: &str = "opens it in ttyak";
+const CLICK_TERMINAL: &str = "opens it in ttyak; {terminal} brings its window and tab forward";
+const NOTHING_WHY: &str = "nothing: {why}";
+const NOTHING_TO_CLICK: &str = "nothing to click";
+const WIN_OFF_APP: &str = "Windows PowerShell's notifications are turned off (Settings → System → Notifications)";
+const WIN_OFF_USER: &str = "notifications are turned off for this user (Settings → System → Notifications)";
+const WIN_OFF_POLICY: &str = "notifications are turned off by group policy";
+const WIN_OFF_MANIFEST: &str = "Windows PowerShell's app manifest turns notifications off";
+const WIN_SHOWN: &str = "Windows' notifications, as Windows PowerShell's (ttyak has no app id of its own)";
+const WIN_CLICK: &str = "opens it in ttyak and brings the console's window forward, from the toast on screen (from the notification centre: not tried; likely not)";
+const MAC_OFF_FINDER: &str = "the terminal's app isn't known, and macOS 26 refuses notifications sent as Finder (macOS's default)";
+const MAC_OFF_KITTY: &str = "macOS 26 refuses notifications sent as kitty (in kitty itself ttyak uses kitty's own)";
+const MAC_NOT_TRIED: &str = "; not tried: macOS 26 may refuse them";
+const MAC_SHOWN: &str = "macOS's notifications, as {name}'s (only where {name}'s notifications are allowed in System Settings, and not while the screen is shared unless allowed there{tried})";
+const MAC_TAB: &str = "{name}'s tab";
+const MAC_CLICK_HEARD: &str = "opens it in ttyak and brings {forward} forward (up to 32 waiting at once)";
+const MAC_CLICK_UNHEARD: &str = "brings {name} forward (ttyak isn't told)";
+pub const ROUTE_WORDS: &[&str] = &[SOUND_NOT_KNOWN, SOUND_BY_NOTIFICATION, SOUND_BY_NOBODY_SYSTEM, SOUND_BY_TTYAK, SOUND_BY_NOBODY_OFF, SHOWN_BY_SYSTEM, CLICK_SYSTEM, CLICK_TERMINAL, NOTHING_WHY, NOTHING_TO_CLICK, WIN_OFF_APP, WIN_OFF_USER, WIN_OFF_POLICY, WIN_OFF_MANIFEST, WIN_SHOWN, WIN_CLICK, MAC_OFF_FINDER, MAC_OFF_KITTY, MAC_NOT_TRIED, MAC_SHOWN, MAC_TAB, MAC_CLICK_HEARD, MAC_CLICK_UNHEARD];
+
+/// How long after F6's "Send a test notification" the bell rings (if the terminal is then unfocused and the bell is on):
+/// time to switch away. Part of the test action, not a setting.
+pub const TEST_BELL_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
 async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::UnboundedReceiver<Cmd>, back: mpsc::WeakUnboundedSender<Cmd>) {
@@ -1287,6 +1353,11 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 }
             }
             Cmd::Probe => drop(environment(&backend, &shared).await),
+            Cmd::ReadDnd(done) => {
+                let environment = environment(&backend, &shared).await;
+                let answer = backend.suppressed(environment.server.clone()).await;
+                done(system_dnd::describe(&environment.server, answer));
+            }
             Cmd::Withdraw { key, how } => {
                 let covered = live.get(&key).is_some_and(|l| how.takes(l.at.as_ref()));
                 if let Some(l) = covered.then(|| live.remove(&key)).flatten() {
@@ -1468,6 +1539,10 @@ pub mod fake {
 
     impl Server {
         /// What the server offers from now on.
+        pub fn set_server(&self, server: system_dnd::Server) {
+            self.environment.lock().unwrap().server = server;
+        }
+
         pub fn set_capabilities(&self, capabilities: &[&str]) {
             self.environment.lock().unwrap().capabilities = capabilities.iter().map(|c| c.to_string()).collect();
         }
@@ -1613,6 +1688,11 @@ pub mod fake {
             let (done, settled) = tokio::sync::oneshot::channel();
             self.send(Cmd::Settled(done));
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), settled).await;
+        }
+
+        /// As [`Notifier::test_bell`], after `after` instead of [`TEST_BELL_AFTER`].
+        pub fn test_bell_after(&self, after: std::time::Duration, dnd: bool) {
+            self.test_bell_in(after, dnd);
         }
 
         /// Whether `key`'s bubble is still known (shown, replaced and withdrawn as one), once everything asked so far is
@@ -2158,6 +2238,45 @@ mod tests {
         n.read(&key, None, "1.0");
         n.settled().await;
         assert_eq!(server.calls().pop(), Some(fake::Call::Close(1)));
+    }
+
+    #[tokio::test]
+    async fn f6_reads_the_systems_do_not_disturb_in_the_background() {
+        let (n, server) = Notifier::fake();
+        server.set_server(system_dnd::Server::Swaync);
+        let read = |n: &Notifier| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            n.read_system_dnd(move |text| drop(tx.send(text)));
+            rx
+        };
+        for (answer, says) in [(Some(false), "swaync: off"), (Some(true), "swaync: on"), (None, "swaync: can't tell")] {
+            server.set_suppressed(answer);
+            let rx = read(&n);
+            let said = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5))).await.unwrap().unwrap();
+            assert_eq!(said, says);
+        }
+        // It returns at once: the answer comes from the worker.
+        server.set_suppressed(Some(false));
+        let started = std::time::Instant::now();
+        let _rx = read(&n);
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn the_test_bell_rings_later_and_only_in_its_period() {
+        let (n, _server) = Notifier::fake();
+        n.set_focus(TermFocus::Unfocused);
+        n.test_bell_after(std::time::Duration::from_millis(40), false);
+        assert!(!n.take_bell(), "not yet");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(n.take_bell());
+        // Focus changed meanwhile: the bell is for the period it was asked in.
+        n.test_bell_after(std::time::Duration::from_millis(40), true);
+        n.set_focus(TermFocus::Focused);
+        n.set_focus(TermFocus::Unfocused);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        n.settled().await;
+        assert!(n.take_bell(), "asked in the period it was decided");
     }
 
     #[tokio::test]

@@ -71,6 +71,36 @@ pub fn server(name: &str) -> Server {
     }
 }
 
+/// F6's words for what the system says about do-not-disturb.
+const DND_STATE: &str = "{server}: {state}";
+const DND_STATE_WINDOWS: &str = "{server}: {state} (undocumented state)";
+const DND_ON: &str = "on";
+const DND_OFF: &str = "off";
+const DND_CANT_TELL: &str = "can't tell";
+pub const WORDS: &[&str] = &[DND_STATE, DND_STATE_WINDOWS, DND_ON, DND_OFF, DND_CANT_TELL];
+
+/// What was read from `server`, for F6: "swaync: off", "Focus Assist: off (undocumented state)", "can't tell" (`answer`
+/// None; a server that can't be asked is no name at all).
+pub fn describe(server: &Server, answer: Option<bool>) -> String {
+    use super::i18n::tr;
+    let name = match server {
+        Server::Swaync => "swaync",
+        Server::Mako => "mako",
+        Server::Dunst => "dunst",
+        Server::Gnome => "GNOME",
+        Server::Kde => "KDE",
+        Server::Windows => "Focus Assist",
+        Server::Other(_) => return tr(DND_CANT_TELL).into_owned(),
+    };
+    let state = match answer {
+        Some(true) => tr(DND_ON),
+        Some(false) => tr(DND_OFF),
+        None => tr(DND_CANT_TELL),
+    };
+    let words = if *server == Server::Windows { DND_STATE_WINDOWS } else { DND_STATE };
+    tr(words).replace("{server}", name).replace("{state}", &state)
+}
+
 /// What the notification server is and can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Environment {
@@ -323,6 +353,16 @@ mod tests {
         assert_eq!(sound_by(&[], "chime"), SoundBy::Ttyak);
         assert_eq!(sound_by(&caps(&["sound"]), "off"), SoundBy::None);
         assert_eq!(sound_by(&[], "off"), SoundBy::None);
+    }
+
+    #[test]
+    fn what_f6_says_of_the_system() {
+        assert_eq!(describe(&Server::Swaync, Some(false)), "swaync: off");
+        assert_eq!(describe(&Server::Mako, Some(true)), "mako: on");
+        assert_eq!(describe(&Server::Gnome, None), "GNOME: can't tell");
+        assert_eq!(describe(&Server::Windows, Some(false)), "Focus Assist: off (undocumented state)");
+        assert_eq!(describe(&Server::Other("dwl-notify".into()), Some(false)), "can't tell");
+        assert_eq!(describe(&Server::Other(String::new()), None), "can't tell");
     }
 
     #[test]

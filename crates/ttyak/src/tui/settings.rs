@@ -203,11 +203,14 @@ pub struct Notifications {
     pub title_mark: bool,
     /// No interruption while the system's do-not-disturb is on (where ttyak can ask: swaync, mako, dunst, GNOME, KDE).
     pub follow_system_dnd: bool,
+    /// How loud notification and huddle sounds play, in percent. (Before 0.12 it was `[audio] sound_volume`, which is
+    /// still read when this one is absent: see [`Settings::parse`].)
+    pub sound_volume: u32,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { desktop: true, sound: "off".into(), bell: false, title_mark: true, follow_system_dnd: true }
+        Notifications { desktop: true, sound: "off".into(), bell: false, title_mark: true, follow_system_dnd: true, sound_volume: 100 }
     }
 }
 
@@ -220,8 +223,6 @@ pub struct Audio {
     pub output: Option<String>,
     /// Huddle playback volume, in percent.
     pub huddle_volume: u32,
-    /// Notification sound volume, in percent.
-    pub sound_volume: u32,
     /// Microphone gain, in percent.
     pub mic_gain: u32,
     /// The microphone sends silence while quieter than this (dBFS); unset: always on.
@@ -234,7 +235,7 @@ pub struct Audio {
 
 impl Default for Audio {
     fn default() -> Self {
-        Audio { input: None, output: None, huddle_volume: 100, sound_volume: 100, mic_gain: 100, speaking_threshold_db: None, noise_suppression: false, echo_cancellation: true }
+        Audio { input: None, output: None, huddle_volume: 100, mic_gain: 100, speaking_threshold_db: None, noise_suppression: false, echo_cancellation: true }
     }
 }
 
@@ -256,13 +257,34 @@ impl Settings {
         std::env::var(env).ok().filter(|v| !v.is_empty()).or_else(|| setting.clone().filter(|v| !v.is_empty()))
     }
 
+    /// The settings in `text`. The notification sound's volume used to be `[audio] sound_volume`: a file that has it and
+    /// no `[notifications] sound_volume` keeps its value (saving writes the new place).
     pub fn parse(text: &str) -> Result<Settings, String> {
-        toml::from_str(text).map_err(|e| e.to_string())
+        let mut s: Settings = toml::from_str(text).map_err(|e| e.to_string())?;
+        let old: OldVolume = toml::from_str(text).map_err(|e| e.to_string())?;
+        if let (None, Some(volume)) = (old.notifications.sound_volume, old.audio.sound_volume) {
+            s.notifications.sound_volume = volume;
+        }
+        Ok(s)
     }
 
     pub fn to_toml(&self) -> String {
         toml::to_string_pretty(self).unwrap_or_default()
     }
+}
+
+/// The two places the notification sound's volume was or is kept, read apart from [`Settings`].
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct OldVolume {
+    audio: VolumeKey,
+    notifications: VolumeKey,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct VolumeKey {
+    sound_volume: Option<u32>,
 }
 
 pub fn config_path() -> Option<std::path::PathBuf> {
@@ -317,6 +339,26 @@ mod tests {
     }
 
     #[test]
+    fn the_sound_volume_moved_to_notifications() {
+        // An old file: the volume under [audio] only.
+        let s = Settings::parse("[audio]\nsound_volume = 40\n[notifications]\ndesktop = false\n").unwrap();
+        assert_eq!((s.notifications.sound_volume, s.notifications.desktop), (40, false));
+        // The new place wins when both are there.
+        let s = Settings::parse("[audio]\nsound_volume = 40\n[notifications]\nsound_volume = 70\n").unwrap();
+        assert_eq!(s.notifications.sound_volume, 70);
+        assert_eq!(Settings::parse("").unwrap().notifications.sound_volume, 100);
+        // Saved in the new place only; read back as it was.
+        let mut s = Settings::parse("[audio]\nsound_volume = 40\n").unwrap();
+        let text = s.to_toml();
+        assert!(!text.contains("[audio]\nsound_volume") && text.contains("sound_volume = 40"), "{text}");
+        assert_eq!(text.matches("sound_volume").count(), 1, "{text}");
+        assert_eq!(Settings::parse(&text).unwrap().notifications.sound_volume, 40);
+        s.notifications.sound_volume = 80;
+        assert_eq!(Settings::parse(&s.to_toml()).unwrap(), s);
+        assert!(Settings::parse("[audio]\nsound_volume = \"loud\"").is_err());
+    }
+
+    #[test]
     fn round_trip() {
         let mut s = Settings::default();
         s.appearance.compact = true;
@@ -328,7 +370,7 @@ mod tests {
     #[test]
     fn audio_defaults_and_mic_config() {
         let s = Settings::parse("[audio]\nmic_gain = 150\n").unwrap();
-        assert_eq!((s.audio.huddle_volume, s.audio.sound_volume, s.audio.speaking_threshold_db, s.audio.noise_suppression), (100, 100, None, false));
+        assert_eq!((s.audio.huddle_volume, s.notifications.sound_volume, s.audio.speaking_threshold_db, s.audio.noise_suppression), (100, 100, None, false));
         let cfg = s.audio.mic_config();
         assert_eq!((cfg.gain, cfg.gate_db, cfg.suppress_noise, cfg.cancel_echo), (1.5, None, false, true), "echo cancellation is on by default");
         let s = Settings::parse("[audio]\nspeaking_threshold_db = -40\nnoise_suppression = true\necho_cancellation = false\n").unwrap();
