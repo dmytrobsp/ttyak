@@ -178,16 +178,46 @@ const ITERM2_SCRIPT: &[&str] = &[
     "end run",
 ];
 
+/// The terminal apps ttyak knows on macOS: `TERM_PROGRAM`'s value and the app's bundle id.
+const HOST_APPS: &[(&str, &str)] = &[("Apple_Terminal", "com.apple.Terminal"), ("iTerm.app", "com.googlecode.iterm2"), ("WezTerm", "com.github.wez.wezterm"), ("ghostty", "com.mitchellh.ghostty")];
+const KITTY_APP: &str = "net.kovidgoyal.kitty";
+
 /// The macOS app (its bundle id) of the terminal `vars` are of: by `TERM_PROGRAM`, which the terminal sets itself, then
-/// kitty's `KITTY_WINDOW_ID` (kitty sets no `TERM_PROGRAM`).
+/// kitty's `KITTY_WINDOW_ID` (kitty sets no `TERM_PROGRAM`), then `__CFBundleIdentifier`, which macOS gives what an app
+/// starts (it survives into tmux, whose `TERM_PROGRAM` is its own) — when it is one of these apps.
 pub fn host_bundle(vars: &HashMap<String, String>) -> Option<&'static str> {
-    match var(vars, "TERM_PROGRAM") {
-        Some("Apple_Terminal") => Some("com.apple.Terminal"),
-        Some("iTerm.app") => Some("com.googlecode.iterm2"),
-        Some("WezTerm") => Some("com.github.wez.wezterm"),
-        Some("ghostty") => Some("com.mitchellh.ghostty"),
-        _ if var(vars, "KITTY_WINDOW_ID").is_some() => Some("net.kovidgoyal.kitty"),
-        _ => None,
+    let by_program = var(vars, "TERM_PROGRAM").and_then(|p| HOST_APPS.iter().find(|(program, _)| *program == p)).map(|(_, bundle)| *bundle);
+    let by_bundle = || var(vars, "__CFBundleIdentifier").and_then(|b| HOST_APPS.iter().map(|(_, bundle)| *bundle).chain([KITTY_APP]).find(|bundle| *bundle == b));
+    by_program.or_else(|| var(vars, "KITTY_WINDOW_ID").map(|_| KITTY_APP)).or_else(by_bundle)
+}
+
+/// Whether Launch Services knows an app of `bundle` on this Mac.
+#[cfg(target_os = "macos")]
+pub fn app_installed(bundle: &str) -> bool {
+    use std::ffi::c_void;
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFStringCreateWithBytes(alloc: *const c_void, bytes: *const u8, len: isize, encoding: u32, external: u8) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+    }
+    #[link(name = "CoreServices", kind = "framework")]
+    unsafe extern "C" {
+        fn LSCopyApplicationURLsForBundleIdentifier(bundle: *const c_void, error: *mut *const c_void) -> *const c_void;
+    }
+    const UTF8: u32 = 0x0800_0100;
+    // SAFETY: the string is made from `bundle`'s bytes and released, as is the list of apps when one came back.
+    unsafe {
+        let id = CFStringCreateWithBytes(std::ptr::null(), bundle.as_ptr(), bundle.len() as isize, UTF8, 0);
+        if id.is_null() {
+            return false;
+        }
+        let apps = LSCopyApplicationURLsForBundleIdentifier(id, std::ptr::null_mut());
+        CFRelease(id);
+        if apps.is_null() {
+            return false;
+        }
+        CFRelease(apps);
+        true
     }
 }
 
@@ -217,11 +247,12 @@ pub fn detect(env: &Env) -> Raise {
     // whose variables were inherited, e.g. by another terminal started from it.)
     let kitty = env.kitty.as_ref().filter(|k| k.pid == env.pid || env.ancestors.contains(&k.pid));
     if let (Some(window), Some(to), Some(kitty)) = (var("KITTY_WINDOW_ID"), var("KITTY_LISTEN_ON"), kitty) {
-        let then = if env.os == "macos" { mac_app(&env.vars) } else { window_manager(env, Some(&kitty.title), true) };
+        // (kitty's own app: a `TERM_PROGRAM` there may be inherited from the terminal kitty was started in.)
+        let then = if env.os == "macos" { app(KITTY_APP) } else { window_manager(env, Some(&kitty.title), true) };
         return Raise::Kitty { window, to, then: Box::new(then) };
     }
     if let Some(pane) = var("WEZTERM_PANE") {
-        let then = if env.os == "macos" { mac_app(&env.vars) } else { window_manager(env, env.title.as_deref(), true) };
+        let then = if env.os == "macos" { app("com.github.wez.wezterm") } else { window_manager(env, env.title.as_deref(), true) };
         return Raise::Wezterm { pane, socket: var("WEZTERM_UNIX_SOCKET"), then: Box::new(then) };
     }
     if env.os == "macos" {
@@ -242,7 +273,12 @@ fn mac(env: &Env) -> Raise {
 
 /// macOS: the terminal app of `vars` brought forward, when known.
 fn mac_app(vars: &HashMap<String, String>) -> Raise {
-    host_bundle(vars).map_or(Raise::None, |bundle| Raise::Mac(MacRaise::App { bundle: bundle.to_string() }))
+    host_bundle(vars).map_or(Raise::None, app)
+}
+
+/// macOS: app `bundle` brought forward.
+fn app(bundle: &str) -> Raise {
+    Raise::Mac(MacRaise::App { bundle: bundle.to_string() })
 }
 
 /// The window manager's raise, of the nearest parent of ttyak that has a window. `title`: the terminal window's, to
@@ -385,9 +421,22 @@ pub fn raise(r: &Raise) {
                 }
             }
             Step::Kwin { pids, title, plasma6, vars } => kwin(&pids, title.as_deref(), plasma6, &vars),
-            Step::Script(args) => drop(output_within(&args, &[], SCRIPT_WAIT)),
+            Step::Script(args) => script(&args),
         }
     }
+}
+
+/// Run `osascript` with `args` (at most [`SCRIPT_WAIT`]), unless one is still running: a second click while macOS's
+/// question waits for an answer would only ask again.
+fn script(args: &[String]) {
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    use std::sync::atomic::Ordering;
+    if RUNNING.swap(true, Ordering::AcqRel) {
+        tracing::debug!("raise: an AppleScript is still running: this one is left out");
+        return;
+    }
+    drop(output_within(args, &[], SCRIPT_WAIT));
+    RUNNING.store(false, Ordering::Release);
 }
 
 /// The window of `pid` titled `title`, once the terminal has retitled it (at most [`RETITLE_WAIT`]).
@@ -1003,6 +1052,10 @@ mod tests {
         assert_eq!(program("vscode"), None);
         assert_eq!(host_bundle(&vars(&[])), None);
         assert_eq!(host_bundle(&vars(&[("TERM_PROGRAM", "Apple_Terminal"), ("KITTY_WINDOW_ID", "1")])), Some("com.apple.Terminal"), "kitty's variable inherited by a terminal started from it");
+        // Inside tmux: the app macOS started the tmux server from.
+        assert_eq!(host_bundle(&vars(&[("TERM_PROGRAM", "tmux"), ("__CFBundleIdentifier", "com.apple.Terminal")])), Some("com.apple.Terminal"));
+        assert_eq!(host_bundle(&vars(&[("TERM_PROGRAM", "tmux"), ("__CFBundleIdentifier", "net.kovidgoyal.kitty")])), Some("net.kovidgoyal.kitty"));
+        assert_eq!(host_bundle(&vars(&[("__CFBundleIdentifier", "com.microsoft.VSCode")])), None, "an app ttyak doesn't know");
     }
 
     #[test]
@@ -1022,6 +1075,8 @@ mod tests {
         let r = detect(&kitty);
         assert_eq!(r, Raise::Kitty { window: "5".into(), to: KITTY_TO.into(), then: Box::new(app("net.kovidgoyal.kitty")) });
         assert_eq!(steps(&r, &[])[1], run(&["open", "-b", "net.kovidgoyal.kitty"]));
+        let inherited = Env { vars: [("TERM_PROGRAM", "Apple_Terminal")].iter().map(|(k, v)| (k.to_string(), v.to_string())).chain(kitty.vars.clone()).collect(), ..kitty.clone() };
+        assert_eq!(detect(&inherited), r, "kitty started from Terminal.app: kitty's app, not Terminal");
         let wezterm = detect(&mac(&[("TERM_PROGRAM", "WezTerm"), ("WEZTERM_PANE", "2")], None));
         assert_eq!(wezterm, Raise::Wezterm { pane: "2".into(), socket: None, then: Box::new(app("com.github.wez.wezterm")) });
         assert_eq!(describe(&terminal), "via Terminal");
@@ -1048,11 +1103,17 @@ mod tests {
         assert_eq!(steps(&Raise::Mac(MacRaise::App { bundle: "com.mitchellh.ghostty".into() }), &[]), vec![run(&["open", "-b", "com.mitchellh.ghostty"])]);
     }
 
-    /// The scripts compile (macOS; compiling sends no Apple event, so macOS asks nothing). iTerm2's needs iTerm2 installed.
+    /// The scripts compile (macOS; compiling sends no Apple event, so macOS asks nothing). A script for an app that isn't
+    /// installed is left out: compiling `tell application id …` without it may open a chooser in a GUI session.
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "macOS: compiles the AppleScripts with osacompile"]
     fn live_scripts_compile() {
         for (r, needs) in [(MacRaise::Terminal { tty: "/dev/ttys000".into() }, "com.apple.Terminal"), (MacRaise::Iterm2 { session: "x".into() }, "com.googlecode.iterm2")] {
+            if !app_installed(needs) {
+                println!("{needs}: not installed, left out");
+                continue;
+            }
             let [Step::Script(argv)] = &steps(&Raise::Mac(r), &[])[..] else { panic!("one script") };
             let out = std::env::temp_dir().join(format!("ttyak-raise-{}.scpt", std::process::id()));
             let compiled = std::process::Command::new("osacompile").args(["-o", &out.to_string_lossy()]).args(&argv[1..argv.len() - 1]).output().unwrap();

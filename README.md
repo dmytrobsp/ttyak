@@ -283,8 +283,8 @@ ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
 
 A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
 instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
-workspaces, by their next 30-second check — where the notification server allows it (Linux desktops; on macOS and
-Windows each one stays). A thread reply's notification stays until that thread is read (reading the
+workspaces, by their next 30-second check — where the notification server allows it (Linux desktops and macOS;
+on Windows each one stays). A thread reply's notification stays until that thread is read (reading the
 conversation does not take it away).
 
 F6 → Notifications → Bell when not focused (`bell` in `settings.toml`, off by default) also rings the terminal's bell
@@ -342,24 +342,28 @@ and then brings ttyak's window forward by the first of these that works here (Li
   control, and for Ghostty, the terminal app is brought forward with its own front window (`open -b`).
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the notification centre's older interface:
-its notifications come from the terminal's app (Terminal.app, iTerm2, WezTerm, Ghostty, kitty — known by
-`TERM_PROGRAM`, kitty by `KITTY_WINDOW_ID`), with that app's icon, and macOS brings that app forward on a click by
-itself. To hear about the click, ttyak's main thread listens to the notification centre (everything else runs beside
-it); ttyak then opens what the notification showed and selects the tab as above. The first time, macOS asks once
-whether the terminal may control Terminal (or iTerm2) — System Settings → Privacy & Security → Automation; ttyak waits a
-minute for the answer, and with "Don't Allow" the tab stays as it is. macOS 26 refuses the older interface for apps
-that use the newer one themselves: tried, Terminal.app's notifications are shown, kitty's (and Finder's, macOS's
-default for a terminal ttyak doesn't know) are refused — in kitty ttyak uses kitty's own notifications instead (above);
-iTerm2, WezTerm and Ghostty are not tried. Can't do on macOS: replacing or taking back a notification (each one stays
-in the notification centre); the Focus modes (no program can read them without extra rights, so Follow the system's
-do-not-disturb has nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own
-sounds still play); inside tmux, the terminal around it (`TERM_PROGRAM` is tmux's, so the app isn't known: the
-notifications go out as macOS's default, which macOS 26 refuses, and a click only selects tmux's pane); and, if macOS
-does not tell a program outside an app bundle about the click, ttyak opening what was clicked — the terminal's app still
-comes forward.
+its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
+`TERM_PROGRAM`, kitty by `KITTY_WINDOW_ID`, inside tmux by the app the tmux server was started from
+(`__CFBundleIdentifier`) — with that app's icon. They show only where that app's notifications are allowed (System
+Settings → Notifications → Terminal, …), and while the screen is shared or mirrored macOS keeps them in the
+notification centre without a banner unless "Allow notifications when mirroring or sharing the display" is on.
+macOS 26 refuses the older interface for apps that use the newer one themselves: tried, Terminal.app's are shown,
+kitty's are refused (in kitty ttyak uses kitty's own notifications instead, above), and so are Finder's, which ttyak
+sends as when the terminal's app isn't known; iTerm2, WezTerm and Ghostty are not tried. A click — on the banner or
+in the notification centre — brings the app forward (macOS does that), and ttyak, whose main thread listens to the
+notification centre (everything else runs beside it), opens what the notification showed in NORMAL and selects its
+tab as above (tried in Terminal.app; up to 32 notifications wait for a click at once — the log says when one goes out
+without). The AppleScript may make macOS ask once whether the terminal may control Terminal (or iTerm2) — System
+Settings → Privacy & Security → Automation; ttyak waits a minute for the answer, and with "Don't Allow" the tab stays as
+it is. A newer notification of a conversation takes the older one out of the notification centre, and reading takes it
+out (the older interface knows a notification only by its title and text, so two that read the same both go). Can't do
+on macOS: the Focus modes (no program can read them without extra rights, so Follow the system's do-not-disturb has
+nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own sounds still play); and
+inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
 
-Each command runs in the background without a shell and gets at most 2 seconds; every step is in the debug log with how
-it ended. Tried: sway (headless; also two footclient windows of one foot server, told apart by title), X11 (Xvfb with
+Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
+one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it
+ended. Tried: sway (headless; also two footclient windows of one foot server, told apart by title), X11 (Xvfb with
 openbox and an `.Xauthority` cookie) and tmux inside sway and inside X11 with a stale tmux environment, raised for real
 in a container; what Hyprland with kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their
 documentation). A notification the terminal showed itself is brought forward by the terminal and not raised again.
@@ -552,7 +556,7 @@ removed), when the very first join fails, after three tries in a row that do not
 (0, 2 and 4 s apart), or after more than ten reconnects within an hour. In those last two cases ttyak tells
 Slack it left, as when you leave, and the status line says "huddle connection lost — left the huddle".
 
-Clicking a desktop notification (Linux desktops with an XDG notification server, macOS) opens its
+Clicking a desktop notification (Linux desktops with an XDG notification server; macOS: see "On macOS") opens its
 conversation in ttyak — a thread reply opens the thread with the reply selected — for 30
 minutes after it was shown, and brings the window forward where it can (see "A click brings the window forward").
 
