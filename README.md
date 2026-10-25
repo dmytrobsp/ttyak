@@ -123,8 +123,8 @@ look for empty boxes or misaligned columns.
 - `ctl check`: run it in the terminal on the desktop — over ssh (no desktop session) its Focus Assist and notification
   rows read wrongly. Windows Terminal 1.24 and conhost answer its questions about mouse, focus and bracketed paste
   (tried); OSC 8 links can't be asked about ("not known" everywhere) — Windows Terminal draws them. Windows Terminal
-  has true colour but sets no `COLORTERM`: `ctl check` takes its `WT_SESSION` as the sign and says yes (not tried yet);
-  conhost's true colour stays "not known"
+  has true colour but sets no `COLORTERM`: `ctl check` takes its `WT_SESSION` as the sign and says yes (not tried yet;
+  not inside tmux or screen, which inherit it); conhost's true colour stays "not known"
 - toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
   says when it can't tell; with Follow the system's do-not-disturb on, the toast still goes out under Windows'
   do-not-disturb, without its sound, for Windows to file in the notification center (not tried yet)

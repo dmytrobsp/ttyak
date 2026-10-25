@@ -90,11 +90,12 @@ fn heard(graphics: Option<bool>, osc99: bool, reply: &[u8]) -> (Option<bool>, Op
     (graphics.filter(|g| *g || heard), heard.then_some(osc99))
 }
 
-/// 24-bit colour from `$COLORTERM`, or Windows Terminal (`$WT_SESSION`; it has 24-bit colour but sets no `COLORTERM`):
-/// a terminal that does not say may still have it.
-fn true_colour(colorterm: Option<&str>, wt_session: Option<&str>) -> Option<bool> {
+/// 24-bit colour from `$COLORTERM`, or Windows Terminal (`$WT_SESSION`; it has 24-bit colour but sets no `COLORTERM`)
+/// unless inside a `multiplexer` (tmux or screen: `$TMUX`, `$STY`), which inherits `WT_SESSION` but draws for itself: a
+/// terminal that does not say may still have it.
+fn true_colour(colorterm: Option<&str>, wt_session: Option<&str>, multiplexer: bool) -> Option<bool> {
     let said = colorterm.is_some_and(|c| matches!(c.trim(), "truecolor" | "24bit"));
-    (said || wt_session.is_some_and(|s| !s.is_empty())).then_some(true)
+    (said || (!multiplexer && wt_session.is_some_and(|s| !s.is_empty()))).then_some(true)
 }
 
 /// UTF-8: yes on Windows (`windows`; a console takes ttyak's text as UTF-16 whatever its code page, and a pty such as
@@ -185,7 +186,7 @@ fn terminal(escapes: bool) -> (Vec<(String, Option<bool>)>, Option<bool>) {
     }
     let var = |n: &str| std::env::var(n).ok();
     let mut rows = vec![(tr(UTF8).into_owned(), utf8(&[var("LC_ALL").as_deref(), var("LC_CTYPE").as_deref(), var("LANG").as_deref()], cfg!(windows)))];
-    rows.push((tr(TRUE_COLOUR).into_owned(), true_colour(var("COLORTERM").as_deref(), var("WT_SESSION").as_deref())));
+    rows.push((tr(TRUE_COLOUR).into_owned(), true_colour(var("COLORTERM").as_deref(), var("WT_SESSION").as_deref(), var("TMUX").is_some() || var("STY").is_some())));
     let (mut graphics, mut osc99, mut modes) = (None, false, Vec::new());
     if let Some(_raw) = escapes.then(Raw::on).flatten() {
         let media = crate::tui::media::Media::detect("auto");
@@ -422,17 +423,20 @@ mod tests {
 
     #[test]
     fn colour_from_the_environment() {
-        assert_eq!(true_colour(Some("truecolor"), None), Some(true));
-        assert_eq!(true_colour(Some("24bit"), None), Some(true));
-        assert_eq!(true_colour(None, None), None);
-        assert_eq!(true_colour(Some(""), None), None);
+        assert_eq!(true_colour(Some("truecolor"), None, false), Some(true));
+        assert_eq!(true_colour(Some("24bit"), None, false), Some(true));
+        assert_eq!(true_colour(None, None, false), None);
+        assert_eq!(true_colour(Some(""), None, false), None);
+        assert_eq!(true_colour(Some("truecolor"), None, true), Some(true), "a multiplexer that says so");
     }
 
     #[test]
     fn windows_terminal_has_true_colour_though_it_sets_no_colorterm() {
-        assert_eq!(true_colour(None, Some("8a3f")), Some(true));
-        assert_eq!(true_colour(Some(""), Some("8a3f")), Some(true));
-        assert_eq!(true_colour(None, Some("")), None, "an empty WT_SESSION says nothing");
+        assert_eq!(true_colour(None, Some("8a3f"), false), Some(true));
+        assert_eq!(true_colour(Some(""), Some("8a3f"), false), Some(true));
+        assert_eq!(true_colour(None, Some(""), false), None, "an empty WT_SESSION says nothing");
+        // tmux or screen inside Windows Terminal inherit WT_SESSION, but draw for themselves.
+        assert_eq!(true_colour(None, Some("8a3f"), true), None);
     }
 
     #[test]
