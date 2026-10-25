@@ -955,8 +955,9 @@ enum Cmd {
     Bell { dnd: bool, epoch: u64 },
     /// Find out what the notification server is and can do.
     Probe,
-    /// Ask the system whether it holds notifications back and tell F6 in words (`system_dnd::describe`).
-    ReadDnd(Box<dyn FnOnce(String, Option<bool>) + Send>),
+    /// Ask the system whether it holds notifications back and tell F6 in words (`system_dnd::describe`); `recent`: an
+    /// answer younger than [`DND_REUSE`] stands.
+    ReadDnd { done: Box<dyn FnOnce(String, Option<bool>) + Send>, recent: bool },
     /// Close `key`'s bubble, `how` says when.
     Withdraw { key: Key, how: Withdrawal },
     /// The waiter of `key`'s bubble `generation` ended; `gone`: it was clicked or closed.
@@ -1149,7 +1150,13 @@ impl Notifier {
 
     /// Ask the system about do-not-disturb in the background: `done` gets the answer in words and as asked (never waits for the UI).
     pub fn read_system_dnd(&self, done: impl FnOnce(String, Option<bool>) + Send + 'static) {
-        self.send(Cmd::ReadDnd(Box::new(done)));
+        self.send(Cmd::ReadDnd { done: Box::new(done), recent: false });
+    }
+
+    /// As [`Notifier::read_system_dnd`], but an answer younger than [`DND_REUSE`] stands (the huddle ring, asked right
+    /// after the invitation's own notification asked).
+    pub fn read_system_dnd_recent(&self, done: impl FnOnce(String, Option<bool>) + Send + 'static) {
+        self.send(Cmd::ReadDnd { done: Box::new(done), recent: true });
     }
 
     /// F6's test notification: the bell, [`TEST_BELL_AFTER`] from now, when the terminal is then unfocused (`dnd`: unless
@@ -1437,14 +1444,19 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 }
             }
             Cmd::Probe => drop(environment(&backend, &shared).await),
-            Cmd::ReadDnd(done) => {
+            Cmd::ReadDnd { done, recent } => {
                 let environment = environment(&backend, &shared).await;
-                let ask = backend.suppressed(environment.server.clone());
-                // Answered beside the worker: F6's reads (every few seconds) and the ring's hold no notification back.
-                drop(tokio::spawn(async move {
-                    let answer = ask.await;
+                let known = *shared.dnd.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some((_, answer)) = known.filter(|(at, _)| recent && at.elapsed() < shared.reuse) {
                     done(system_dnd::describe(&environment.server, answer), answer);
-                }));
+                } else {
+                    let ask = backend.suppressed(environment.server.clone());
+                    // Answered beside the worker: F6's reads (every few seconds) and the ring's hold no notification back.
+                    drop(tokio::spawn(async move {
+                        let answer = ask.await;
+                        done(system_dnd::describe(&environment.server, answer), answer);
+                    }));
+                }
             }
             Cmd::Withdraw { key, how } => {
                 let covered = live.get(&key).is_some_and(|l| how.takes(l.at.as_ref()));
@@ -2175,6 +2187,31 @@ mod tests {
         n.settled().await;
         assert_eq!(n.route("chime").sound_by, "ttyak");
         assert_eq!(n.route("system").sound_by, "nobody (the server has no sound of its own to play)", "ttyak has no system sound");
+    }
+
+    #[tokio::test]
+    async fn the_rings_question_takes_a_recent_answer() {
+        let (n, server) = Notifier::fake_remembering();
+        let answer = |n: &Notifier, recent: bool| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let done = move |_: String, on: Option<bool>| {
+                let _ = tx.send(on);
+            };
+            if recent { n.read_system_dnd_recent(done) } else { n.read_system_dnd(done) }
+            rx
+        };
+        server.set_suppressed(Some(true));
+        n.show_guarded(note("D1", "1.0", None, "x"), None, Guard { dnd: true, bell: false, ..Guard::default() }, Box::new(|_| {}));
+        n.settled().await;
+        assert_eq!(server.asked(), 1);
+        server.set_suppressed(Some(false));
+        let rx = answer(&n, true);
+        let on = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5))).await.unwrap().unwrap();
+        assert_eq!((on, server.asked()), (Some(true), 1), "the notification's answer stands");
+        // F6 asks anew.
+        let rx = answer(&n, false);
+        let on = tokio::task::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5))).await.unwrap().unwrap();
+        assert_eq!((on, server.asked()), (Some(false), 2));
     }
 
     #[tokio::test]

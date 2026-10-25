@@ -3167,12 +3167,12 @@ impl App {
 
     /// Start ringing for `user`'s invitation to the huddle `room` in `channel`.
     fn start_ring(&mut self, channel: String, room: String, user: String) {
-        // The system's do-not-disturb (followed) keeps the ring quiet: asked now (can't tell, as on macOS: it rings).
+        // The system's do-not-disturb (followed) keeps the ring quiet: asked now.
         let quiet = std::sync::Arc::new(std::sync::Mutex::new(Some(false)));
-        if self.ws.settings.notifications.follow_system_dnd {
+        if ring_asks(self.ws.settings.notifications.follow_system_dnd, cfg!(target_os = "macos")) {
             *quiet.lock().unwrap_or_else(|e| e.into_inner()) = None;
             let answer = quiet.clone();
-            self.notifier.read_system_dnd(move |_, on| *answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(on == Some(true)));
+            self.notifier.read_system_dnd_recent(move |_, on| *answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(on == Some(true)));
         }
         self.ringing = Some(Ring { channel, room, user, started: std::time::Instant::now(), last_ring: None, quiet });
     }
@@ -4675,6 +4675,12 @@ fn ring_sounds(quiet: Option<bool>, since: Duration) -> bool {
         Some(quiet) => !quiet,
         None => since >= RING_ASK_WAIT,
     }
+}
+
+/// Whether a ring asks the system about do-not-disturb first: when it is followed (`follow`), except on macOS (`macos`),
+/// whose Focus can't be read: the answer would never come and only hold the first ring back.
+fn ring_asks(follow: bool, macos: bool) -> bool {
+    follow && !macos
 }
 
 /// How often the ring sound repeats.
@@ -11710,13 +11716,24 @@ mod tests {
         assert!(super::ring_sounds(None, super::RING_ASK_WAIT), "no answer in time: it rings");
     }
 
+    #[test]
+    fn the_ring_asks_where_the_system_can_tell() {
+        assert!(super::ring_asks(true, false), "followed: asked");
+        assert!(!super::ring_asks(false, false), "not followed");
+        assert!(!super::ring_asks(true, true), "macOS can't tell: not asked, so the first ring is not held back for nothing");
+    }
+
     #[tokio::test]
-    async fn the_ring_asks_the_system_on_every_platform_when_followed() {
+    async fn the_ring_asks_the_system_when_followed() {
         let quiet_of = |app: &super::App| *app.ringing.as_ref().unwrap().quiet.lock().unwrap();
         let (mut app, server, _clicked) = notified_by_the_system(&["C1"]);
         server.set_suppressed(Some(true));
         app.ws.settings.notifications.follow_system_dnd = true;
         app.start_ring("C1".into(), "R1".into(), "U2".into());
+        if cfg!(target_os = "macos") {
+            assert_eq!(quiet_of(&app), Some(false), "macOS: not asked, it rings");
+            return;
+        }
         for _ in 0..300 {
             if quiet_of(&app).is_some() {
                 break;
