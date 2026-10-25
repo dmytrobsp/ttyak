@@ -1185,6 +1185,11 @@ impl Notifier {
         *self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The window was brought forward otherwise (the system's bubble clicked): no raise waits any more.
+    pub fn drop_raise(&self) {
+        self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+
     /// Whether the window is to be brought forward by `now`, once.
     pub fn take_raise(&self, now: std::time::Instant) -> bool {
         let mut at = self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner());
@@ -1285,7 +1290,7 @@ const SOUND_BY_TTYAK: &str = "ttyak";
 const SOUND_BY_NOBODY_OFF: &str = "nobody (the sound is off)";
 const SHOWN_BY_SYSTEM: &str = "the system's notifications";
 const CLICK_SYSTEM: &str = "opens it in ttyak";
-const CLICK_TERMINAL: &str = "opens it in ttyak; {terminal} raises the window, else ttyak";
+const CLICK_TERMINAL: &str = "opens it in ttyak; {terminal} raises the window, else ttyak if it can";
 const NOTHING_WHY: &str = "nothing: {why}";
 const NOTHING_TO_CLICK: &str = "nothing to click";
 const WIN_OFF_APP: &str = "Windows PowerShell's notifications are turned off (Settings → System → Notifications)";
@@ -2480,7 +2485,7 @@ mod tests {
         assert_eq!(server.calls().len(), 1, "the desktop's sound goes with the bubble: {:?}", server.calls());
         let out = n.take_output();
         assert!(out[0].contains(&format!("s={}", super::super::clipboard::base64(b"system"))) && out[1].contains(&format!("s={}", super::super::clipboard::base64(b"silent"))), "{out:?}");
-        assert_eq!(n.route("chime"), RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: "opens it in ttyak; kitty raises the window, else ttyak".into() });
+        assert_eq!(n.route("chime"), RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: "opens it in ttyak; kitty raises the window, else ttyak if it can".into() });
         assert_eq!(n.route("system").sound_by, "the notification");
         // The system's do-not-disturb holds it back as well.
         server.set_suppressed(Some(true));

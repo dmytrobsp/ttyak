@@ -81,8 +81,9 @@ look for empty boxes or misaligned columns.
 - works best with: mouse reporting; true colour for the built-in themes (otherwise choose the `terminal` theme in F6 →
   Appearance, which uses your terminal's own palette); focus reporting (the bell, the tab-title badge and read marks
   need it); OSC 8 links; pictures (kitty, WezTerm, Ghostty, iTerm2, foot or any sixel terminal; others get half blocks)
-- macOS Terminal.app: 24-bit colour came with macOS 26 (Apple's WWDC25 announcement; not verified on a Mac here, and
-  Terminal.app sets no `COLORTERM`, so `ctl check` says "not known"). Before macOS 26 use the `terminal` theme.
+- macOS Terminal.app: 24-bit colour came with macOS 26; on macOS 26.5 Terminal.app sets `COLORTERM` and `ctl check`
+  says yes (seen on a Mac). Before macOS 26 use the `terminal` theme. It answers none of `ctl check`'s questions about
+  mouse, focus, bracketed paste or OSC 8 ("not known"), and its OSC 8 sample is not a link.
 
 **Fonts** (the terminal draws with what your system has)
 
@@ -110,7 +111,7 @@ look for empty boxes or misaligned columns.
 - needs: macOS 11 or newer
 - notifications: macOS shows them as the host terminal's (Terminal's in Terminal.app, tested on macOS 26), and only if
   that app's notifications are allowed in System Settings → Notifications; while the screen is shared or mirrored macOS
-  keeps them in the Notification Centre without a banner, unless "Allow notifications when mirroring or sharing the
+  keeps them in the Notification Center without a banner, unless "Allow notifications when mirroring or sharing the
   display" is on. A click on one brings the tab forward in Terminal.app (proven); kitty uses its own protocol
 - optional: `ffmpeg` for video and cameras
 
@@ -382,8 +383,8 @@ the sound: `system` goes with the notification (where the server can play sounds
 played by ttyak, since the terminal can only ask for the desktop's sounds. Inside tmux the system's notifier shows them
 (tmux would hand the terminal's answer about a click to whichever pane is active), as in every other terminal. Whether a
 click can bring the window forward across workspaces is up to the desktop: the terminal asks for focus, and the window
-manager may only mark it urgent. A real click in kitty is not tried yet (the terminal's report of one, sent in by
-hand, was). `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
+manager may only mark it urgent. Tried: a click on kitty's popup from another workspace (Hyprland) brought the window
+forward and opened the message in NORMAL. `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
 
 **A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
 does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above,

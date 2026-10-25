@@ -1880,12 +1880,12 @@ mod tests {
         assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak"), "how the window comes forward not known yet");
         p.machine.lock().unwrap().raise = Some("via kitty and Hyprland".into());
         assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; bringing the window forward: via kitty and Hyprland"));
-        // The terminal's own bubbles: it brings its window forward itself.
+        // The terminal's own bubbles: it raises the window, else ttyak where it can.
         {
             let mut m = p.machine.lock().unwrap();
-            (m.route, m.via_terminal) = (Some(route("opens it in ttyak; kitty raises the window, else ttyak")), true);
+            (m.route, m.via_terminal) = (Some(route("opens it in ttyak; kitty raises the window, else ttyak if it can")), true);
         }
-        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; kitty raises the window, else ttyak"));
+        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; kitty raises the window, else ttyak if it can"));
         assert!(Field::TestNotification.value(&Workspace::default(), None, &Keymap::default()).ends_with("sends one"));
     }
 
@@ -1908,7 +1908,7 @@ mod tests {
         for want in super::super::notify::ROUTE_WORDS.iter().chain(super::super::system_dnd::WORDS) {
             assert!(words.iter().any(|w| w == want), "{want}");
         }
-        assert!(words.iter().any(|w| w == "opens it in ttyak; {terminal} raises the window, else ttyak"));
+        assert!(words.iter().any(|w| w == "opens it in ttyak; {terminal} raises the window, else ttyak if it can"));
     }
 
     #[test]

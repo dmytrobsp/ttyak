@@ -2940,13 +2940,13 @@ impl App {
     }
 
     /// The update notification was clicked, or a self-update ended. True when the window is to be brought forward now
-    /// (as for messages: [`forward_now`]).
+    /// (as for messages: [`forward_now_or_arm`]).
     fn update_event(&mut self, event: super::update_view::UpdateEvent) -> bool {
         use super::update_view::UpdateEvent;
         match event {
             UpdateEvent::Clicked(on) => {
                 self.open_update_screen();
-                return forward_now(&self.notifier, on);
+                return forward_now_or_arm(&self.notifier, on);
             }
             UpdateEvent::Finished { version, result } => {
                 if result.is_ok() {
@@ -4727,27 +4727,30 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
     }
 }
 
-/// Whether a click on a notification brings the window forward now: the system notifier's bubble does. The terminal's
-/// does after a short wait, unless the terminal takes focus first (kitty raises its own window for a click on its
-/// popup, not for one in swaync's panel).
-fn forward_now(notifier: &super::notify::Notifier, on: super::notify::ClickedOn) -> bool {
-    if on == super::notify::ClickedOn::Terminal {
-        match notifier.raise_unless_focused(std::time::Instant::now()) {
-            true => tracing::debug!(focus = ?notifier.focus(), "click reported by the terminal: brought forward unless it takes focus soon"),
-            false => tracing::debug!("click reported by the terminal while it is focused: nothing to bring forward"),
-        }
+/// Whether a click on a notification brings the window forward now: the system notifier's bubble does (and a raise
+/// still waiting for an earlier click is dropped). The terminal's arms a raise after a short wait instead, unless the
+/// terminal takes focus first (kitty raises its own window for a click on its popup, not for one in swaync's panel).
+fn forward_now_or_arm(notifier: &super::notify::Notifier, on: super::notify::ClickedOn) -> bool {
+    if on == super::notify::ClickedOn::System {
+        notifier.drop_raise();
+        return true;
     }
-    on == super::notify::ClickedOn::System
+    if notifier.raise_unless_focused(std::time::Instant::now()) {
+        tracing::debug!(focus = ?notifier.focus(), "click reported by the terminal: brought forward unless it takes focus soon");
+    } else {
+        tracing::debug!("click reported by the terminal while it is focused: nothing to bring forward");
+    }
+    false
 }
 
 /// A click on a notification of workspace `index` (whichever was on screen when it was shown): opened here, or once
 /// this workspace has booted, or in that workspace after switching there. True when the window is to be brought
-/// forward now ([`forward_now`]).
+/// forward now ([`forward_now_or_arm`]).
 fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool {
     // F6's test notification leads nowhere: the window comes forward and that is all.
     if target.is_test() {
         app.status = super::prefs::test_clicked();
-        return forward_now(&app.notifier, on);
+        return forward_now_or_arm(&app.notifier, on);
     }
     if index == app.workspace && !app.loading {
         app.open_target(target);
@@ -4762,7 +4765,7 @@ fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool 
             }
         }
     }
-    forward_now(&app.notifier, on)
+    forward_now_or_arm(&app.notifier, on)
 }
 
 /// Write what the terminal's notifications wait to have written to `out` (between draws, as the bell).
@@ -11505,6 +11508,9 @@ mod tests {
         // The terminal's own: not at once, only if the terminal takes no focus soon.
         assert!(!super::take_click(&mut app, (0, super::super::notify::Target::test(), ClickedOn::Terminal)));
         assert!(app.notifier.raise_due().is_some());
+        // The system's bubble clicked meanwhile: raised at once, and not again when the wait is over.
+        assert!(super::take_click(&mut app, (0, super::super::notify::Target::test(), ClickedOn::System)));
+        assert_eq!(app.notifier.raise_due(), None, "the terminal's raise no longer waits");
     }
 
     #[tokio::test]
