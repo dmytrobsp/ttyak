@@ -172,22 +172,31 @@ impl Profile {
     }
 }
 
-/// Write a file readable only by the owner.
-/// Write `bytes` to `path` readable by the owner only (atomically, through a temporary file).
+/// Write `bytes` to `path` readable by the owner only, atomically: through a temporary file of this write's own beside
+/// it (`.<name>.<pid>.<n>.tmp`), so writers at once (two profiles' ttyaks) never mix their files; removed again when
+/// the write fails.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    {
-        #[cfg(unix)]
-        let mut f = {
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?
-        };
-        #[cfg(not(unix))]
-        let mut f = std::fs::File::create(&tmp)?;
-        std::io::Write::write_all(&mut f, bytes)?;
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let name = path.file_name().map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+    let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        {
+            #[cfg(unix)]
+            let mut f = {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?
+            };
+            #[cfg(not(unix))]
+            let mut f = std::fs::File::create(&tmp)?;
+            std::io::Write::write_all(&mut f, bytes)?;
+        }
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::rename(tmp, path)?;
-    Ok(())
+    Ok(written?)
 }
 
 /// Extract the web-client token embedded in a server-rendered workspace page.
@@ -540,6 +549,35 @@ mod tests {
         for other in [None, Some(""), Some("http://acme2.slack.com/"), Some("https://evil.example.com/"), Some("https://app.slack.com/client"), Some("https://acme2/"), Some("acme2.slack.com")] {
             assert_eq!(url(other), "https://acme.slack.com/", "{other:?}");
         }
+    }
+
+    /// Two writers at once (two profiles' ttyaks writing `updates.json`) never mix their files: each write goes through
+    /// a temporary file of its own, so the file is always one whole write and nothing is left beside it.
+    #[test]
+    fn writers_at_once_never_mix_their_files() {
+        /// A folder removed with what it holds when the test ends, a failed assertion too.
+        struct Temp(PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Temp(std::env::temp_dir().join(format!("ttyak-session-writers-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let path = dir.0.join("updates.json");
+        let whole = |b: &[u8]| b.len() == 1 << 16 && b.iter().all(|c| *c == b[0]);
+        let writers: Vec<_> = (b'a'..=b'h')
+            .map(|c| {
+                let path = path.clone();
+                std::thread::spawn(move || (0..40).map(|_| write_private(&path, &[c; 1 << 16]).map_err(|e| format!("{e:#}"))).collect::<Result<Vec<()>, String>>())
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap().expect("every write is written");
+        }
+        assert!(whole(&std::fs::read(&path).unwrap()), "one whole write");
+        let names: Vec<_> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["updates.json"], "no temporary file left");
     }
 
     #[test]
