@@ -144,8 +144,8 @@ pub fn spawn(sessions: Vec<WorkspaceSession>, shown: Arc<AtomicUsize>, badges: B
     });
 }
 
-/// A click on a notification from workspace `.0`.
-pub type Click = (usize, super::notify::Target);
+/// A click on a notification from workspace `.0`, on whose bubble (`.2`).
+pub type Click = (usize, super::notify::Target, super::notify::ClickedOn);
 
 /// Where a click from another workspace leads once that workspace has booted.
 pub type OpenAfter = Arc<Mutex<Option<(usize, super::applink::Target)>>>;
@@ -274,8 +274,8 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
         tracing::debug!(workspace = index + 1, channel = note.key.channel, ?out, ?gates, "notification from another workspace");
         note.title = format!("{} · {label}", note.title);
         let (clicks, target) = (clicks.clone(), note.target.clone());
-        super::notify::interrupt(notifier, note, &out, &settings, Box::new(move || {
-            let _ = clicks.send((index, target));
+        super::notify::interrupt(notifier, note, &out, &settings, Box::new(move |on| {
+            let _ = clicks.send((index, target, on));
         }));
     }
 }
@@ -326,8 +326,8 @@ mod tests {
             body: "hi".into(),
             target: crate::tui::notify::Target { channel: channel.into(), ts: Some(ts.into()), thread_ts: None },
         };
-        notifier.show(note("D1", "1792882650.243419"), None, Box::new(|| {}));
-        notifier.show(note("D2", "1792882651.000100"), None, Box::new(|| {}));
+        notifier.show(note("D1", "1792882650.243419"), None, Box::new(|_| {}));
+        notifier.show(note("D2", "1792882651.000100"), None, Box::new(|_| {}));
         // (Trimmed from a real `client.counts` answer; ids replaced.)
         let counts = serde_json::json!({"ims": [{"id": "D1", "has_unreads": false, "last_read": "1792882650.243419"}, {"id": "D2", "has_unreads": true, "last_read": "1792882600.000000"}], "channels": [], "mpims": []});
         withdraw_read(&notifier, 1, &counts);

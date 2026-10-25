@@ -62,6 +62,16 @@ pub struct Target {
     pub thread_ts: Option<String>,
 }
 
+/// Whose bubble was clicked: the terminal's own (it brought its window forward already) or the system notifier's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickedOn {
+    Terminal,
+    System,
+}
+
+/// What runs when a bubble is clicked, told whose bubble it was.
+pub type OnClick = Box<dyn FnOnce(ClickedOn) + Send>;
+
 impl Target {
     pub fn message(channel: &str, m: &Message) -> Target {
         Target { channel: channel.to_string(), ts: Some(m.ts.clone()), thread_ts: m.thread_ts.clone().filter(|_| m.is_reply()) }
@@ -462,7 +472,7 @@ impl Shared {
 enum Cmd {
     /// Show a bubble; `key` None: one no other replaces or read withdraws (the update notice). `own`: ttyak's sound,
     /// played if the server will not play it; `guard`: what is asked first.
-    Show { key: Option<Key>, at: Option<Place>, bubble: Bubble, own: Option<Sound>, guard: Guard, on_click: Option<Box<dyn FnOnce() + Send>> },
+    Show { key: Option<Key>, at: Option<Place>, bubble: Bubble, own: Option<Sound>, guard: Guard, on_click: Option<OnClick> },
     /// Ring the bell unless the system is not to be disturbed (`dnd`).
     Bell { dnd: bool, epoch: u64 },
     /// Find out what the notification server is and can do.
@@ -568,12 +578,12 @@ impl Notifier {
     /// carries the sound where the server can play it, else ttyak plays it. `on_click` runs when it is clicked (on
     /// freedesktop desktops; elsewhere a click does what the system does).
     #[cfg(test)]
-    pub fn show(&self, note: Note, sound: Option<Sound>, on_click: Box<dyn FnOnce() + Send>) {
+    pub fn show(&self, note: Note, sound: Option<Sound>, on_click: OnClick) {
         self.show_guarded(note, sound, Guard::default(), on_click);
     }
 
     /// As [`Notifier::show`], with the worker asking `guard` first.
-    pub fn show_guarded(&self, note: Note, sound: Option<Sound>, guard: Guard, on_click: Box<dyn FnOnce() + Send>) {
+    pub fn show_guarded(&self, note: Note, sound: Option<Sound>, guard: Guard, on_click: OnClick) {
         let at = note.target.ts.clone().map(|ts| Place { thread: note.target.thread_ts.clone(), ts });
         let bubble = Bubble { title: note.title, body: note.body, sound: sound.as_ref().map(|s| s.name.clone()), by: SoundBy::None, file: None, replaces: None, clickable: true };
         let guard = Guard { epoch: self.inner.shared.epoch.load(Ordering::Relaxed), ..guard };
@@ -602,7 +612,7 @@ impl Notifier {
 
     /// Show a bubble without any sound, ttyak's or the desktop's, that nothing replaces (the update notice: quiet hours
     /// do not hold it back, so it must never sound); `on_click` as in [`Notifier::show`].
-    pub fn show_silent(&self, title: String, body: String, on_click: Option<Box<dyn FnOnce() + Send>>) {
+    pub fn show_silent(&self, title: String, body: String, on_click: Option<OnClick>) {
         let bubble = Bubble { title, body, sound: None, by: SoundBy::None, file: None, replaces: None, clickable: on_click.is_some() };
         self.send(Cmd::Show { key: None, at: None, bubble, own: None, guard: Guard::default(), on_click });
     }
@@ -753,7 +763,8 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 }
                 generation += 1;
                 let ended = key.clone().map(|k| (back.clone(), k, generation));
-                let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), f, ended)).abort_handle());
+                let on = if terminal.is_some() { ClickedOn::Terminal } else { ClickedOn::System };
+                let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), on, f, ended)).abort_handle());
                 if let Some(key) = key {
                     live.insert(key, Live { shown, at, generation, waiter });
                 }
@@ -849,11 +860,12 @@ async fn held_back(backend: &Arc<dyn Backend>, shared: &Shared, environment: Opt
     answer == Some(true)
 }
 
-/// Wait for a click on `shown` (at most [`CLICK_WAIT`]) and run `on_click` for it; then tell the worker (`ended`).
-async fn wait(shown: Arc<dyn Shown>, on_click: Box<dyn FnOnce() + Send>, ended: Option<(mpsc::WeakUnboundedSender<Cmd>, Key, u64)>) {
+/// Wait for a click on `shown` (at most [`CLICK_WAIT`]) and run `on_click` for it, told it is `on`'s bubble; then tell
+/// the worker (`ended`).
+async fn wait(shown: Arc<dyn Shown>, on: ClickedOn, on_click: OnClick, ended: Option<(mpsc::WeakUnboundedSender<Cmd>, Key, u64)>) {
     let gone = match tokio::time::timeout(CLICK_WAIT, shown.clicked()).await {
         Ok(true) => {
-            on_click();
+            on_click(on);
             true
         }
         Ok(false) => true,
@@ -869,7 +881,7 @@ async fn wait(shown: Arc<dyn Shown>, on_click: Box<dyn FnOnce() + Send>, ended: 
 
 /// Fire what `out` lets through for `note`: the bubble (replacing its conversation's) with its sound, and the bell.
 /// With `follow_system_dnd` the worker asks the system first and fires nothing while it is not to be disturbed.
-pub fn interrupt(notifier: &Notifier, note: Note, out: &Outputs, settings: &super::settings::Settings, on_click: Box<dyn FnOnce() + Send>) {
+pub fn interrupt(notifier: &Notifier, note: Note, out: &Outputs, settings: &super::settings::Settings, on_click: OnClick) {
     let dnd = settings.notifications.follow_system_dnd;
     if out.bubble {
         notifier.show_guarded(note, out.sound.then(|| Sound::of(settings)), Guard { dnd, bell: out.bell, ..Guard::default() }, on_click);
@@ -1228,19 +1240,19 @@ mod tests {
         let (n, server) = Notifier::fake();
         // A server that plays sounds: the notification carries it, ttyak plays nothing.
         server.set_capabilities(&["body", "sound"]);
-        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(calls.as_slice(), [fake::Call::Show { sound: Some(s), by: SoundBy::Notification, .. }] if s == "chime"), "{calls:?}");
         assert_eq!(n.route("chime").sound_by, if cfg!(all(unix, not(target_os = "macos"))) { "the notification" } else { "ttyak" });
         // Off: nobody, whatever the server can do.
-        n.show(note("D3", "3.0", None, "three"), None, Box::new(|| {}));
+        n.show(note("D3", "3.0", None, "three"), None, Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(&calls[1..], [fake::Call::Show { sound: None, by: SoundBy::None, .. }]), "{calls:?}");
         // One that cannot play: ttyak's own player, before the bubble.
         let (n, server) = Notifier::fake();
-        n.show(note("D2", "2.0", None, "two"), sound("chime"), Box::new(|| {}));
+        n.show(note("D2", "2.0", None, "two"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(calls.as_slice(), [fake::Call::Play(p), fake::Call::Show { by: SoundBy::Ttyak, .. }] if p == "chime"), "{calls:?}");
@@ -1250,14 +1262,14 @@ mod tests {
     async fn a_bell_decided_in_an_earlier_focus_period_is_dropped() {
         let (n, _server) = Notifier::fake();
         n.set_focus(TermFocus::Unfocused);
-        n.show_guarded(note("D1", "1.0", None, "one"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.show_guarded(note("D1", "1.0", None, "one"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|_| {}));
         n.ring_unless_quiet();
         // Focus came back and went again before the worker had asked the system.
         n.set_focus(TermFocus::Focused);
         n.set_focus(TermFocus::Unfocused);
         n.settled().await;
         assert!(!n.take_bell(), "that bell was for the period before");
-        n.show_guarded(note("D1", "2.0", None, "two"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.show_guarded(note("D1", "2.0", None, "two"), None, Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|_| {}));
         n.settled().await;
         assert!(n.take_bell(), "one decided in this period rings");
     }
@@ -1282,13 +1294,13 @@ mod tests {
         let (n, server) = Notifier::fake_remembering();
         let guard = Guard { dnd: true, bell: false, ..Guard::default() };
         for i in 0..5 {
-            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|| {}));
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|_| {}));
         }
         n.settled().await;
         assert_eq!((server.asked(), server.looked()), (1, 1), "one question and one look for five events");
         let (n, server) = Notifier::fake();
         for i in 0..3 {
-            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|| {}));
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), None, guard, Box::new(|_| {}));
         }
         n.settled().await;
         assert_eq!(server.asked(), 3, "no reuse without the wait");
@@ -1299,7 +1311,7 @@ mod tests {
         let (n, server) = Notifier::fake_remembering();
         server.set_no_server(true);
         for i in 0..3 {
-            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), sound("chime"), Guard::default(), Box::new(|| {}));
+            n.show_guarded(note("D1", &format!("{i}.0"), None, "x"), sound("chime"), Guard::default(), Box::new(|_| {}));
         }
         n.settled().await;
         assert_eq!(server.looked(), 1, "looked for once, remembered");
@@ -1312,7 +1324,7 @@ mod tests {
         let (n, server) = Notifier::fake();
         server.set_capabilities(&["sound"]);
         server.set_no_files(true);
-        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         let calls = server.calls();
         assert!(matches!(calls.as_slice(), [fake::Call::Play(_), fake::Call::Show { by: SoundBy::Ttyak, file: None, .. }]) || !cfg!(all(unix, not(target_os = "macos"))), "{calls:?}");
@@ -1323,12 +1335,12 @@ mod tests {
         let (n, server) = Notifier::fake();
         let guard = Guard { dnd: true, bell: true, ..Guard::default() };
         server.set_suppressed(Some(true));
-        n.show_guarded(note("D1", "1.0", None, "one"), sound("chime"), guard, Box::new(|| {}));
+        n.show_guarded(note("D1", "1.0", None, "one"), sound("chime"), guard, Box::new(|_| {}));
         n.ring_unless_quiet();
         n.settled().await;
         assert!(server.calls().is_empty() && !n.take_bell(), "no bubble, no sound, no bell: {:?}", server.calls());
         // Not asked when the setting says not to follow it.
-        n.show_guarded(note("D1", "2.0", None, "two"), sound("chime"), Guard { dnd: false, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.show_guarded(note("D1", "2.0", None, "two"), sound("chime"), Guard { dnd: false, bell: true, ..Guard::default() }, Box::new(|_| {}));
         n.settled().await;
         assert_eq!(server.calls().len(), 2, "the sound and the bubble");
         assert!(n.take_bell());
@@ -1336,7 +1348,7 @@ mod tests {
         for answer in [None, Some(false)] {
             server.set_suppressed(answer);
             let before = server.calls().len();
-            n.show_guarded(note("D2", "3.0", None, "three"), None, guard, Box::new(|| {}));
+            n.show_guarded(note("D2", "3.0", None, "three"), None, guard, Box::new(|_| {}));
             n.ring_unless_quiet();
             n.settled().await;
             assert_eq!(server.calls().len(), before + 1, "{answer:?}");
@@ -1363,12 +1375,12 @@ mod tests {
     }
 
     /// What each click ran, by the body of the note it was for.
-    fn recorder() -> (Arc<Mutex<Vec<&'static str>>>, impl Fn(&'static str) -> Box<dyn FnOnce() + Send>) {
+    fn recorder() -> (Arc<Mutex<Vec<&'static str>>>, impl Fn(&'static str) -> OnClick) {
         let ran = Arc::new(Mutex::new(Vec::new()));
         let r = ran.clone();
         (ran, move |what| {
             let r = r.clone();
-            Box::new(move || r.lock().unwrap().push(what)) as Box<dyn FnOnce() + Send>
+            Box::new(move |_| r.lock().unwrap().push(what)) as OnClick
         })
     }
 
@@ -1401,13 +1413,13 @@ mod tests {
     async fn reading_withdraws_it() {
         let (n, server) = Notifier::fake();
         let key = Key { workspace: 0, channel: "D1".into() };
-        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
         n.withdraw(&key);
         n.withdraw(&key);
         n.settled().await;
         assert_eq!(server.calls(), [shown(None, "one"), fake::Call::Close(1)], "closed once");
         // Only a read that covers what it shows withdraws it.
-        n.show(note("D1", "5.0", None, "five"), None, Box::new(|| {}));
+        n.show(note("D1", "5.0", None, "five"), None, Box::new(|_| {}));
         n.read(&key, None, "4.0");
         n.read(&key, Some("5.0"), "9.0");
         n.read(&Key { workspace: 1, channel: "D1".into() }, None, "9.0");
@@ -1417,7 +1429,7 @@ mod tests {
         n.settled().await;
         assert_eq!(server.calls().pop(), Some(fake::Call::Close(2)));
         // A reply's bubble goes with its thread, not with the conversation.
-        n.show(note("D1", "6.0", Some("3.0"), "a reply"), None, Box::new(|| {}));
+        n.show(note("D1", "6.0", Some("3.0"), "a reply"), None, Box::new(|_| {}));
         n.read(&key, None, "9.0");
         n.settled().await;
         assert_eq!(server.calls().len(), 5);
@@ -1471,7 +1483,7 @@ mod tests {
         let (n, server) = Notifier::fake();
         let key = Key { workspace: 0, channel: "D1".into() };
         let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
-        n.show(huddle, None, Box::new(|| {}));
+        n.show(huddle, None, Box::new(|_| {}));
         n.read(&key, Some("1.0"), "9.0");
         n.polled_read(&key, "9.0");
         n.settled().await;
@@ -1485,10 +1497,10 @@ mod tests {
     async fn a_hung_server_holds_back_nothing() {
         let (n, server) = Notifier::fake();
         server.set_hung(true);
-        n.show(note("D1", "1.0", None, "stuck"), None, Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "stuck"), None, Box::new(|_| {}));
         n.settled().await;
         server.set_hung(false);
-        n.show(note("D2", "2.0", None, "next"), None, Box::new(|| {}));
+        n.show(note("D2", "2.0", None, "next"), None, Box::new(|_| {}));
         tokio::time::timeout(std::time::Duration::from_secs(3), n.settled()).await.unwrap();
         assert_eq!(server.calls(), [shown(None, "stuck"), shown(None, "next")]);
     }
@@ -1497,7 +1509,7 @@ mod tests {
     async fn no_server_no_panic() {
         let (n, server) = Notifier::fake();
         server.set_down(true);
-        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
         n.withdraw(&Key { workspace: 0, channel: "D1".into() });
         n.ring();
         n.settled().await;
@@ -1520,8 +1532,8 @@ mod tests {
     async fn the_terminal_replaces_and_closes_by_the_conversations_id() {
         let (n, server) = on_terminal();
         let key = Key { workspace: 0, channel: "D1".into() };
-        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
-        n.show(note("D1", "2.0", None, "two"), None, Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|_| {}));
         n.settled().await;
         let out = n.take_output();
         assert_eq!(out.len(), 2, "{out:?}");
@@ -1580,12 +1592,12 @@ mod tests {
     async fn the_terminal_carries_only_the_desktops_sound() {
         let (n, server) = on_terminal();
         server.set_capabilities(&["sound"]);
-        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), sound("chime"), Box::new(|_| {}));
         n.settled().await;
         assert_eq!(server.calls(), [fake::Call::Play("chime".into())], "kitty cannot play ttyak's sounds: ttyak does");
         assert!(n.take_output()[0].contains(&format!("s={}", super::super::clipboard::base64(b"silent"))));
-        n.show(note("D2", "2.0", None, "two"), sound("system"), Box::new(|| {}));
-        n.show(note("D3", "3.0", None, "three"), None, Box::new(|| {}));
+        n.show(note("D2", "2.0", None, "two"), sound("system"), Box::new(|_| {}));
+        n.show(note("D3", "3.0", None, "three"), None, Box::new(|_| {}));
         n.settled().await;
         assert_eq!(server.calls().len(), 1, "the desktop's sound goes with the bubble: {:?}", server.calls());
         let out = n.take_output();
@@ -1594,7 +1606,7 @@ mod tests {
         assert_eq!(n.route("system").sound_by, "the notification");
         // The system's do-not-disturb holds it back as well.
         server.set_suppressed(Some(true));
-        n.show_guarded(note("D4", "4.0", None, "four"), sound("chime"), Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|| {}));
+        n.show_guarded(note("D4", "4.0", None, "four"), sound("chime"), Guard { dnd: true, bell: true, ..Guard::default() }, Box::new(|_| {}));
         n.settled().await;
         assert!(n.take_output().is_empty() && server.calls().len() == 1 && !n.take_bell());
     }
@@ -1659,8 +1671,8 @@ mod tests {
         n.show_silent("ttyak 9.9.9 is out".into(), "b".into(), None);
         n.settled().await;
         assert_eq!(n.waiting(), 0, "the update notice without a click");
-        n.show(note("D1", "1.0", None, "one"), None, Box::new(|| {}));
-        n.show(note("D1", "2.0", None, "two"), None, Box::new(|| {}));
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|_| {}));
         n.settled().await;
         assert_eq!(n.waiting(), 1, "one per bubble on screen");
         n.withdraw(&key);

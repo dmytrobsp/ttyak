@@ -70,3 +70,4 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 [target.'cfg(target_os = "linux")'.dependencies]
 # The keyring holding Chrome's cookie key (Secret Service, for `auth login --from-browser chrome`).
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+x11rb = "0.13"

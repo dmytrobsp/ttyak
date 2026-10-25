@@ -70,6 +70,7 @@ pub fn translatable() -> Vec<String> {
     out.extend(super::history::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::notify::UPDATE_WORDS.iter().map(|w| w.to_string()));
     out.extend(super::update_view::WORDS.iter().map(|w| w.to_string()));
+    out.extend(super::raise::WORDS.iter().map(|w| w.to_string()));
     let mut seen = std::collections::HashSet::new();
     out.retain(|s| !s.is_empty() && seen.insert(s.clone()));
     out

@@ -35,6 +35,7 @@ pub mod prefs;
 pub mod prefs_help;
 pub mod profile;
 pub mod rail;
+pub mod raise;
 pub mod save;
 pub mod scroll;
 pub mod search;

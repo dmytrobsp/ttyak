@@ -2778,10 +2778,10 @@ impl App {
 
     /// What clicking a notification about `target` does: the run loop opens it in this workspace, switching back to it
     /// when another one is on screen by then.
-    fn on_click(&self, target: super::notify::Target) -> Box<dyn FnOnce() + Send> {
+    fn on_click(&self, target: super::notify::Target) -> super::notify::OnClick {
         let (clicks, workspace) = (self.clicks.clone(), self.workspace);
-        Box::new(move || {
-            let _ = clicks.send((workspace, target));
+        Box::new(move |on| {
+            let _ = clicks.send((workspace, target, on));
         })
     }
 
@@ -2848,7 +2848,7 @@ impl App {
             if desktop && self.ws.settings.notifications.desktop {
                 let (title, body) = super::notify::update_notification(&latest, env!("CARGO_PKG_VERSION"));
                 let events = self.update_events.clone();
-                self.notifier.show_silent(title, body, Some(Box::new(move || drop(events.send(super::update_view::UpdateEvent::Clicked)))));
+                self.notifier.show_silent(title, body, Some(Box::new(move |_| drop(events.send(super::update_view::UpdateEvent::Clicked)))));
             }
             tracing::info!(version = %latest.version, "a new version of ttyak");
             self.update_pill = true;
@@ -4646,15 +4646,24 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
     }
 }
 
-/// A click on a notification of workspace `index` (whichever was on screen when it was shown): opened here, or in that
-/// workspace after switching there.
-fn take_click(app: &mut App, (index, target): super::others::Click) {
-    if index == app.workspace {
+/// A click on a notification of workspace `index` (whichever was on screen when it was shown): opened here, or once
+/// this workspace has booted, or in that workspace after switching there. True when the window is to be brought
+/// forward: the system notifier's bubble (the terminal brings its own forward itself).
+fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool {
+    if index == app.workspace && !app.loading {
         app.open_target(target);
     } else {
+        // (The boot's jump back to where you were would otherwise land after it.)
         *app.open_after.lock().unwrap_or_else(|e| e.into_inner()) = Some((index, target.into()));
-        app.switch_workspace(index);
+        if index != app.workspace {
+            app.switch_workspace(index);
+            if app.switch_to.is_none() {
+                // Not switched (the reason is in the status line): nothing waits for that workspace.
+                app.open_after.lock().unwrap_or_else(|e| e.into_inner()).take();
+            }
+        }
     }
+    on == super::notify::ClickedOn::System
 }
 
 /// Write what the terminal's notifications wait to have written to `out` (between draws, as the bell).
@@ -5320,7 +5329,9 @@ async fn run_workspace(
             Some(event) = update.events.recv() => app.update_event(event),
             Some(click) = clicks.recv() => {
                 went = Went::Yes;
-                take_click(&mut app, click);
+                if take_click(&mut app, click) {
+                    super::raise::bring_forward();
+                }
             }
             Some(ev) = rtm.events.recv() => handle_rtm(&mut app, ev),
             Some(ev) = async {
@@ -11206,8 +11217,8 @@ mod tests {
         // kitty's report of the click (a=report), as it arrives from the terminal.
         assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
         let click = next_click(&mut clicked).await;
-        assert_eq!(click.0, 0, "this workspace's");
-        super::take_click(&mut app, click);
+        assert_eq!((click.0, click.2), (0, super::super::notify::ClickedOn::Terminal), "this workspace's, kitty's");
+        assert!(!super::take_click(&mut app, click), "kitty brought its window forward itself");
         settle(&mut app, true);
         assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
         assert_eq!(app.mode(), super::Mode::Normal);
@@ -11227,9 +11238,75 @@ mod tests {
         assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
         let click = next_click(&mut clicked).await;
         assert_eq!(click.0, 0, "the bubble's workspace, not the one shown");
-        super::take_click(&mut app, click);
+        assert!(!super::take_click(&mut app, click), "kitty's: not raised again");
         assert_eq!(app.switch_to, Some(0), "{}", app.status);
         assert!(app.open_after.lock().unwrap().as_ref().is_some_and(|(i, _)| *i == 0), "opened there once it is up");
+    }
+
+    /// [`with_channels`] whose notifications the system's notifier shows (in memory), with the run loop's click channel.
+    fn notified_by_the_system(ids: &[&str]) -> (super::App, std::sync::Arc<crate::tui::notify::fake::Server>, tokio::sync::mpsc::UnboundedReceiver<super::super::others::Click>) {
+        let (mut app, _net) = with_channels(ids);
+        let (notifier, server) = crate::tui::notify::Notifier::fake();
+        app.notifier = notifier;
+        let (clicks, clicked) = tokio::sync::mpsc::unbounded_channel();
+        app.clicks = clicks;
+        (app, server, clicked)
+    }
+
+    #[tokio::test]
+    async fn a_click_on_the_systems_bubble_brings_the_window_forward() {
+        use super::super::notify::ClickedOn;
+        let (mut app, server, mut clicked) = notified_by_the_system(&["C1", "C2"]);
+        long_c1(&mut app, 30, 0);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        notify_c1(&mut app, 5).await;
+        server.click(1);
+        let click = next_click(&mut clicked).await;
+        assert_eq!((click.0, click.2), (0, ClickedOn::System));
+        assert!(super::take_click(&mut app, click), "the system's bubble: the window is brought forward");
+        settle(&mut app, true);
+        assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
+        // Another workspace's bubble: switched there, and brought forward too.
+        app.workspaces = vec!["one".into(), "two".into()];
+        app.workspace = 1;
+        let target = super::super::notify::Target { channel: "C1".into(), ts: None, thread_ts: None };
+        assert!(super::take_click(&mut app, (0, target, ClickedOn::System)));
+        assert_eq!(app.switch_to, Some(0), "{}", app.status);
+    }
+
+    #[tokio::test]
+    async fn a_refused_switch_leaves_nothing_waiting() {
+        use super::super::notify::{ClickedOn, Target};
+        let (mut app, _net) = with_channels(&["C1"]);
+        app.workspaces = vec!["one".into(), "two".into()];
+        app.workspace = 1;
+        app.signed_out.lock().unwrap().insert(0);
+        let target = Target { channel: "C1".into(), ts: None, thread_ts: None };
+        assert!(super::take_click(&mut app, (0, target, ClickedOn::System)), "raised all the same: the status line says why");
+        assert_eq!(app.switch_to, None);
+        assert!(!app.status.is_empty(), "the reason is shown");
+        assert!(app.open_after.lock().unwrap().is_none(), "no later boot of workspace 1 opens it");
+    }
+
+    #[tokio::test]
+    async fn a_click_while_booting_lands_after_the_boot() {
+        use super::super::notify::{ClickedOn, Target};
+        use super::Net;
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        long_c1(&mut app, 30, 0);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        // Booting again, where you were last time being C2.
+        app.loading = true;
+        app.sidebar.remembered = Some("C2".into());
+        let target = Target { channel: "C1".into(), ts: Some(top_ts(5)), thread_ts: None };
+        super::take_click(&mut app, (0, target, ClickedOn::System));
+        assert!(app.open_after.lock().unwrap().as_ref().is_some_and(|(i, _)| *i == 0), "kept for the boot");
+        super::handle_net(&mut app, Net::Boot { boot: serde_json::json!({}), users: vec![], counts: None });
+        settle(&mut app, true);
+        assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))), "the click wins over the remembered conversation");
+        assert!(app.open_after.lock().unwrap().is_none());
     }
 
     #[tokio::test]

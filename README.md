@@ -319,6 +319,28 @@ played by ttyak, since the terminal can only ask for the desktop's sounds. Insid
 click can bring the window forward across workspaces is up to the desktop: the terminal asks for focus, and the window
 manager may only mark it urgent. `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
 
+**A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
+does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`) opens what it showed, as above, and then brings ttyak's
+window forward by the first of these that works here (Linux; macOS and Windows come later):
+- inside tmux: ttyak's tmux window and pane are selected and the client last active on its session is switched to
+  them; then the terminal around that client is brought forward as below (found from that client's environment);
+- kitty with remote control on (`allow_remote_control` and `listen_on`, so that ttyak sees `KITTY_LISTEN_ON`; ttyak
+  checks with `kitty @ ls`): `kitty @ focus-window` picks ttyak's window and tab; WezTerm: `wezterm cli activate-pane`.
+  Then the window manager as well, which switches to the workspace;
+- the window manager, for the terminal's window (the nearest of ttyak's parent processes that has one): Hyprland
+  (`hyprctl dispatch focuswindow pid:…`), sway (`swaymsg [pid=…] focus`), niri (`niri msg action focus-window --id …`),
+  KDE Plasma 5 and 6 (a small KWin script loaded over D-Bus with `dbus-send`), X11 (EWMH `_NET_ACTIVE_WINDOW`, the
+  window from `WINDOWID` or a parent's `_NET_WM_PID`).
+
+Each command runs in the background without a shell and gets at most 2 seconds; one that fails is skipped (debug log).
+Tried: sway (headless), X11 (Xvfb with openbox) and tmux inside sway, raised for real in a container; what Hyprland with
+kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their documentation). A notification the terminal
+showed itself is brought forward by the terminal and not raised again. **Can't:** GNOME on Wayland (no program may raise
+another's window there; only a terminal that shows notifications itself brings its window forward); the right tab in
+terminals without remote control (Ghostty, foot, Alacritty, Windows Terminal; kitty without `listen_on`, since ttyak
+never talks to kitty over the terminal it draws in) — the window comes forward on the tab last used; a detached tmux
+session; a window manager that refuses focus requests from other programs.
+
 ## Keys
 
 Press **F1** (or `?` outside the composer) in the app for the full list, with the keys in effect.
