@@ -320,26 +320,34 @@ click can bring the window forward across workspaces is up to the desktop: the t
 manager may only mark it urgent. `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
 
 **A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
-does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`) opens what it showed, as above, and then brings ttyak's
-window forward by the first of these that works here (Linux; macOS and Windows come later):
+does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above,
+and then brings ttyak's window forward by the first of these that works here (Linux; macOS and Windows come later):
 - inside tmux: ttyak's tmux window and pane are selected and the client last active on its session is switched to
-  them; then the terminal around that client is brought forward as below (found from that client's environment);
+  them (one `tmux` call); then the terminal around that client is brought forward as below, found from that client's
+  environment — its desktop's variables (`DISPLAY`, `XAUTHORITY`, `HYPRLAND_INSTANCE_SIGNATURE`, `SWAYSOCK`, …) are
+  the ones used, so a tmux server started in an earlier session does not matter;
 - kitty with remote control on (`allow_remote_control` and `listen_on`, so that ttyak sees `KITTY_LISTEN_ON`; ttyak
-  checks with `kitty @ ls`): `kitty @ focus-window` picks ttyak's window and tab; WezTerm: `wezterm cli activate-pane`.
-  Then the window manager as well, which switches to the workspace;
-- the window manager, for the terminal's window (the nearest of ttyak's parent processes that has one): Hyprland
-  (`hyprctl dispatch focuswindow pid:…`), sway (`swaymsg [pid=…] focus`), niri (`niri msg action focus-window --id …`),
-  KDE Plasma 5 and 6 (a small KWin script loaded over D-Bus with `dbus-send`), X11 (EWMH `_NET_ACTIVE_WINDOW`, the
-  window from `WINDOWID` or a parent's `_NET_WM_PID`).
+  checks with `kitty @ ls` that the window runs one of its parents): `kitty @ focus-window` picks ttyak's window and
+  tab; WezTerm: `wezterm cli activate-pane`. Then the window manager as well, which switches to the workspace;
+- the window manager, for the terminal's window (of the nearest of ttyak's parent processes that has one), by its id:
+  Hyprland (`hyprctl dispatch focuswindow address:…`), sway (`swaymsg [con_id=…] focus`), niri (`niri msg action
+  focus-window --id …`), KDE Plasma 5 and 6 (a small KWin script loaded over D-Bus with `dbus-send`), X11 (EWMH
+  `_NET_ACTIVE_WINDOW`, the window from `WINDOWID` or a parent's `_NET_WM_PID`). When that process has several windows
+  (kitty with more than one OS window, footclient, WezTerm, Konsole), the one with ttyak's tab is picked by its title —
+  kitty's remote control tells it (kitty retitles the window once it has shown ttyak's tab), otherwise the title ttyak
+  set itself (Mark in the tab title on, and ttyak's tab the one shown); when the title can't tell them apart, the window
+  manager is left out rather than raising the wrong window.
 
-Each command runs in the background without a shell and gets at most 2 seconds; one that fails is skipped (debug log).
-Tried: sway (headless), X11 (Xvfb with openbox) and tmux inside sway, raised for real in a container; what Hyprland with
-kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their documentation). A notification the terminal
-showed itself is brought forward by the terminal and not raised again. **Can't:** GNOME on Wayland (no program may raise
-another's window there; only a terminal that shows notifications itself brings its window forward); the right tab in
-terminals without remote control (Ghostty, foot, Alacritty, Windows Terminal; kitty without `listen_on`, since ttyak
-never talks to kitty over the terminal it draws in) — the window comes forward on the tab last used; a detached tmux
-session; a window manager that refuses focus requests from other programs.
+Each command runs in the background without a shell and gets at most 2 seconds; every step is in the debug log with how
+it ended. Tried: sway (headless; also two footclient windows of one foot server, told apart by title), X11 (Xvfb with
+openbox and an `.Xauthority` cookie) and tmux inside sway and inside X11 with a stale tmux environment, raised for real
+in a container; what Hyprland with kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their
+documentation). A notification the terminal showed itself is brought forward by the terminal and not raised again.
+**Can't:** GNOME on Wayland (no program may raise another's window there; only a terminal that shows notifications
+itself brings its window forward); the right tab in terminals without remote control (Ghostty, foot, Alacritty, Windows
+Terminal; kitty without `listen_on`, since ttyak never talks to kitty over the terminal it draws in) — the window comes
+forward on the tab last used; a detached tmux session; ttyak over `ssh -X` (its parents are the remote machine's: only
+`WINDOWID` would tell the window); a window manager that refuses focus requests from other programs.
 
 ## Keys
 

@@ -44,6 +44,11 @@ impl Title {
         Ok(())
     }
 
+    /// What ttyak last put into the title.
+    pub fn last(&self) -> Option<&str> {
+        self.last.as_deref()
+    }
+
     /// The title for `workspace` and `state`, when `on` (`notifications.title_mark`); with it off the title is never
     /// touched.
     pub fn sync(&mut self, out: &mut impl Write, on: bool, state: State, workspace: &str) -> io::Result<()> {

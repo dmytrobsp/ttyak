@@ -162,8 +162,8 @@ pub enum Do {
 /// What the run-wide tasks tell the app: they outlive a workspace switch.
 #[derive(Debug)]
 pub enum UpdateEvent {
-    /// The update notification was clicked.
-    Clicked,
+    /// The update notification was clicked, on whose bubble.
+    Clicked(super::notify::ClickedOn),
     /// The self-update to `version` ended (the error says what failed).
     Finished { version: semver::Version, result: Result<(), String> },
 }

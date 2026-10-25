@@ -2848,7 +2848,7 @@ impl App {
             if desktop && self.ws.settings.notifications.desktop {
                 let (title, body) = super::notify::update_notification(&latest, env!("CARGO_PKG_VERSION"));
                 let events = self.update_events.clone();
-                self.notifier.show_silent(title, body, Some(Box::new(move |_| drop(events.send(super::update_view::UpdateEvent::Clicked)))));
+                self.notifier.show_silent(title, body, Some(Box::new(move |on| drop(events.send(super::update_view::UpdateEvent::Clicked(on))))));
             }
             tracing::info!(version = %latest.version, "a new version of ttyak");
             self.update_pill = true;
@@ -2939,11 +2939,15 @@ impl App {
         view.started(progress, task.abort_handle());
     }
 
-    /// The update notification was clicked, or a self-update ended.
-    fn update_event(&mut self, event: super::update_view::UpdateEvent) {
+    /// The update notification was clicked, or a self-update ended. True when the window is to be brought forward (a
+    /// click on the system notifier's bubble, as for messages).
+    fn update_event(&mut self, event: super::update_view::UpdateEvent) -> bool {
         use super::update_view::UpdateEvent;
         match event {
-            UpdateEvent::Clicked => self.open_update_screen(),
+            UpdateEvent::Clicked(on) => {
+                self.open_update_screen();
+                return on == super::notify::ClickedOn::System;
+            }
             UpdateEvent::Finished { version, result } => {
                 if result.is_ok() {
                     tracing::info!(%version, "ttyak updated itself; it runs on until restarted");
@@ -2963,6 +2967,7 @@ impl App {
                 }
             }
         }
+        false
     }
 
     /// This workspace's session has ended: it is marked in the rail (and not switched back to), the
@@ -5326,11 +5331,15 @@ async fn run_workspace(
                 crate::update::Report::Found(found) => handle_net(&mut app, Net::UpdateKnown(found)),
                 crate::update::Report::Checked(checked) => app.update_checked(checked),
             },
-            Some(event) = update.events.recv() => app.update_event(event),
+            Some(event) = update.events.recv() => {
+                if app.update_event(event) {
+                    super::raise::bring_forward(title.lock().unwrap_or_else(|e| e.into_inner()).last().map(String::from));
+                }
+            }
             Some(click) = clicks.recv() => {
                 went = Went::Yes;
                 if take_click(&mut app, click) {
-                    super::raise::bring_forward();
+                    super::raise::bring_forward(title.lock().unwrap_or_else(|e| e.into_inner()).last().map(String::from));
                 }
             }
             Some(ev) = rtm.events.recv() => handle_rtm(&mut app, ev),
@@ -8879,13 +8888,32 @@ mod tests {
 
     #[tokio::test]
     async fn the_notification_click_opens_the_update_screen() {
+        use super::super::notify::ClickedOn;
+        use super::super::update_view::UpdateEvent;
         let (mut app, _net) = test_app();
         app.ws.settings.notifications.desktop = false;
-        app.update_event(super::super::update_view::UpdateEvent::Clicked);
+        app.update_event(UpdateEvent::Clicked(ClickedOn::System));
         assert!(app.update_view.is_none(), "nothing known yet");
         super::handle_net(&mut app, super::Net::UpdateKnown(crate::update::Found { latest: new_version(), notify: true, desktop: true }));
-        app.update_event(super::super::update_view::UpdateEvent::Clicked);
+        assert!(app.update_event(UpdateEvent::Clicked(ClickedOn::System)), "the system's bubble: the window is brought forward");
         assert!(app.update_view.is_some() && !app.update_pill);
+        assert!(!app.update_event(UpdateEvent::Clicked(ClickedOn::Terminal)), "the terminal's: it raised itself");
+    }
+
+    #[tokio::test]
+    async fn a_click_on_the_update_notice_says_whose_bubble_it_was() {
+        use super::super::notify::ClickedOn;
+        use super::super::update_view::UpdateEvent;
+        let (mut app, _net) = test_app();
+        let (notifier, server) = crate::tui::notify::Notifier::fake();
+        app.notifier = notifier;
+        let (events, mut clicked) = tokio::sync::mpsc::unbounded_channel();
+        app.update_events = events;
+        super::handle_net(&mut app, super::Net::UpdateKnown(crate::update::Found { latest: new_version(), notify: true, desktop: true }));
+        app.notifier.settled().await;
+        server.click(1);
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), clicked.recv()).await.expect("the click arrives").unwrap();
+        assert!(matches!(event, UpdateEvent::Clicked(ClickedOn::System)), "{event:?}");
     }
 
     #[tokio::test]
