@@ -75,10 +75,10 @@ pub const WORDS: &[&str] = &[
     GLYPHS_HEAD, LOOK_FOR, FONTS_HINT, LINKS_NAME, LINK_TEXT, "symbols", "arrows", "boxes and blocks", "emoji", "CJK",
 ];
 
-/// Whether `reply` holds the terminal's answer to DA1 (`CSI ? … c`), which ends the answers it gives: without it the
+/// Whether `reply` ends with the terminal's answer to DA1 (`CSI ? … c`), which ends the answers it gives: without it the
 /// terminal answered nothing, so nothing it did not answer is known.
 fn answered(reply: &[u8]) -> bool {
-    reply.windows(3).any(|w| w == b"\x1b[?") && reply.ends_with(b"c")
+    crate::tui::media::da1_ended(reply)
 }
 
 /// The pictures and OSC 99 rows from what the picture query found (`graphics`: a protocol, or half blocks only; not
@@ -394,6 +394,7 @@ mod tests {
         assert!(answered(b"\x1b[?1004;2$y\x1b[?62;c"));
         assert!(!answered(b""));
         assert!(!answered(b"\x1b[?1004;2$y"));
+        assert!(!answered(b"\x1b[?1004;2$y\x1b]99;i=ttyak-probe:p=?;a=focus,report:c"), "DECRQM's answer and a cut OSC ending in c");
     }
 
     #[test]

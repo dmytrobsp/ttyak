@@ -308,12 +308,10 @@ fn decrqm_state(reply: &[u8], mode: u32) -> Option<&'static str> {
     ["0", "1", "2", "3", "4"].into_iter().find(|s| state == *s)
 }
 
-/// Whether a primary device attributes reply (`ESC [ ? 63 ; 1 ; 2 ; 4 ; … c`) lists sixel (4).
+/// Whether the primary device attributes reply ending `reply` (`ESC [ ? 63 ; 1 ; 2 ; 4 ; … c`, see [`da1_ended`]) lists
+/// sixel (4).
 fn da1_has_sixel(reply: &[u8]) -> bool {
-    let Some(start) = reply.windows(3).position(|w| w == b"\x1b[?") else { return false };
-    let rest = &reply[start + 3..];
-    let Some(end) = rest.iter().position(|b| *b == b'c') else { return false };
-    rest[..end].split(|b| *b == b';').any(|p| p == b"4")
+    da1_params(reply).is_some_and(|p| p.split(|b| *b == b';').any(|p| p == b"4"))
 }
 
 /// Ask the terminal `before` and then for its device attributes (in raw mode), and give back all it answered: the
@@ -493,10 +491,15 @@ fn drain_wait(reply: &[u8]) -> Option<std::time::Duration> {
 
 /// Whether `reply` ends with DA1's whole answer (`CSI ? <digits and ;> c` as its last sequence), which ends what the
 /// terminal answers (DECRQM's answers start with `CSI ?` too).
-fn da1_ended(reply: &[u8]) -> bool {
-    let Some(start) = reply.windows(3).rposition(|w| w == b"\x1b[?") else { return false };
-    let params = &reply[start + 3..];
-    params.len() > 1 && params.ends_with(b"c") && params[..params.len() - 1].iter().all(|b| b.is_ascii_digit() || *b == b';')
+pub fn da1_ended(reply: &[u8]) -> bool {
+    da1_params(reply).is_some()
+}
+
+/// The parameters of DA1's answer when it is the last sequence of `reply` (see [`da1_ended`]).
+fn da1_params(reply: &[u8]) -> Option<&[u8]> {
+    let start = reply.windows(3).rposition(|w| w == b"\x1b[?")?;
+    let params = reply[start + 3..].strip_suffix(b"c")?;
+    (!params.is_empty() && params.iter().all(|b| b.is_ascii_digit() || *b == b';')).then_some(params)
 }
 
 /// Add what a key event of the Windows console (`down`, its UTF-16 `unit`) typed to `reply`: the terminal's answers
@@ -877,6 +880,9 @@ mod tests {
         // After the notification probe's answer (kitty's, which has no sixel).
         assert!(!da1_has_sixel(b"\x1b]99;i=ttyak-probe:p=?;a=focus,report:c=1\x1b\\\x1b[?62;52;c"));
         assert!(da1_has_sixel(b"\x1b]99;i=ttyak-probe:p=?;a=focus,report:c=1\x1b\\\x1b[?62;4;52;c"));
+        // A DECRQM answer before DA1's (also `CSI ?`): only the last, DA1's, is read.
+        assert!(!da1_has_sixel(b"\x1b[?4;2$y\x1b[?62;52;c"), "mode 4's answer is not sixel");
+        assert!(da1_has_sixel(b"\x1b[?1004;1$y\x1b[?62;4;52;c"));
         assert_eq!(protocol_named("Sixel"), Some(ProtocolType::Sixel));
         assert_eq!(protocol_named("auto"), None);
         assert!(GRAPHICS.iter().skip(1).all(|g| protocol_named(g).is_some()), "every choice but auto names a protocol");
