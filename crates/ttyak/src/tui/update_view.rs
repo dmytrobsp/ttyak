@@ -623,9 +623,9 @@ mod tests {
     #[test]
     fn a_failure_says_what_and_offers_again() {
         let mut v = view(Method::Script, true);
-        v.finished(Err("the download does not match the SHA256 in latest.json".into()));
+        v.finished(Err("the download does not match its announced SHA256".into()));
         let text = screen(&mut v).join("\n");
-        assert!(text.contains("Could not update: the download does not match the SHA256 in latest.json") && text.contains("[ Try again (u) ]"), "{text}");
+        assert!(text.contains("Could not update: the download does not match its announced SHA256") && text.contains("[ Try again (u) ]"), "{text}");
     }
 
     #[test]

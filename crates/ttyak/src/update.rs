@@ -182,11 +182,13 @@ impl Known {
         Known { version: latest.version.to_string(), date: latest.date.clone(), url: latest.asset.url.clone(), sha256: latest.asset.sha256.clone() }
     }
 
-    /// The release, read as the feed is (a hand-edited file too): None when its version is no version or its archive's
-    /// address or SHA256 has a character [`hidden`] names.
-    fn latest(&self) -> Option<Latest> {
+    /// The release, read as the feed is and checked as a self-update checks it (a hand-edited file, or one an Intel and
+    /// an arm64 build share, too): None when its version is no version, its archive is not `platform`'s of that release
+    /// under the release folders' parent `downloads`, or its SHA256 is not 64 hex digits.
+    fn latest(&self, platform: &str, downloads: &str) -> Option<Latest> {
         let version = Version::parse(&self.version).ok()?;
-        if self.url.chars().chain(self.sha256.chars()).any(hidden) {
+        let sha256_ok = self.sha256.len() == 64 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit());
+        if self.url != archive_url(downloads, &version, platform) || !sha256_ok {
             return None;
         }
         Some(Latest { version, date: printable(&self.date), asset: Asset { url: self.url.clone(), sha256: self.sha256.clone() } })
@@ -199,9 +201,10 @@ fn version_of(version: Option<&str>) -> Option<Version> {
 }
 
 /// What ttyak knew at its last run (in `state`): the newer version, its pill again when its update screen was not
-/// opened (never a second desktop notice); None when none is known or this ttyak is that version or newer.
-pub fn remembered(state: &State, current: &Version) -> Option<Found> {
-    let latest = state.known.as_ref()?.latest().filter(|l| newer(current, l))?;
+/// opened (never a second desktop notice); None when none is known, this ttyak is that version or newer, or what is
+/// known is not `platform`'s archive under `downloads` (see [`Known::latest`]).
+pub fn remembered(state: &State, current: &Version, platform: &str, downloads: &str) -> Option<Found> {
+    let latest = state.known.as_ref()?.latest(platform, downloads).filter(|l| newer(current, l))?;
     let notify = version_of(state.seen.as_deref()).is_none_or(|seen| latest.version.cmp_precedence(&seen).is_gt());
     Some(Found { latest, notify, desktop: false })
 }
@@ -357,19 +360,19 @@ pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::s
     let Some(path) = state_path() else { return };
     let current = Version::parse(env!("CARGO_PKG_VERSION")).expect("the package version is semver");
     let url = std::env::var(URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| URL.to_string());
-    tokio::spawn(run(path, crate::install::platform(), url, current, reports, asks, |u: String| async move { fetch(&u, check_timeout()).await }, settings));
+    tokio::spawn(run(path, crate::install::platform(), url, download_base(), current, reports, asks, |u: String| async move { fetch(&u, check_timeout()).await }, settings));
 }
 
 /// [`spawn`]'s task, with `path` for `updates.json`, `fetch` for the GET and `settings` for
 /// `[updates]`; it ends when the app is gone. All the requests that came before a check ends are
 /// answered by that one check.
-async fn run<F, Fut>(path: PathBuf, platform: Option<&str>, url: String, current: Version, reports: tokio::sync::mpsc::UnboundedSender<Report>, mut asks: tokio::sync::mpsc::UnboundedReceiver<Ask>, fetch: F, settings: impl Fn() -> crate::tui::settings::Updates)
+async fn run<F, Fut>(path: PathBuf, platform: Option<&str>, url: String, downloads: String, current: Version, reports: tokio::sync::mpsc::UnboundedSender<Report>, mut asks: tokio::sync::mpsc::UnboundedReceiver<Ask>, fetch: F, settings: impl Fn() -> crate::tui::settings::Updates)
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<String>>,
 {
     // What the last run knew, at once (before any check, which may be hours away).
-    if let Some(found) = remembered(&load_state(&path), &current) {
+    if let Some(found) = platform.and_then(|p| remembered(&load_state(&path), &current, p, &downloads)) {
         if reports.send(Report::Found(found)).is_err() {
             return;
         }
@@ -580,9 +583,9 @@ fn listed_sha256<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
 
 /// Download `latest`'s archive (only the release's own for that version, newer than this ttyak,
 /// from [`DOWNLOAD_URL`] or [`DOWNLOAD_URL_ENV`]'s) into the folder of `install`'s executable, check it (its SHA256
-/// against `latest.json`'s and against its line in the release's `SHA256SUMS`), unpack the
-/// executable beside the old one and put it in place (Windows: the running one renamed aside),
-/// then write the new version into `install.json`; the new executable's path. It never starts
+/// against `latest`'s, from latest.json or as updates.json kept it, and against its line in the release's
+/// `SHA256SUMS`), unpack the executable beside the old one and put it in place (Windows: the running one renamed
+/// aside), then write the new version into `install.json`; the new executable's path. It never starts
 /// it. Any failure, a cancel too, leaves the old executable as it was and the folder without the
 /// files it made, and says what failed.
 pub async fn self_update(latest: &Latest, install: &Install, progress: &Progress) -> Result<PathBuf> {
@@ -611,18 +614,27 @@ struct Release {
     timeout: Duration,
 }
 
+/// The release folders' parent: [`DOWNLOAD_URL`], or [`DOWNLOAD_URL_ENV`]'s.
+fn download_base() -> String {
+    let base = std::env::var(DOWNLOAD_URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| DOWNLOAD_URL.to_string());
+    base.trim_end_matches('/').to_string()
+}
+
+/// `version`'s archive for `platform` under the release folders' parent `base`.
+fn archive_url(base: &str, version: &Version, platform: &str) -> String {
+    format!("{base}/v{version}/ttyak-{version}-{platform}.zip")
+}
+
 impl Release {
     /// GitHub's releases ([`DOWNLOAD_URL_ENV`] overrides them) for this build's platform.
     fn this() -> Result<Release> {
-        let base = std::env::var(DOWNLOAD_URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| DOWNLOAD_URL.to_string());
         let platform = crate::install::platform().context("ttyak is not released for this platform")?;
-        Ok(Release { base: base.trim_end_matches('/').to_string(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: VERIFIER, timeout: Duration::from_secs(settings().download_timeout_secs) })
+        Ok(Release { base: download_base(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: VERIFIER, timeout: Duration::from_secs(settings().download_timeout_secs) })
     }
 
     /// `version`'s archive for this platform and its `SHA256SUMS`.
     fn urls(&self, version: &Version) -> (String, String) {
-        let folder = format!("{}/v{version}", self.base);
-        (format!("{folder}/ttyak-{version}-{}.zip", self.platform), format!("{folder}/SHA256SUMS"))
+        (archive_url(&self.base, version, self.platform), format!("{}/v{version}/SHA256SUMS", self.base))
     }
 }
 
@@ -634,7 +646,7 @@ async fn self_update_from(latest: &Latest, install: &Install, progress: &Progres
     // Only the release's own archive for this version: a feed naming anything else (another
     // host, version or platform) gets nothing downloaded.
     let (asset_url, sums_url) = release.urls(&latest.version);
-    ensure!(latest.asset.url == asset_url, "latest.json names {} for ttyak {}, not the release's {asset_url}: nothing was downloaded", latest.asset.url, latest.version);
+    ensure!(latest.asset.url == asset_url, "the update names {} for ttyak {}, not the release's {asset_url}: nothing was downloaded", latest.asset.url, latest.version);
     let exe = install.exe.clone();
     let dir = exe.parent().filter(|d| !d.as_os_str().is_empty()).context("the executable's folder")?.to_path_buf();
     let download = dir.join(format!(".ttyak-update-{}.zip", std::process::id()));
@@ -668,7 +680,7 @@ async fn self_update_from(latest: &Latest, install: &Install, progress: &Progres
         file.sync_all().with_context(|| format!("could not write {}", shown(&download)))?;
         hex(&hasher.finalize())
     };
-    ensure!(sha256.eq_ignore_ascii_case(latest.asset.sha256.trim()), "the download does not match the SHA256 in latest.json");
+    ensure!(sha256.eq_ignore_ascii_case(latest.asset.sha256.trim()), "the download does not match its announced SHA256");
     let sums = bounded_text(http.get(&sums_url), release.max_sums).await.context("could not download the release's SHA256SUMS")?;
     match listed_sha256(&sums, &name) {
         Some(listed) if listed.eq_ignore_ascii_case(&sha256) => {}
@@ -883,11 +895,11 @@ mod tests {
     use crate::tui::settings::Updates;
 
     const FEED: &str = r#"{"name":"ttyak","version":"0.10.2","date":"2026-11-01","notes":"https://github.com/dmytrobsp/ttyak/releases/tag/v0.10.2",
-        "assets":{"x86_64-linux":{"url":"https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip","sha256":"ab12"},
+        "assets":{"x86_64-linux":{"url":"https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip","sha256":"ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12"},
                   "aarch64-macos":{"url":"https://example.invalid/mac.zip","sha256":"cd34"}}}"#;
 
     fn latest(v: &str) -> Latest {
-        Latest { version: Version::parse(v).unwrap(), date: "2026-11-01".into(), asset: Asset { url: "u".into(), sha256: "s".into() } }
+        Latest { version: Version::parse(v).unwrap(), date: "2026-11-01".into(), asset: Asset { url: format!("{DOWNLOAD_URL}/v{v}/ttyak-{v}-x86_64-linux.zip"), sha256: "ab12".repeat(16) } }
     }
 
     /// The version a check's result notifies, if any.
@@ -905,7 +917,7 @@ mod tests {
         assert_eq!(l.version, v("0.10.2"));
         assert_eq!(l.date, "2026-11-01");
         assert_eq!(page_at(PAGES_URL, &l.version), "https://github.com/dmytrobsp/ttyak/releases/tag/v0.10.2");
-        assert_eq!(l.asset, Asset { url: "https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip".into(), sha256: "ab12".into() });
+        assert_eq!(l.asset, Asset { url: "https://github.com/dmytrobsp/ttyak/releases/download/v0.10.2/ttyak-0.10.2-x86_64-linux.zip".into(), sha256: "ab12".repeat(16) });
         assert_eq!(parse(FEED, "aarch64-macos").unwrap().asset.sha256, "cd34");
     }
 
@@ -1003,7 +1015,7 @@ mod tests {
         assert_eq!(notified(shown), Some(latest("0.10.1")));
         save_state(&path, &next).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap(), serde_json::json!({"last_check": 50, "notified": "0.10.1", "known": {"version": "0.10.1", "date": "2026-11-01", "url": "u", "sha256": "s"}}));
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&text).unwrap(), serde_json::json!({"last_check": 50, "notified": "0.10.1", "known": {"version": "0.10.1", "date": "2026-11-01", "url": format!("{DOWNLOAD_URL}/v0.10.1/ttyak-0.10.1-x86_64-linux.zip"), "sha256": "ab12".repeat(16)}}));
         let (again, shown) = after_check(&load_state(&path), 90_000, &v("0.10.0"), Ok(latest("0.10.1")));
         assert_eq!((again.last_check, again.notified.as_deref()), (90_000, Some("0.10.1")));
         assert_eq!(shown, Some(Found { latest: latest("0.10.1"), notify: false, desktop: false }), "the next run knows of it and says nothing");
@@ -1036,26 +1048,38 @@ mod tests {
         let path = dir.0.join("updates.json");
         save_state(&path, &next).unwrap();
         let state = load_state(&path);
-        assert_eq!(remembered(&state, &now), Some(Found { latest: latest("0.10.1"), notify: true, desktop: false }), "the pill again, never a second desktop notice");
+        assert_eq!(remembered(&state, &now, "x86_64-linux", DOWNLOAD_URL), Some(Found { latest: latest("0.10.1"), notify: true, desktop: false }), "the pill again, never a second desktop notice");
         // Its update screen was opened: known, no pill.
         let seen = State { seen: Some("0.10.1".into()), ..state.clone() };
-        assert_eq!(remembered(&seen, &now), Some(Found { latest: latest("0.10.1"), notify: false, desktop: false }));
+        assert_eq!(remembered(&seen, &now, "x86_64-linux", DOWNLOAD_URL), Some(Found { latest: latest("0.10.1"), notify: false, desktop: false }));
         // Installed: this ttyak is that version (or newer).
-        assert_eq!(remembered(&state, &v("0.10.1")), None);
+        assert_eq!(remembered(&state, &v("0.10.1"), "x86_64-linux", DOWNLOAD_URL), None);
         // A failed check keeps it; one that answers with nothing newer forgets it.
         let (failed, _) = after_check(&state, 90_000, &now, Err(anyhow::anyhow!("offline")));
-        assert_eq!(remembered(&failed, &now), remembered(&state, &now));
+        assert_eq!(remembered(&failed, &now, "x86_64-linux", DOWNLOAD_URL), remembered(&state, &now, "x86_64-linux", DOWNLOAD_URL));
         let (pulled, _) = after_check(&state, 90_000, &now, Ok(latest("0.10.0")));
-        assert_eq!(remembered(&pulled, &now), None);
+        assert_eq!(remembered(&pulled, &now, "x86_64-linux", DOWNLOAD_URL), None);
         // A newer one found takes its place, its pill again.
         let (newer_one, _) = after_check(&seen, 90_000, &now, Ok(latest("0.10.2")));
-        assert_eq!(remembered(&newer_one, &now).map(|f| (f.latest.version, f.notify)), Some((v("0.10.2"), true)));
+        assert_eq!(remembered(&newer_one, &now, "x86_64-linux", DOWNLOAD_URL).map(|f| (f.latest.version, f.notify)), Some((v("0.10.2"), true)));
         // A hand-edited file is read as the feed is: what is downloaded and checked is refused.
         let mut edited = newer_one.clone();
         edited.known.as_mut().unwrap().url = "https://x.invalid/\u{1b}[2Ja.zip".into();
-        assert_eq!(remembered(&edited, &now), None);
+        assert_eq!(remembered(&edited, &now, "x86_64-linux", DOWNLOAD_URL), None);
         edited.known.as_mut().unwrap().version = "ten".into();
-        assert_eq!(remembered(&edited, &now), None);
+        assert_eq!(remembered(&edited, &now, "x86_64-linux", DOWNLOAD_URL), None);
+        // Only this platform's archive of the release a self-update would take, with a SHA256 that is one: another
+        // platform's (a data folder an Intel and an arm64 build share), another place, a SHA256 that is none.
+        assert_eq!(remembered(&state, &now, "aarch64-macos", DOWNLOAD_URL), None);
+        assert_eq!(remembered(&state, &now, "x86_64-linux", "http://127.0.0.1:9"), None);
+        for sha in ["ab12", &"ab12".repeat(16)[1..], &"xy12".repeat(16)] {
+            let mut edited = state.clone();
+            edited.known.as_mut().unwrap().sha256 = sha.to_string();
+            assert_eq!(remembered(&edited, &now, "x86_64-linux", DOWNLOAD_URL), None, "{sha}");
+        }
+        let mut upper = state.clone();
+        upper.known.as_mut().unwrap().sha256 = "AB12".repeat(16);
+        assert!(remembered(&upper, &now, "x86_64-linux", DOWNLOAD_URL).is_some(), "hex in either case");
     }
 
     #[test]
@@ -1087,7 +1111,7 @@ mod tests {
         let off = || Updates { check: false, ..Default::default() };
         let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
         let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
+        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
         let found = next(&mut reports).await;
         assert!(matches!(&found, Some(Report::Found(Found { latest, notify: true, desktop: false })) if latest.version == v("0.10.2")), "{found:?}");
         // Its update screen opened: written down.
@@ -1103,7 +1127,7 @@ mod tests {
         // The next start: known, no pill.
         let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
         let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
+        let task = tokio::spawn(run(path.clone(), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, |_url: String| async { panic!("fetched") }, off));
         let found = next(&mut reports).await;
         assert!(matches!(&found, Some(Report::Found(Found { notify: false, desktop: false, .. }))), "{found:?}");
         drop(asks_tx);
@@ -1215,7 +1239,7 @@ mod tests {
             }
         };
         let off = || Updates { check: false, ..Default::default() };
-        let task = tokio::spawn(run(dir.0.join("updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, fetch, off));
+        let task = tokio::spawn(run(dir.0.join("updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, fetch, off));
         async fn next(r: &mut tokio::sync::mpsc::UnboundedReceiver<Report>) -> Result<Option<Report>, tokio::time::error::Elapsed> {
             tokio::time::timeout(Duration::from_secs(5), r.recv()).await
         }
@@ -1295,7 +1319,7 @@ mod tests {
         std::fs::write(temp.0.join("file"), b"").unwrap();
         let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
         let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::spawn(run(temp.0.join("file/updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { Ok(FEED.to_string()) }, Updates::default));
+        let task = tokio::spawn(run(temp.0.join("file/updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, |_url: String| async { Ok(FEED.to_string()) }, Updates::default));
         let found = tokio::time::timeout(Duration::from_secs(5), reports.recv()).await.unwrap();
         let Some(Report::Found(found)) = found else { panic!("{found:?}") };
         assert_eq!(found.latest.version, v("0.10.2"));
@@ -1306,7 +1330,7 @@ mod tests {
         // Written: both.
         let (reports_tx, mut reports) = tokio::sync::mpsc::unbounded_channel();
         let (asks_tx, asks) = tokio::sync::mpsc::unbounded_channel();
-        let task = tokio::spawn(run(temp.0.join("updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), v("0.10.0"), reports_tx, asks, |_url: String| async { Ok(FEED.to_string()) }, Updates::default));
+        let task = tokio::spawn(run(temp.0.join("updates.json"), Some("x86_64-linux"), "http://127.0.0.1:9/latest.json".into(), DOWNLOAD_URL.into(), v("0.10.0"), reports_tx, asks, |_url: String| async { Ok(FEED.to_string()) }, Updates::default));
         let found = tokio::time::timeout(Duration::from_secs(5), reports.recv()).await.unwrap();
         assert!(matches!(found, Some(Report::Found(Found { notify: true, desktop: true, .. }))), "{found:?}");
         drop(asks_tx);
