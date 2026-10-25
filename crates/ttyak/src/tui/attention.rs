@@ -156,7 +156,7 @@ pub fn state(ws: &Workspace, others: &HashMap<usize, Badge>) -> State {
 pub enum TermFocus {
     Focused,
     Unfocused,
-    /// The terminal never reported focus.
+    /// The terminal never reported focus, nor said at start that it reports it.
     Unknown,
 }
 

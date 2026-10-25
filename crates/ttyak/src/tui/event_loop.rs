@@ -346,7 +346,8 @@ struct App {
     media: super::media::Media,
     /// The terminal window has focus (focus-change reporting).
     terminal_focused: bool,
-    /// The terminal has reported a focus change at least once (else `terminal_focused` is only our assumption).
+    /// The terminal has reported a focus change, or said at start that it reports them (else `terminal_focused` is
+    /// only our assumption).
     focus_reported: bool,
     /// The process's notifications and bell (shared with the other workspaces' watchers).
     notifier: super::notify::Notifier,
@@ -5162,6 +5163,7 @@ pub async fn run(profile: slack_core::session::Profile, account: Option<(&str, &
     if media.osc99 && super::osc99::wanted() {
         notifier.use_terminal(super::osc99::terminal_name());
     }
+    notifier.set_focus(media.start_focus);
     let mut clipboard = super::clipboard::Clipboard::default();
     let mut events = EventStream::new();
     // Once the screen is up, so the check never holds the start.

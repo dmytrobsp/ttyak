@@ -1,6 +1,8 @@
 //! `ttyak ctl check`: what the terminal answered and what the system has, and one sample line per kind of glyph for
 //! the user to judge (a program cannot tell which font the terminal draws with). No Slack, no network.
 
+use crate::tui::media::decrqm as mode;
+
 /// What was found. A terminal row is yes, no, or None (the terminal did not say); a system row is its value, or None
 /// (could not be told).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -72,20 +74,6 @@ pub const WORDS: &[&str] = &[
     CLIPBOARD, FOUND, MISSING, BUILT_IN, YES, NO, NOT_KNOWN, MAC_SERVICE, WINDOWS_SERVICE, NO_SERVER, WAYLAND_CLIPBOARD, SYSTEM_CLIPBOARD, TITLE, TERMINAL, SYSTEM, NO_ESCAPES, NOT_A_TERMINAL,
     GLYPHS_HEAD, LOOK_FOR, FONTS_HINT, LINKS_NAME, LINK_TEXT, "symbols", "arrows", "boxes and blocks", "emoji", "CJK",
 ];
-
-/// The terminal's answer about private mode `mode` (DECRQM: `CSI ? mode ; state $ y`): yes when it knows the mode, no
-/// when it says it does not, None when it did not answer.
-fn mode(reply: &[u8], mode: u32) -> Option<bool> {
-    let text = String::from_utf8_lossy(reply);
-    let head = format!("\x1b[?{mode};");
-    let rest = &text[text.find(&head)? + head.len()..];
-    let state = &rest[..rest.find("$y")?];
-    match state {
-        "1" | "2" | "3" => Some(true),
-        "0" | "4" => Some(false),
-        _ => None,
-    }
-}
 
 /// Whether `reply` holds the terminal's answer to DA1 (`CSI ? … c`), which ends the answers it gives: without it the
 /// terminal answered nothing, so nothing it did not answer is known.

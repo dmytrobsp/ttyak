@@ -8,6 +8,8 @@ use ratatui_image::picker::{Capability, Picker, ProtocolType};
 use ratatui_image::sliced::SlicedProtocol;
 use slack_core::types::File;
 
+use super::attention::TermFocus;
+
 /// Largest thumbnail, in cells.
 pub const MAX_COLS: u16 = 36;
 pub const MAX_ROWS: u16 = 10;
@@ -32,6 +34,8 @@ pub struct Media {
     pub note: Option<String>,
     /// The terminal answered the notification probe: it shows notifications itself (OSC 99).
     pub osc99: bool,
+    /// The terminal's focus at start (see [`start_focus`]).
+    pub start_focus: TermFocus,
 }
 
 /// [`drawable_modes`] of this terminal, worked out at start (every mode before that, and in tests).
@@ -130,12 +134,14 @@ impl Media {
         // A terminal that does not report its cell size (xterm by default) loses its sixel
         // support in the query above; ask for it on its own and take the size from the
         // window's pixel size.
-        // One more question, fenced by DA1: whether the terminal shows notifications itself (OSC 99; not asked inside
-        // tmux, where the system's notifier shows them).
+        // More questions, fenced by DA1: whether the terminal shows notifications itself (OSC 99; not asked inside
+        // tmux, where the system's notifier shows them), and whether it reports focus.
         let probe = if super::osc99::in_tmux() { "" } else { super::osc99::probe() };
-        let reply = device_attributes(probe);
+        let reply = device_attributes(&format!("{probe}{FOCUS_PROBE}"));
         let osc99 = super::osc99::supported(&String::from_utf8_lossy(&reply));
         tracing::info!(osc99, "terminal notifications");
+        let start_focus = start_focus(&reply);
+        tracing::info!(focus = ?start_focus, "terminal focus at start");
         // (On Windows such a sixel draws with ratatui-image's default cell size: there is no pixel-size fallback.)
         let da1_sixel = picker.protocol_type() == ProtocolType::Halfblocks && da1_has_sixel(&reply);
         if da1_sixel {
@@ -151,7 +157,7 @@ impl Media {
         let drawable = drawable_modes(detected, picker.capabilities(), da1_sixel, &term_program);
         tracing::info!(protocol = ?detected, font = ?picker.font_size(), capabilities = ?picker.capabilities(), drawable = ?drawable, "terminal graphics");
         let _ = DRAWABLE.set(drawable.clone());
-        let mut media = Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable, note: None, osc99 };
+        let mut media = Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable, note: None, osc99, start_focus };
         media.note = media.choose(choice);
         media
     }
@@ -160,7 +166,7 @@ impl Media {
     #[cfg(test)]
     pub fn with(picker: Picker) -> Media {
         let detected = picker.protocol_type();
-        Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable: GRAPHICS.to_vec(), note: None, osc99: false }
+        Media { picker, thumbs: HashMap::new(), avatars: false, detected, drawable: GRAPHICS.to_vec(), note: None, osc99: false, start_focus: TermFocus::Unknown }
     }
 
     /// Draw pictures as `choice` says ("auto": as detected; `TTYAK_GRAPHICS` wins, even with a
@@ -261,6 +267,39 @@ pub fn drawable_modes(detected: ProtocolType, capabilities: &[Capability], da1_s
 pub fn next_mode(current: &str, drawable: &[&'static str]) -> &'static str {
     let i = drawable.iter().position(|g| *g == current).map_or(0, |i| (i + 1) % drawable.len());
     drawable.get(i).copied().unwrap_or("auto")
+}
+
+/// Asked with the notification probe: whether the terminal knows focus reporting (DECRQM ?1004).
+pub const FOCUS_PROBE: &str = "\x1b[?1004$p";
+
+/// The terminal's focus at start from its answers to the probe (`reply`): what it reported as reporting was turned on
+/// (some terminals do), else focused when it knows focus reporting (kitty and Windows Terminal report nothing until the
+/// next change, and a terminal ttyak was just started in is almost always the one in front), else unknown. No terminal
+/// answers a question about its focus (DECRQM ?1004 says only whether it reports it; kitty's `@ ls` needs remote
+/// control). Wrong when started in a window behind: until the first focus change it counts as in front, so no bell, no
+/// bubble for the open conversation and no fallback raise after a click on the terminal's bubble.
+pub fn start_focus(reply: &[u8]) -> TermFocus {
+    let last = |report: &[u8]| reply.windows(3).rposition(|w| w == report);
+    match (last(b"\x1b[I"), last(b"\x1b[O")) {
+        (Some(i), o) if o.is_none_or(|o| i > o) => TermFocus::Focused,
+        (_, Some(_)) => TermFocus::Unfocused,
+        _ if decrqm(reply, 1004) == Some(true) => TermFocus::Focused,
+        _ => TermFocus::Unknown,
+    }
+}
+
+/// The terminal's answer about private mode `mode` (DECRQM: `CSI ? mode ; state $ y`): yes when it knows the mode, no
+/// when it says it does not, None when it did not answer.
+pub fn decrqm(reply: &[u8], mode: u32) -> Option<bool> {
+    let text = String::from_utf8_lossy(reply);
+    let head = format!("\x1b[?{mode};");
+    let rest = &text[text.find(&head)? + head.len()..];
+    let state = &rest[..rest.find("$y")?];
+    match state {
+        "1" | "2" | "3" => Some(true),
+        "0" | "4" => Some(false),
+        _ => None,
+    }
 }
 
 /// Whether a primary device attributes reply (`ESC [ ? 63 ; 1 ; 2 ; 4 ; … c`) lists sixel (4).
@@ -789,6 +828,24 @@ mod tests {
         assert_eq!(drain_wait(b""), None, "nothing answered: nothing late to wait for");
         assert_eq!(drain_wait(b"\x1b[?1004;2$y"), Some(std::time::Duration::from_millis(200)));
         assert_eq!(drain_wait(b"\x1b[?1004;2$y\x1b[?1;0c"), Some(std::time::Duration::ZERO), "DA1 ended: only what is queued");
+    }
+
+    #[test]
+    fn a_terminal_that_reports_focus_starts_focused() {
+        use super::super::attention::TermFocus::{Focused, Unfocused, Unknown};
+        assert!(FOCUS_PROBE.contains("\x1b[?1004$p"));
+        // kitty and Windows Terminal: focus reporting known (set, as ttyak turned it on; reset or permanently set too).
+        assert_eq!(start_focus(b"\x1b]99;i=ttyak-probe:p=?;a=focus\x1b\\\x1b[?1004;1$y\x1b[?62;c"), Focused);
+        assert_eq!(start_focus(b"\x1b[?1004;2$y\x1b[?62;c"), Focused);
+        assert_eq!(start_focus(b"\x1b[?1004;3$y\x1b[?62;c"), Focused);
+        // Not known, permanently off, or not answered: unknown as before.
+        assert_eq!(start_focus(b"\x1b[?1004;0$y\x1b[?62;c"), Unknown);
+        assert_eq!(start_focus(b"\x1b[?1004;4$y\x1b[?62;c"), Unknown);
+        assert_eq!(start_focus(b"\x1b[?62;c"), Unknown);
+        assert_eq!(start_focus(b""), Unknown);
+        // A terminal that reports its focus as reporting is turned on: what it said (the last report) wins.
+        assert_eq!(start_focus(b"\x1b[O\x1b[?1004;1$y\x1b[?62;c"), Unfocused);
+        assert_eq!(start_focus(b"\x1b[O\x1b[I\x1b[?62;c"), Focused);
     }
 
     #[test]
