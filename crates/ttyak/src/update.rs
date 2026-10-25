@@ -50,6 +50,11 @@ fn settings() -> crate::tui::settings::Updates {
     sane(crate::tui::settings::load().0.updates)
 }
 
+/// How long the check waits for `latest.json`: `check_timeout_secs` from settings.toml as read now.
+pub fn check_timeout() -> Duration {
+    Duration::from_secs(settings().check_timeout_secs)
+}
+
 /// The newest release for this platform, from `latest.json`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Latest {
@@ -330,10 +335,10 @@ fn client(limits: impl Fn(slack_core::reqwest::ClientBuilder) -> slack_core::req
     slack_core::api::http_client(|| limits(slack_core::reqwest::Client::builder().user_agent(concat!("ttyak/", env!("CARGO_PKG_VERSION")))))
 }
 
-/// `latest.json` at `url` (at most [`MAX_FEED_BYTES`], within `check_timeout_secs`): a GET with
+/// `latest.json` at `url` (at most [`MAX_FEED_BYTES`], within `timeout`): a GET with
 /// ttyak's name and version as the User-Agent, nothing else.
-pub async fn fetch(url: &str) -> Result<String> {
-    let http = client(|b| b.timeout(Duration::from_secs(settings().check_timeout_secs)))?;
+pub async fn fetch(url: &str, timeout: Duration) -> Result<String> {
+    let http = client(|b| b.timeout(timeout))?;
     bounded_text(http.get(url), MAX_FEED_BYTES).await.context("latest.json")
 }
 
@@ -352,7 +357,7 @@ pub fn spawn(reports: tokio::sync::mpsc::UnboundedSender<Report>, asks: tokio::s
     let Some(path) = state_path() else { return };
     let current = Version::parse(env!("CARGO_PKG_VERSION")).expect("the package version is semver");
     let url = std::env::var(URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| URL.to_string());
-    tokio::spawn(run(path, crate::install::platform(), url, current, reports, asks, |u: String| async move { fetch(&u).await }, settings));
+    tokio::spawn(run(path, crate::install::platform(), url, current, reports, asks, |u: String| async move { fetch(&u, check_timeout()).await }, settings));
 }
 
 /// [`spawn`]'s task, with `path` for `updates.json`, `fetch` for the GET and `settings` for
@@ -602,6 +607,8 @@ struct Release {
     max_sums: u64,
     /// What the platform says of the executables' signatures.
     verifier: &'static dyn Verifier,
+    /// How long connecting and each wait for data may take (`download_timeout_secs`).
+    timeout: Duration,
 }
 
 impl Release {
@@ -609,7 +616,7 @@ impl Release {
     fn this() -> Result<Release> {
         let base = std::env::var(DOWNLOAD_URL_ENV).ok().filter(|u| !u.is_empty()).unwrap_or_else(|| DOWNLOAD_URL.to_string());
         let platform = crate::install::platform().context("ttyak is not released for this platform")?;
-        Ok(Release { base: base.trim_end_matches('/').to_string(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: VERIFIER })
+        Ok(Release { base: base.trim_end_matches('/').to_string(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: VERIFIER, timeout: Duration::from_secs(settings().download_timeout_secs) })
     }
 
     /// `version`'s archive for this platform and its `SHA256SUMS`.
@@ -634,7 +641,7 @@ async fn self_update_from(latest: &Latest, install: &Install, progress: &Progres
     let leftovers = Leftovers(vec![download.clone(), staged(&dir), staged_record(&dir)]);
     let name = format!("ttyak-{}-{}.zip", latest.version, release.platform);
     // Connecting and every wait for data alike.
-    let timeout = Duration::from_secs(settings().download_timeout_secs);
+    let timeout = release.timeout;
     let http = client(|b| b.connect_timeout(timeout).read_timeout(timeout))?;
 
     // The archive, its SHA256 taken as it comes.
@@ -913,7 +920,7 @@ mod tests {
             // The page ttyak builds from the version is the one render.py names.
             let notes = serde_json::from_str::<serde_json::Value>(rendered).unwrap()["notes"].as_str().unwrap().to_string();
             assert_eq!(page_at(PAGES_URL, &l.version), notes);
-            let release = Release { base: DOWNLOAD_URL.into(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: &NoSignatures };
+            let release = Release { base: DOWNLOAD_URL.into(), platform, max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: &NoSignatures, timeout: Duration::from_secs(30) };
             assert_eq!(l.asset.url, release.urls(&l.version).0, "{platform}");
             assert!(l.asset.sha256.len() == 64 && l.asset.sha256.bytes().all(|b| b.is_ascii_hexdigit()), "{platform}");
         }
@@ -1237,7 +1244,7 @@ mod tests {
             sock.write_all(format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
             String::from_utf8_lossy(&buf[..n]).into_owned()
         });
-        assert_eq!(fetch(&url).await.unwrap(), "{\"ok\":1}");
+        assert_eq!(fetch(&url, Duration::from_secs(10)).await.unwrap(), "{\"ok\":1}");
         let request = server.await.unwrap().to_lowercase();
         assert!(request.starts_with("get /latest.json http/1.1\r\n"), "{request}");
         assert!(request.contains(&format!("user-agent: ttyak/{}\r\n", env!("CARGO_PKG_VERSION"))), "{request}");
@@ -1246,14 +1253,28 @@ mod tests {
         assert_eq!(headers, ["accept", "host", "user-agent"], "no cookies, nothing about you: {request}");
     }
 
+    /// The check waits as long as it is told, never as settings.toml says (tests never read the user's).
+    #[tokio::test]
+    async fn fetch_waits_as_long_as_it_is_told() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/latest.json", listener.local_addr().unwrap());
+        // Takes the request and never answers.
+        let _server = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(600)).await;
+        });
+        let e = tokio::time::timeout(Duration::from_secs(4), fetch(&url, Duration::from_millis(300))).await.expect("given up within its own timeout").unwrap_err();
+        assert!(format!("{e:#}").contains("latest.json"), "{e:#}");
+    }
+
     #[tokio::test]
     async fn the_feed_is_read_up_to_64_kb() {
         let at_most = vec![b' '; 64 << 10];
         let more = vec![b' '; (64 << 10) + 1];
         let (base, _) = serve(vec![("/fits".into(), at_most.clone()), ("/big".into(), more.clone()), ("/unsized".into(), more)], Some(("/unsized".into(), Quirk::NoLength))).await;
-        assert_eq!(fetch(&format!("{base}/fits")).await.unwrap().len(), at_most.len());
+        assert_eq!(fetch(&format!("{base}/fits"), Duration::from_secs(10)).await.unwrap().len(), at_most.len());
         for path in ["/big", "/unsized"] {
-            let e = fetch(&format!("{base}{path}")).await.unwrap_err();
+            let e = fetch(&format!("{base}{path}"), Duration::from_secs(10)).await.unwrap_err();
             assert!(format!("{e:#}").contains("too big"), "{path}: {e:#}");
         }
     }
@@ -1418,12 +1439,17 @@ mod tests {
         }
 
         async fn update_with(&self, latest: &Latest, install: &Install, progress: &Progress, max_zip: u64, max_sums: u64) -> Result<PathBuf> {
-            self_update_from(latest, install, progress, &Release { base: self.base.clone(), platform: "x86_64-linux", max_zip, max_sums, verifier: &NoSignatures }).await
+            self_update_from(latest, install, progress, &Release { base: self.base.clone(), platform: "x86_64-linux", max_zip, max_sums, verifier: &NoSignatures, timeout: Duration::from_secs(30) }).await
+        }
+
+        /// [`Fixture::update`] waiting at most `timeout` for data.
+        async fn update_within(&self, latest: &Latest, install: &Install, progress: &Progress, timeout: Duration) -> Result<PathBuf> {
+            self_update_from(latest, install, progress, &Release { base: self.base.clone(), platform: "x86_64-linux", max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: &NoSignatures, timeout }).await
         }
 
         /// [`Fixture::update`] with signatures as `verifier` says.
         async fn update_verified(&self, latest: &Latest, install: &Install, progress: &Progress, verifier: &'static dyn Verifier) -> Result<PathBuf> {
-            self_update_from(latest, install, progress, &Release { base: self.base.clone(), platform: "x86_64-linux", max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier }).await
+            self_update_from(latest, install, progress, &Release { base: self.base.clone(), platform: "x86_64-linux", max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier, timeout: Duration::from_secs(30) }).await
         }
 
         fn requests(&self) -> usize {
@@ -1562,6 +1588,17 @@ mod tests {
         assert_eq!((std::fs::read(&install.exe).unwrap(), temp.listing()), (b"old ttyak".to_vec(), vec!["install.json".to_string(), EXE.into()]));
     }
 
+    /// A download that stops sending gives up after the release's timeout, never settings.toml's.
+    #[tokio::test]
+    async fn a_stalled_download_gives_up_after_its_timeout() {
+        let temp = Temp::new("stalled");
+        let zip = archive(&[(EXE, b"new ttyak")]);
+        let (install, latest, fixture) = release(&temp, zip.clone(), Some(sums_for(&zip)), None, Some(Quirk::Stall)).await;
+        let e = tokio::time::timeout(Duration::from_secs(5), fixture.update_within(&latest, &install, &Progress::default(), Duration::from_millis(300))).await.expect("given up within its own timeout").unwrap_err();
+        assert!(format!("{e:#}").contains("could not download"), "{e:#}");
+        assert!(!temp.listing().iter().any(|n| n.starts_with(".ttyak-update-")), "{:?}", temp.listing());
+    }
+
     #[tokio::test]
     async fn a_cancel_removes_the_download() {
         let temp = Temp::new("cancel");
@@ -1606,7 +1643,7 @@ mod tests {
             assert_eq!((std::fs::read(&install.exe).unwrap(), temp.listing()), (b"old ttyak".to_vec(), vec!["install.json".to_string(), EXE.into()]), "{case}");
         }
         // An https release refuses the same address over http.
-        let github = Release { base: "https://github.com/dmytrobsp/ttyak/releases/download".into(), platform: "x86_64-linux", max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: &NoSignatures };
+        let github = Release { base: "https://github.com/dmytrobsp/ttyak/releases/download".into(), platform: "x86_64-linux", max_zip: MAX_ZIP_BYTES, max_sums: MAX_SUMS_BYTES, verifier: &NoSignatures, timeout: Duration::from_secs(30) };
         assert_eq!(github.urls(&v("9.9.9")), ("https://github.com/dmytrobsp/ttyak/releases/download/v9.9.9/ttyak-9.9.9-x86_64-linux.zip".to_string(), "https://github.com/dmytrobsp/ttyak/releases/download/v9.9.9/SHA256SUMS".to_string()));
         let mut plain_http = latest("9.9.9");
         plain_http.asset.url = "http://github.com/dmytrobsp/ttyak/releases/download/v9.9.9/ttyak-9.9.9-x86_64-linux.zip".into();
