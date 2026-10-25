@@ -273,17 +273,17 @@ pub fn next_mode(current: &str, drawable: &[&'static str]) -> &'static str {
 pub const FOCUS_PROBE: &str = "\x1b[?1004$p";
 
 /// The terminal's focus at start from its answers to the probe (`reply`): what it reported as reporting was turned on
-/// (some terminals do), else focused when it knows focus reporting (kitty and Windows Terminal report nothing until the
-/// next change, and a terminal ttyak was just started in is almost always the one in front), else unknown. No terminal
-/// answers a question about its focus (DECRQM ?1004 says only whether it reports it; kitty's `@ ls` needs remote
-/// control). Wrong when started in a window behind: until the first focus change it counts as in front, so no bell, no
+/// (some terminals do), else focused when focus reporting is on (ttyak turned it on before asking, so reset means the
+/// terminal refused it; kitty and Windows Terminal report nothing until the next change, and a terminal ttyak was just
+/// started in is almost always the one in front), else unknown. No terminal answers a question about its focus
+/// (DECRQM ?1004 says only whether it reports it; kitty's `@ ls` needs remote control). Wrong when started in a window behind: until the first focus change it counts as in front, so no bell, no
 /// bubble for the open conversation and no fallback raise after a click on the terminal's bubble.
 pub fn start_focus(reply: &[u8]) -> TermFocus {
     let last = |report: &[u8]| reply.windows(3).rposition(|w| w == report);
     match (last(b"\x1b[I"), last(b"\x1b[O")) {
         (Some(i), o) if o.is_none_or(|o| i > o) => TermFocus::Focused,
         (_, Some(_)) => TermFocus::Unfocused,
-        _ if decrqm(reply, 1004) == Some(true) => TermFocus::Focused,
+        _ if matches!(decrqm_state(reply, 1004), Some("1" | "3")) => TermFocus::Focused,
         _ => TermFocus::Unknown,
     }
 }
@@ -291,15 +291,21 @@ pub fn start_focus(reply: &[u8]) -> TermFocus {
 /// The terminal's answer about private mode `mode` (DECRQM: `CSI ? mode ; state $ y`): yes when it knows the mode, no
 /// when it says it does not, None when it did not answer.
 pub fn decrqm(reply: &[u8], mode: u32) -> Option<bool> {
-    let text = String::from_utf8_lossy(reply);
-    let head = format!("\x1b[?{mode};");
-    let rest = &text[text.find(&head)? + head.len()..];
-    let state = &rest[..rest.find("$y")?];
-    match state {
+    match decrqm_state(reply, mode)? {
         "1" | "2" | "3" => Some(true),
         "0" | "4" => Some(false),
         _ => None,
     }
+}
+
+/// The state the terminal answered for private mode `mode` (DECRQM): 0 not known, 1 set, 2 reset, 3 permanently set, 4
+/// permanently reset.
+fn decrqm_state(reply: &[u8], mode: u32) -> Option<&'static str> {
+    let text = String::from_utf8_lossy(reply);
+    let head = format!("\x1b[?{mode};");
+    let rest = &text[text.find(&head)? + head.len()..];
+    let state = &rest[..rest.find("$y")?];
+    ["0", "1", "2", "3", "4"].into_iter().find(|s| state == *s)
 }
 
 /// Whether a primary device attributes reply (`ESC [ ? 63 ; 1 ; 2 ; 4 ; … c`) lists sixel (4).
@@ -485,9 +491,12 @@ fn drain_wait(reply: &[u8]) -> Option<std::time::Duration> {
     (!reply.is_empty()).then(|| if da1_ended(reply) { std::time::Duration::ZERO } else { std::time::Duration::from_millis(200) })
 }
 
-/// Whether `reply` holds DA1's answer (`CSI ? … c`), which ends what the terminal answers.
+/// Whether `reply` ends with DA1's whole answer (`CSI ? <digits and ;> c` as its last sequence), which ends what the
+/// terminal answers (DECRQM's answers start with `CSI ?` too).
 fn da1_ended(reply: &[u8]) -> bool {
-    reply.ends_with(b"c") && reply.windows(3).any(|w| w == b"\x1b[?")
+    let Some(start) = reply.windows(3).rposition(|w| w == b"\x1b[?") else { return false };
+    let params = &reply[start + 3..];
+    params.len() > 1 && params.ends_with(b"c") && params[..params.len() - 1].iter().all(|b| b.is_ascii_digit() || *b == b';')
 }
 
 /// Add what a key event of the Windows console (`down`, its UTF-16 `unit`) typed to `reply`: the terminal's answers
@@ -778,6 +787,10 @@ mod tests {
         key_text(true, 'é' as u16, &mut reply);
         assert_eq!(reply, "é".as_bytes());
         assert!(!da1_ended(b"\x1b[?1004;2$y") && !da1_ended(b"abc") && da1_ended(b"\x1b[?1004;2$y\x1b[?1;0c"));
+        // Only a whole DA1 answer as the last sequence ends them: not DECRQM's answer followed by more ending in `c`.
+        assert!(!da1_ended(b"\x1b[?1004;1$y\x1b]99;i=ttyak-probe:p=?;a=focus,report:c"));
+        assert!(!da1_ended(b"\x1b[?1004;1$yabc") && !da1_ended(b"\x1b[?62;4") && !da1_ended(b"\x1b[?c"));
+        assert!(da1_ended(b"\x1b[?1004;1$y\x1b]99;i=ttyak-probe:p=?;a=focus,report:c=1\x1b\\\x1b[?62;4;52;c"));
     }
 
     #[test]
@@ -834,11 +847,12 @@ mod tests {
     fn a_terminal_that_reports_focus_starts_focused() {
         use super::super::attention::TermFocus::{Focused, Unfocused, Unknown};
         assert!(FOCUS_PROBE.contains("\x1b[?1004$p"));
-        // kitty and Windows Terminal: focus reporting known (set, as ttyak turned it on; reset or permanently set too).
+        // kitty and Windows Terminal: focus reporting on (set, as ttyak turned it on; or permanently set).
         assert_eq!(start_focus(b"\x1b]99;i=ttyak-probe:p=?;a=focus\x1b\\\x1b[?1004;1$y\x1b[?62;c"), Focused);
-        assert_eq!(start_focus(b"\x1b[?1004;2$y\x1b[?62;c"), Focused);
         assert_eq!(start_focus(b"\x1b[?1004;3$y\x1b[?62;c"), Focused);
-        // Not known, permanently off, or not answered: unknown as before.
+        // Reset after ttyak turned it on (focus reporting turned off in the terminal: no report will come), not known,
+        // permanently off, or not answered: unknown as before.
+        assert_eq!(start_focus(b"\x1b[?1004;2$y\x1b[?62;c"), Unknown);
         assert_eq!(start_focus(b"\x1b[?1004;0$y\x1b[?62;c"), Unknown);
         assert_eq!(start_focus(b"\x1b[?1004;4$y\x1b[?62;c"), Unknown);
         assert_eq!(start_focus(b"\x1b[?62;c"), Unknown);
