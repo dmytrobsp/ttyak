@@ -136,6 +136,7 @@ impl Media {
         let reply = device_attributes(probe);
         let osc99 = super::osc99::supported(&String::from_utf8_lossy(&reply));
         tracing::info!(osc99, "terminal notifications");
+        // (On Windows such a sixel draws with ratatui-image's default cell size: there is no pixel-size fallback.)
         let da1_sixel = picker.protocol_type() == ProtocolType::Halfblocks && da1_has_sixel(&reply);
         if da1_sixel {
             tracing::info!("the terminal advertises sixel but did not report its cell size: using sixel");
@@ -182,6 +183,11 @@ impl Media {
     /// The terminal draws real pictures (not half blocks).
     pub fn graphics(&self) -> bool {
         self.picker.protocol_type() != ProtocolType::Halfblocks
+    }
+
+    /// The terminal answered with a protocol for real pictures (whatever `TTYAK_GRAPHICS` or the setting chose).
+    pub fn detected_graphics(&self) -> bool {
+        self.detected != ProtocolType::Halfblocks
     }
 
     /// Cells to reserve under an image file's line when at most `max_cols` wide, or None
@@ -303,7 +309,7 @@ pub fn device_attributes(before: &str) -> Vec<u8> {
 pub fn device_attributes(before: &str) -> Vec<u8> {
     use std::io::Write;
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT, ReadConsoleInputW, STD_INPUT_HANDLE};
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, ReadConsoleInputW, STD_INPUT_HANDLE};
     use windows_sys::Win32::System::Threading::WaitForSingleObject;
     // SAFETY: plain console calls on this process's own standard input, with buffers that outlive them.
     let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
@@ -315,21 +321,42 @@ pub fn device_attributes(before: &str) -> Vec<u8> {
     if out.write_all(before.as_bytes()).and_then(|_| out.write_all(b"\x1b[c")).and_then(|_| out.flush()).is_err() {
         return Vec::new();
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    // Records before `until` (one at a time, so the rest stays for crossterm), or None when there are none by then.
+    let next = |until: std::time::Instant, take: bool| -> Option<INPUT_RECORD> {
+        let mut record = INPUT_RECORD::default();
+        let mut read = 0;
+        loop {
+            if unsafe { PeekConsoleInputW(input, &mut record, 1, &mut read) } == 0 {
+                return None;
+            }
+            if read == 1 {
+                if take && unsafe { ReadConsoleInputW(input, &mut record, 1, &mut read) } == 0 {
+                    return None;
+                }
+                return Some(record);
+            }
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() || unsafe { WaitForSingleObject(input, left.as_millis().max(1) as u32) } != WAIT_OBJECT_0 {
+                return None;
+            }
+        }
+    };
+    let key = |record: &INPUT_RECORD| (u32::from(record.EventType) == KEY_EVENT).then(|| unsafe { (record.Event.KeyEvent.bKeyDown != 0, record.Event.KeyEvent.uChar.UnicodeChar) });
+    let start = std::time::Instant::now();
     let mut reply = Vec::new();
     while !da1_ended(&reply) {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() || unsafe { WaitForSingleObject(input, left.as_millis().max(1) as u32) } != WAIT_OBJECT_0 {
-            break;
+        let Some(record) = next(start + std::time::Duration::from_millis(500), true) else { break };
+        if let Some((down, unit)) = key(&record) {
+            key_text(down, unit, &mut reply);
         }
-        let mut records = [INPUT_RECORD::default(); 64];
-        let mut read = 0;
-        if unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), records.len() as u32, &mut read) } == 0 {
+    }
+    // What follows that is more of the answers (DA1's last key-up; answers coming late, briefly) is taken too: crossterm
+    // would read it as key presses (Esc, [, ?, …), which NORMAL has bindings for. The first record that isn't stays.
+    let until = std::time::Instant::now() + if da1_ended(&reply) { std::time::Duration::ZERO } else { std::time::Duration::from_millis(200) };
+    let mut shape = ReplyShape::after(&reply);
+    while let Some((down, unit)) = next(until, false).as_ref().and_then(key) {
+        if !shape.takes(down, unit) || next(until, true).is_none() {
             break;
-        }
-        for record in records.iter().take(read as usize).filter(|r| u32::from(r.EventType) == KEY_EVENT) {
-            let key = unsafe { record.Event.KeyEvent };
-            key_text(key.bKeyDown != 0, unsafe { key.uChar.UnicodeChar }, &mut reply);
         }
     }
     reply
@@ -340,13 +367,69 @@ pub fn device_attributes(_before: &str) -> Vec<u8> {
     Vec::new()
 }
 
+/// What the console's input holds of the terminal's answers past what was read (Windows): the escape sequence still open,
+/// and whether one has ended. Records that fit are taken, so late answers don't reach crossterm as key presses.
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct ReplyShape {
+    open: Vec<u8>,
+    seen: bool,
+}
+
+#[cfg(any(windows, test))]
+impl ReplyShape {
+    /// The shape after `reply`, what was read already.
+    fn after(reply: &[u8]) -> ReplyShape {
+        let mut shape = ReplyShape::default();
+        for &b in reply {
+            if !shape.push(b) {
+                shape.open.clear();
+                shape.push(b);
+            }
+        }
+        shape
+    }
+
+    /// Whether the key event `down`/`unit` belongs to an answer (then it is taken): a key-up within or after one, or a
+    /// character that goes on with an escape sequence (CSI, or OSC/DCS/APC up to its terminator).
+    fn takes(&mut self, down: bool, unit: u16) -> bool {
+        if !down {
+            return self.seen || !self.open.is_empty();
+        }
+        u8::try_from(unit).is_ok_and(|b| b.is_ascii() && self.push(b))
+    }
+
+    /// Add `b` to the open sequence when it fits there (or starts one), closing it at its end.
+    fn push(&mut self, b: u8) -> bool {
+        let fits = match self.open.as_slice() {
+            [] => b == 0x1b,
+            [0x1b] => matches!(b, b'[' | b']' | b'P' | b'_'),
+            [0x1b, b'[', ..] if (0x40..=0x7e).contains(&b) => return self.close(),
+            [0x1b, b'[', ..] => (0x20..=0x3f).contains(&b),
+            [.., 0x1b] => return b == b'\\' && self.close(),
+            _ if b == 0x07 => return self.close(),
+            _ => b == 0x1b || (0x20..=0x7e).contains(&b),
+        };
+        if fits {
+            self.open.push(b);
+        }
+        fits
+    }
+
+    fn close(&mut self) -> bool {
+        self.open.clear();
+        self.seen = true;
+        true
+    }
+}
+
 /// Whether `reply` holds DA1's answer (`CSI ? … c`), which ends what the terminal answers.
 fn da1_ended(reply: &[u8]) -> bool {
     reply.ends_with(b"c") && reply.windows(3).any(|w| w == b"\x1b[?")
 }
 
 /// Add what a key event of the Windows console (`down`, its UTF-16 `unit`) typed to `reply`: the terminal's answers
-/// come as key presses there.
+/// come as key presses there. A surrogate half is dropped (the answers are ASCII).
 #[cfg(any(windows, test))]
 fn key_text(down: bool, unit: u16, reply: &mut Vec<u8>) {
     if let Some(c) = char::from_u32(u32::from(unit)).filter(|c| down && *c != '\0') {
@@ -636,6 +719,31 @@ mod tests {
     }
 
     #[test]
+    fn what_comes_after_the_answers_is_left_unless_it_is_more_answers() {
+        // Key-down and key-up of each character, as the console hands them over.
+        let feed = |shape: &mut ReplyShape, text: &str| text.encode_utf16().all(|u| shape.takes(true, u) && shape.takes(false, u));
+        // Late answers (OSC 99, then DA1) after the deadline: all taken, a key typed after them left for crossterm.
+        let mut shape = ReplyShape::after(b"");
+        assert!(feed(&mut shape, "\x1b]99;i=ttyak-probe:p=?;a=focus,report\x1b\\\x1b[?61;4;6c"));
+        assert!(!shape.takes(true, 'j' as u16));
+        // DECRQM's answer (an intermediate before its final byte) too.
+        assert!(feed(&mut ReplyShape::after(b""), "\x1b[?1004;2$y\x1b[?1;0c"));
+        // An answer cut off at the deadline goes on where it stopped.
+        let mut shape = ReplyShape::after(b"\x1b[?61;4");
+        assert!(shape.takes(true, 'c' as u16) && shape.takes(false, 'c' as u16));
+        assert!(!shape.takes(true, 'k' as u16));
+        // Once DA1 has ended: its last key-up is taken, the user's keys are not.
+        let mut shape = ReplyShape::after(b"\x1b[?61;4c");
+        assert!(shape.takes(false, 'c' as u16));
+        assert!(!shape.takes(true, ':' as u16));
+        // Nothing answered: a typed key (down or up) is not an answer, nor is Esc followed by one.
+        let mut shape = ReplyShape::after(b"");
+        assert!(!shape.takes(true, 'j' as u16) && !shape.takes(false, 'j' as u16));
+        assert!(shape.takes(true, 0x1b) && !shape.takes(true, 'j' as u16));
+        assert!(!ReplyShape::after(b"").takes(true, 'é' as u16));
+    }
+
+    #[test]
     fn graphics_choices() {
         // xterm's real replies: as a VT340 (sixel) and by default.
         assert_eq!(override_for(ProtocolType::Kitty, "WezTerm"), Some(ProtocolType::Iterm2), "WezTerm: no kitty placeholders");
@@ -682,6 +790,20 @@ mod tests {
         // Windows: Windows PowerShell's console answers the query with no cell size; Windows Terminal answers sixel.
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Sixel, &[Sixel, cell], false, ""), ["auto", "sixel", "halfblocks"]);
+    }
+
+    #[test]
+    fn a_protocol_forced_is_not_one_the_terminal_answered() {
+        // TTYAK_GRAPHICS=sixel in a terminal that answered nothing: drawn with sixel, not detected.
+        let mut media = Media::with(Picker::halfblocks());
+        media.picker.set_protocol_type(ProtocolType::Sixel);
+        assert!(media.graphics() && !media.detected_graphics());
+        assert!(Media::with({
+            let mut p = Picker::halfblocks();
+            p.set_protocol_type(ProtocolType::Sixel);
+            p
+        })
+        .detected_graphics());
     }
 
     #[test]

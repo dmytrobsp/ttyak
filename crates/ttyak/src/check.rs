@@ -93,7 +93,8 @@ fn answered(reply: &[u8]) -> bool {
     reply.windows(3).any(|w| w == b"\x1b[?") && reply.ends_with(b"c")
 }
 
-/// The pictures and OSC 99 rows from what the picture query found (`graphics`: a protocol, or half blocks only), whether
+/// The pictures and OSC 99 rows from what the picture query found (`graphics`: a protocol, or half blocks only; not
+/// what `TTYAK_GRAPHICS` forces), whether
 /// OSC 99 was offered, and the answers fenced by DA1 (`reply`): a protocol the terminal answered stands without DA1; half
 /// blocks only and OSC 99 are known only when the terminal was heard.
 fn heard(graphics: Option<bool>, osc99: bool, reply: &[u8]) -> (Option<bool>, Option<bool>) {
@@ -106,11 +107,14 @@ fn true_colour(colorterm: Option<&str>) -> Option<bool> {
     colorterm.filter(|c| matches!(c.trim(), "truecolor" | "24bit")).map(|_| true)
 }
 
-/// UTF-8 from the locale variables (`$LC_ALL`, `$LC_CTYPE`, `$LANG`, the first one set decides); else yes on Windows'
-/// console (`console`: it takes ttyak's text as UTF-16, whatever its code page); None when nothing says.
-fn utf8(vars: &[Option<&str>], console: bool) -> Option<bool> {
-    let Some(v) = vars.iter().flatten().find(|v| !v.is_empty()) else { return console.then_some(true) };
-    let v = v.to_lowercase();
+/// UTF-8: yes on Windows (`windows`; a console takes ttyak's text as UTF-16 whatever its code page, and a pty such as
+/// mintty's or msys's gets UTF-8, mintty's default — the locale variables say nothing there); elsewhere from the locale
+/// variables (`$LC_ALL`, `$LC_CTYPE`, `$LANG`, the first one set decides); None when none is set.
+fn utf8(vars: &[Option<&str>], windows: bool) -> Option<bool> {
+    if windows {
+        return Some(true);
+    }
+    let v = vars.iter().flatten().find(|v| !v.is_empty())?.to_lowercase();
     Some(v.contains("utf-8") || v.contains("utf8"))
 }
 
@@ -195,7 +199,7 @@ fn terminal(escapes: bool) -> (Vec<(String, Option<bool>)>, Option<bool>) {
     let (mut graphics, mut osc99, mut modes) = (None, false, Vec::new());
     if let Some(_raw) = escapes.then(Raw::on).flatten() {
         let media = crate::tui::media::Media::detect("auto");
-        (graphics, osc99) = (Some(media.graphics()), media.osc99);
+        (graphics, osc99) = (Some(media.detected_graphics()), media.osc99);
         modes = crate::tui::media::device_attributes("\x1b[?1000$p\x1b[?1004$p\x1b[?2004$p");
     }
     rows.push((tr(MOUSE).into_owned(), mode(&modes, 1000)));
@@ -439,8 +443,8 @@ mod tests {
         assert_eq!(utf8(&[None, Some("C.utf8")], false), Some(true));
         assert_eq!(utf8(&[Some(""), Some("POSIX")], false), Some(false));
         assert_eq!(utf8(&[None, None], false), None);
-        // Windows' console takes ttyak's text as UTF-16, whatever its code page; the locale variables still decide first.
+        // Windows: the locale variables say nothing about how ttyak writes there.
         assert_eq!(utf8(&[None, None], true), Some(true));
-        assert_eq!(utf8(&[Some("POSIX")], true), Some(false));
+        assert_eq!(utf8(&[Some("POSIX")], true), Some(true));
     }
 }
