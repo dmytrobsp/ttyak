@@ -457,7 +457,9 @@ one at a time, since the first one waits for the answer to macOS's question; eve
 ended. Tried: sway (headless; also two footclient windows of one foot server, told apart by title), X11 (Xvfb with
 openbox and an `.Xauthority` cookie) and tmux inside sway and inside X11 with a stale tmux environment, raised for real
 in a container; what Hyprland with kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their
-documentation). A notification the terminal showed itself is brought forward by the terminal and not raised again.
+documentation). A notification the terminal showed itself is brought forward by the terminal and not raised again,
+unless the terminal takes no focus within 0.4 s of the click (kitty raises its window for a click on its popup, not for
+one in swaync's panel): then ttyak brings it forward as above.
 **Can't:** GNOME on Wayland (no program may raise another's window there; only a terminal that shows notifications
 itself brings its window forward); the right tab in terminals without remote control (Ghostty, foot, Alacritty, Windows
 Terminal; kitty without `listen_on`, since ttyak never talks to kitty over the terminal it draws in) — the window comes

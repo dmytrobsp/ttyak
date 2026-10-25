@@ -1883,9 +1883,9 @@ mod tests {
         // The terminal's own bubbles: it brings its window forward itself.
         {
             let mut m = p.machine.lock().unwrap();
-            (m.route, m.via_terminal) = (Some(route("opens it in ttyak; kitty brings its window and tab forward")), true);
+            (m.route, m.via_terminal) = (Some(route("opens it in ttyak; kitty raises the window, else ttyak")), true);
         }
-        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; kitty brings its window and tab forward"));
+        assert_eq!(p.machine_value(Field::ClickResult).as_deref(), Some("opens it in ttyak; kitty raises the window, else ttyak"));
         assert!(Field::TestNotification.value(&Workspace::default(), None, &Keymap::default()).ends_with("sends one"));
     }
 
@@ -1908,7 +1908,7 @@ mod tests {
         for want in super::super::notify::ROUTE_WORDS.iter().chain(super::super::system_dnd::WORDS) {
             assert!(words.iter().any(|w| w == want), "{want}");
         }
-        assert!(words.iter().any(|w| w == "opens it in ttyak; {terminal} brings its window and tab forward"));
+        assert!(words.iter().any(|w| w == "opens it in ttyak; {terminal} raises the window, else ttyak"));
     }
 
     #[test]

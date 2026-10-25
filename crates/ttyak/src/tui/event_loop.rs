@@ -2939,14 +2939,14 @@ impl App {
         view.started(progress, task.abort_handle());
     }
 
-    /// The update notification was clicked, or a self-update ended. True when the window is to be brought forward (a
-    /// click on the system notifier's bubble, as for messages).
+    /// The update notification was clicked, or a self-update ended. True when the window is to be brought forward now
+    /// (as for messages: [`forward_now`]).
     fn update_event(&mut self, event: super::update_view::UpdateEvent) -> bool {
         use super::update_view::UpdateEvent;
         match event {
             UpdateEvent::Clicked(on) => {
                 self.open_update_screen();
-                return on == super::notify::ClickedOn::System;
+                return forward_now(&self.notifier, on);
             }
             UpdateEvent::Finished { version, result } => {
                 if result.is_ok() {
@@ -4727,14 +4727,27 @@ fn ring_bell(notifier: &super::notify::Notifier, out: &mut impl std::io::Write) 
     }
 }
 
+/// Whether a click on a notification brings the window forward now: the system notifier's bubble does. The terminal's
+/// does after a short wait, unless the terminal takes focus first (kitty raises its own window for a click on its
+/// popup, not for one in swaync's panel).
+fn forward_now(notifier: &super::notify::Notifier, on: super::notify::ClickedOn) -> bool {
+    if on == super::notify::ClickedOn::Terminal {
+        match notifier.raise_unless_focused(std::time::Instant::now()) {
+            true => tracing::debug!(focus = ?notifier.focus(), "click reported by the terminal: brought forward unless it takes focus soon"),
+            false => tracing::debug!("click reported by the terminal while it is focused: nothing to bring forward"),
+        }
+    }
+    on == super::notify::ClickedOn::System
+}
+
 /// A click on a notification of workspace `index` (whichever was on screen when it was shown): opened here, or once
 /// this workspace has booted, or in that workspace after switching there. True when the window is to be brought
-/// forward: the system notifier's bubble (the terminal brings its own forward itself).
+/// forward now ([`forward_now`]).
 fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool {
     // F6's test notification leads nowhere: the window comes forward and that is all.
     if target.is_test() {
         app.status = super::prefs::test_clicked();
-        return on == super::notify::ClickedOn::System;
+        return forward_now(&app.notifier, on);
     }
     if index == app.workspace && !app.loading {
         app.open_target(target);
@@ -4749,7 +4762,7 @@ fn take_click(app: &mut App, (index, target, on): super::others::Click) -> bool 
             }
         }
     }
-    on == super::notify::ClickedOn::System
+    forward_now(&app.notifier, on)
 }
 
 /// Write what the terminal's notifications wait to have written to `out` (between draws, as the bell).
@@ -5402,6 +5415,7 @@ async fn run_workspace(
         }
         let which_key_due = app.which_key_due();
         let recording_due = app.recording_due();
+        let raise_due = notifier.raise_due();
         // You went somewhere (a key, a click, a notification): a step in the history.
         let mut went = Went::No;
         tokio::select! {
@@ -5470,6 +5484,13 @@ async fn run_workspace(
             _ = tokio::time::sleep_until(which_key_due.unwrap_or_else(std::time::Instant::now).into()), if which_key_due.is_some() => {}
             // A recording in F6 → Keys ends (at the top of the loop).
             _ = tokio::time::sleep_until(recording_due.unwrap_or_else(std::time::Instant::now).into()), if recording_due.is_some() => {}
+            // The terminal took no focus after a click it reported: ttyak brings the window forward.
+            _ = tokio::time::sleep_until(raise_due.unwrap_or_else(std::time::Instant::now).into()), if raise_due.is_some() => {
+                if notifier.take_raise(std::time::Instant::now()) {
+                    tracing::debug!("no focus after the click the terminal reported");
+                    super::raise::bring_forward(title.lock().unwrap_or_else(|e| e.into_inner()).last().map(String::from));
+                }
+            }
             _ = call_tick.tick(), if app.call.is_some() => {}
             _ = video_tick.tick(), if app.player.is_some() => {
                 if let Some(p) = app.player.as_mut() {
@@ -9031,7 +9052,9 @@ mod tests {
         super::handle_net(&mut app, super::Net::UpdateKnown(crate::update::Found { latest: new_version(), notify: true, desktop: true }));
         assert!(app.update_event(UpdateEvent::Clicked(ClickedOn::System)), "the system's bubble: the window is brought forward");
         assert!(app.update_view.is_some() && !app.update_pill);
-        assert!(!app.update_event(UpdateEvent::Clicked(ClickedOn::Terminal)), "the terminal's: it raised itself");
+        assert_eq!(app.notifier.raise_due(), None, "the system's: at once, nothing waits");
+        assert!(!app.update_event(UpdateEvent::Clicked(ClickedOn::Terminal)), "the terminal's: not at once");
+        assert!(app.notifier.raise_due().is_some(), "but if the terminal takes no focus soon");
     }
 
     #[tokio::test]
@@ -11380,7 +11403,10 @@ mod tests {
         assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
         let click = next_click(&mut clicked).await;
         assert_eq!((click.0, click.2), (0, super::super::notify::ClickedOn::Terminal), "this workspace's, kitty's");
-        assert!(!super::take_click(&mut app, click), "kitty brought its window forward itself");
+        assert!(!super::take_click(&mut app, click), "kitty brings its window forward itself");
+        assert!(app.notifier.raise_due().is_some(), "ttyak does, if no focus comes soon");
+        assert!(super::handle_event(&mut app, Event::FocusGained));
+        assert_eq!(app.notifier.raise_due(), None, "kitty did: nothing more");
         settle(&mut app, true);
         assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
         assert_eq!(app.mode(), super::Mode::Normal);
@@ -11400,7 +11426,8 @@ mod tests {
         assert!(super::handle_event(&mut app, Event::Osc("99;i=w0-C1;".into())));
         let click = next_click(&mut clicked).await;
         assert_eq!(click.0, 0, "the bubble's workspace, not the one shown");
-        assert!(!super::take_click(&mut app, click), "kitty's: not raised again");
+        assert!(!super::take_click(&mut app, click), "kitty's: not at once");
+        assert!(app.notifier.raise_due().is_some(), "unless the terminal takes no focus");
         assert_eq!(app.switch_to, Some(0), "{}", app.status);
         assert!(app.open_after.lock().unwrap().as_ref().is_some_and(|(i, _)| *i == 0), "opened there once it is up");
     }
@@ -11427,6 +11454,7 @@ mod tests {
         let click = next_click(&mut clicked).await;
         assert_eq!((click.0, click.2), (0, ClickedOn::System));
         assert!(super::take_click(&mut app, click), "the system's bubble: the window is brought forward");
+        assert_eq!(app.notifier.raise_due(), None, "at once, nothing waits");
         settle(&mut app, true);
         assert_eq!((app.current.as_deref(), app.messages.selected.clone()), (Some("C1"), Some(top_ts(5))));
         // Another workspace's bubble: switched there, and brought forward too.
@@ -11474,8 +11502,9 @@ mod tests {
         assert_eq!(app.current.as_deref(), Some("C1"), "opened nothing");
         assert!(app.prefs.is_some(), "F6 stays");
         assert!(app.status.contains("test notification was clicked"), "{}", app.status);
-        // The terminal's own: it raised itself.
+        // The terminal's own: not at once, only if the terminal takes no focus soon.
         assert!(!super::take_click(&mut app, (0, super::super::notify::Target::test(), ClickedOn::Terminal)));
+        assert!(app.notifier.raise_due().is_some());
     }
 
     #[tokio::test]

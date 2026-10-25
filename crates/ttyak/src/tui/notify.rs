@@ -63,7 +63,7 @@ pub struct Target {
     pub thread_ts: Option<String>,
 }
 
-/// Whose bubble was clicked: the terminal's own (it brought its window forward already) or the system notifier's.
+/// Whose bubble was clicked: the terminal's own (it brings its window forward itself, mostly) or the system notifier's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickedOn {
     Terminal,
@@ -885,11 +885,18 @@ struct Inner {
     shared: Arc<Shared>,
     /// The terminal's focus as last reported (the other workspaces' watchers share the window).
     focus: AtomicU8,
+    /// When the window is brought forward after a click the terminal reported, unless it takes focus first.
+    raise_at: Mutex<Option<std::time::Instant>>,
 }
 
 /// How long the system's answer about do-not-disturb is reused for the next event (an internal wait: a burst of
 /// messages asks the system once, not once each).
 const DND_REUSE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long after a click the terminal reported ttyak waits for the terminal to take focus before it brings the window
+/// forward itself (an internal wait: kitty raises its own window for a click on its popup, focus reported 3 ms later,
+/// but not for a click in swaync's panel; ttyak's own raise takes 10–30 ms, so a late raise still feels prompt).
+pub const RAISE_GRACE: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// How long a failed look for the notification server is remembered before the next (an internal wait: a hung bus
 /// costs [`SERVER_WAIT`] once, not for every command).
@@ -1014,7 +1021,7 @@ impl Notifier {
     }
 
     fn with_waits(backend: Arc<dyn Backend>, reuse: std::time::Duration, retry: std::time::Duration) -> Notifier {
-        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::new(Shared::new(reuse, retry)), focus: AtomicU8::new(TermFocus::Unknown as u8) }) }
+        Notifier { inner: Arc::new(Inner { backend, queue: OnceLock::new(), shared: Arc::new(Shared::new(reuse, retry)), focus: AtomicU8::new(TermFocus::Unknown as u8), raise_at: Mutex::new(None) }) }
     }
 
     fn send(&self, cmd: Cmd) {
@@ -1154,9 +1161,34 @@ impl Notifier {
 
     /// The terminal reported its focus.
     pub fn set_focus(&self, focus: TermFocus) {
+        if focus == TermFocus::Focused {
+            self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner()).take();
+        }
         if self.inner.focus.swap(focus as u8, Ordering::Relaxed) != focus as u8 {
             self.inner.shared.epoch.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// A click the terminal reported, at `now`: the window is brought forward after [`RAISE_GRACE`] unless the terminal
+    /// takes focus by then (it raised itself); nothing when it is focused already (false). Unreported focus counts as
+    /// not taken.
+    pub fn raise_unless_focused(&self, now: std::time::Instant) -> bool {
+        let wait = self.focus() != TermFocus::Focused;
+        if wait {
+            *self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(now + RAISE_GRACE);
+        }
+        wait
+    }
+
+    /// When the window is to be brought forward after a click the terminal reported, if it is.
+    pub fn raise_due(&self) -> Option<std::time::Instant> {
+        *self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether the window is to be brought forward by `now`, once.
+    pub fn take_raise(&self, now: std::time::Instant) -> bool {
+        let mut at = self.inner.raise_at.lock().unwrap_or_else(|e| e.into_inner());
+        at.take_if(|at| *at <= now).is_some()
     }
 
     /// The terminal's focus as last reported.
@@ -1253,7 +1285,7 @@ const SOUND_BY_TTYAK: &str = "ttyak";
 const SOUND_BY_NOBODY_OFF: &str = "nobody (the sound is off)";
 const SHOWN_BY_SYSTEM: &str = "the system's notifications";
 const CLICK_SYSTEM: &str = "opens it in ttyak";
-const CLICK_TERMINAL: &str = "opens it in ttyak; {terminal} brings its window and tab forward";
+const CLICK_TERMINAL: &str = "opens it in ttyak; {terminal} raises the window, else ttyak";
 const NOTHING_WHY: &str = "nothing: {why}";
 const NOTHING_TO_CLICK: &str = "nothing to click";
 const WIN_OFF_APP: &str = "Windows PowerShell's notifications are turned off (Settings → System → Notifications)";
@@ -2003,6 +2035,51 @@ mod tests {
         assert!(n.take_bell(), "one decided in this period rings");
     }
 
+    #[test]
+    fn a_click_the_terminal_reported_brings_the_window_forward_when_it_takes_no_focus() {
+        let (n, _server) = Notifier::fake();
+        n.set_focus(TermFocus::Unfocused);
+        let t0 = std::time::Instant::now();
+        n.raise_unless_focused(t0);
+        assert_eq!(n.raise_due(), Some(t0 + RAISE_GRACE));
+        assert!(!n.take_raise(t0 + RAISE_GRACE - std::time::Duration::from_millis(1)), "not before the grace is over");
+        assert!(n.take_raise(t0 + RAISE_GRACE), "no focus came: brought forward");
+        assert!(!n.take_raise(t0 + RAISE_GRACE * 2), "once");
+        assert_eq!(n.raise_due(), None);
+    }
+
+    #[test]
+    fn a_click_the_terminal_reported_and_raised_itself_brings_nothing_more() {
+        let (n, _server) = Notifier::fake();
+        n.set_focus(TermFocus::Unfocused);
+        let t0 = std::time::Instant::now();
+        n.raise_unless_focused(t0);
+        // kitty brought its window forward.
+        n.set_focus(TermFocus::Focused);
+        assert_eq!(n.raise_due(), None);
+        n.set_focus(TermFocus::Unfocused);
+        assert!(!n.take_raise(t0 + RAISE_GRACE), "focused in time, even if left again since");
+    }
+
+    #[test]
+    fn a_click_the_terminal_reported_while_focused_brings_nothing() {
+        let (n, _server) = Notifier::fake();
+        n.set_focus(TermFocus::Focused);
+        let t0 = std::time::Instant::now();
+        n.raise_unless_focused(t0);
+        assert_eq!(n.raise_due(), None);
+        assert!(!n.take_raise(t0 + RAISE_GRACE));
+    }
+
+    #[test]
+    fn a_click_the_terminal_reported_without_focus_reports_brings_the_window_forward() {
+        let (n, _server) = Notifier::fake();
+        assert_eq!(n.focus(), TermFocus::Unknown);
+        let t0 = std::time::Instant::now();
+        n.raise_unless_focused(t0);
+        assert!(n.take_raise(t0 + RAISE_GRACE), "nothing says the terminal raised itself");
+    }
+
     #[tokio::test]
     async fn route_tells_who_plays_the_sound() {
         let (n, server) = Notifier::fake();
@@ -2403,7 +2480,7 @@ mod tests {
         assert_eq!(server.calls().len(), 1, "the desktop's sound goes with the bubble: {:?}", server.calls());
         let out = n.take_output();
         assert!(out[0].contains(&format!("s={}", super::super::clipboard::base64(b"system"))) && out[1].contains(&format!("s={}", super::super::clipboard::base64(b"silent"))), "{out:?}");
-        assert_eq!(n.route("chime"), RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: "opens it in ttyak; kitty brings its window and tab forward".into() });
+        assert_eq!(n.route("chime"), RouteInfo { shown_by: "kitty".into(), sound_by: "ttyak".into(), click: "opens it in ttyak; kitty raises the window, else ttyak".into() });
         assert_eq!(n.route("system").sound_by, "the notification");
         // The system's do-not-disturb holds it back as well.
         server.set_suppressed(Some(true));
