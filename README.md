@@ -424,7 +424,8 @@ and then brings ttyak's window forward by the first of these that works here:
   left as it is, and the log says why, when no tab or several carry that title: two ttyaks of one workspace; ttyak in a
   split pane that isn't the focused one (Windows Terminal names the tab after its focused pane); a Windows Terminal
   profile with `tabTitle` or `suppressApplicationTitle`; a tab renamed by hand. Tried at the desktop after a toast
-  click: Windows Terminal 1.24's window and conhost's came forward; selecting the tab is not tried yet.
+  click: Windows Terminal 1.24's window and conhost's came forward, and Windows Terminal 1.24 selected ttyak's tab from
+  behind a cmd tab (its tabs are TabItems named as the title ttyak set).
 
 **On macOS** ttyak stays a plain program, not an app bundle, so it uses the Notification Center's older interface:
 its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
@@ -455,9 +456,10 @@ notification-center entry): a newer one replaces it in place (tried: one entry i
 shows the newer one as a new popup), and reading takes it off the screen and out of the notification center (tried in
 the notification center). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
 brings the console's window forward as above — tried at the desktop in Windows Terminal and in conhost — and in
-Windows Terminal selects ttyak's tab by its title (not tried yet; before that change Windows Terminal kept showing the
-tab that was in front). Two profiles of one workspace in two tabs carry the same title, so neither tab is selected
-there. A click on it later in the notification center does nothing — tried: no click reaches ttyak and no Windows
+Windows Terminal selects ttyak's tab by its title — tried: ttyak's tab behind a cmd tab, Windows Terminal unfocused, a
+click on the toast showed ttyak's tab with the message. Two profiles of one workspace in two tabs carry the same title,
+so neither tab is selected there (tried: the tab in front stays, the log says so). A click on it
+later in the notification center does nothing — tried: no click reaches ttyak and no Windows
 PowerShell opens (it has no COM activator registered, which takes an installer). Only the `system` sound goes with the
 toast (Windows' own, silenced with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
 profile — Windows 11's Do not disturb — read through an undocumented Windows state
