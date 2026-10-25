@@ -122,7 +122,7 @@ look for empty boxes or misaligned columns.
   no pictures, only half blocks (tried)
 - `ctl check`: run it in the terminal on the desktop — over ssh (no desktop session) its Focus Assist and notification
   rows read wrongly. Windows Terminal 1.24 and conhost answer its questions about mouse, focus and bracketed paste
-  (tried); neither says whether it draws OSC 8 links ("not known"; Windows Terminal does)
+  (tried); OSC 8 links can't be asked about ("not known" everywhere) — Windows Terminal draws them
 - toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
   says when it can't tell; with Follow the system's do-not-disturb on, the toast still goes out under Windows'
   do-not-disturb, without its sound, for Windows to file in the notification center (not tried yet)
