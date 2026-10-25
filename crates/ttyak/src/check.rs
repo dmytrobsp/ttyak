@@ -7,6 +7,8 @@
 pub struct Findings {
     pub terminal: Vec<(String, Option<bool>)>,
     pub system: Vec<(String, Option<String>)>,
+    /// The console does not take escape sequences (Windows' legacy console with no virtual terminal processing).
+    pub no_escapes: bool,
 }
 
 /// One sample line per kind of glyph, for the user to look at: (the group's name, its glyphs).
@@ -57,6 +59,7 @@ const SYSTEM_CLIPBOARD: &str = "the system's";
 const TITLE: &str = "ttyak ctl check — what this terminal and system offer";
 const TERMINAL: &str = "The terminal";
 const SYSTEM: &str = "The system";
+const NO_ESCAPES: &str = "This console does not take escape sequences (its virtual terminal processing could not be turned on), so it was not asked: run ttyak in Windows Terminal.";
 const NOT_A_TERMINAL: &str = "Not a terminal (stdin or stdout is not one: piped or redirected): the terminal part is skipped. Run it in your terminal.";
 const GLYPHS_HEAD: &str = "Glyphs: the | at the end of each line should sit in one column";
 const LOOK_FOR: &str = "Look for empty boxes or misaligned columns";
@@ -66,7 +69,7 @@ const LINK_TEXT: &str = "a link to ttyak.sh";
 
 pub const WORDS: &[&str] = &[
     UTF8, TRUE_COLOUR, MOUSE, FOCUS, PASTE, LINKS, OSC99, PICTURES, NO_PICTURES, SIZE, OPENER, NOTIFIER, CAPABILITIES, DND, SHOWN_BY, SOUND_BY, CLICK, RAISE, FFMPEG, GSTREAMER,
-    CLIPBOARD, FOUND, MISSING, BUILT_IN, YES, NO, NOT_KNOWN, MAC_SERVICE, WINDOWS_SERVICE, NO_SERVER, WAYLAND_CLIPBOARD, SYSTEM_CLIPBOARD, TITLE, TERMINAL, SYSTEM, NOT_A_TERMINAL,
+    CLIPBOARD, FOUND, MISSING, BUILT_IN, YES, NO, NOT_KNOWN, MAC_SERVICE, WINDOWS_SERVICE, NO_SERVER, WAYLAND_CLIPBOARD, SYSTEM_CLIPBOARD, TITLE, TERMINAL, SYSTEM, NO_ESCAPES, NOT_A_TERMINAL,
     GLYPHS_HEAD, LOOK_FOR, FONTS_HINT, LINKS_NAME, LINK_TEXT, "symbols", "arrows", "boxes and blocks", "emoji", "CJK",
 ];
 
@@ -90,15 +93,65 @@ fn answered(reply: &[u8]) -> bool {
     reply.windows(3).any(|w| w == b"\x1b[?") && reply.ends_with(b"c")
 }
 
+/// The pictures and OSC 99 rows from what the picture query found (`graphics`: a protocol, or half blocks only), whether
+/// OSC 99 was offered, and the answers fenced by DA1 (`reply`): a protocol the terminal answered stands without DA1; half
+/// blocks only and OSC 99 are known only when the terminal was heard.
+fn heard(graphics: Option<bool>, osc99: bool, reply: &[u8]) -> (Option<bool>, Option<bool>) {
+    let heard = answered(reply);
+    (graphics.filter(|g| *g || heard), heard.then_some(osc99))
+}
+
 /// 24-bit colour from `$COLORTERM`: a terminal that does not say may still have it.
 fn true_colour(colorterm: Option<&str>) -> Option<bool> {
     colorterm.filter(|c| matches!(c.trim(), "truecolor" | "24bit")).map(|_| true)
 }
 
-/// UTF-8 from the locale variables (`$LC_ALL`, `$LC_CTYPE`, `$LANG`, the first one set decides); None when none is set.
-fn utf8(vars: &[Option<&str>]) -> Option<bool> {
-    let v = vars.iter().flatten().find(|v| !v.is_empty())?.to_lowercase();
+/// UTF-8 from the locale variables (`$LC_ALL`, `$LC_CTYPE`, `$LANG`, the first one set decides); else yes on Windows'
+/// console (`console`: it takes ttyak's text as UTF-16, whatever its code page); None when nothing says.
+fn utf8(vars: &[Option<&str>], console: bool) -> Option<bool> {
+    let Some(v) = vars.iter().flatten().find(|v| !v.is_empty()) else { return console.then_some(true) };
+    let v = v.to_lowercase();
     Some(v.contains("utf-8") || v.contains("utf8"))
+}
+
+/// The console's escape sequences on for as long as it lives (Windows: virtual terminal processing, the console's mode
+/// put back when it drops; other terminals take them anyway). `escapes` is false when they could not be turned on.
+struct Vt {
+    #[cfg(windows)]
+    restore: Option<(windows_sys::Win32::Foundation::HANDLE, u32)>,
+    escapes: bool,
+}
+
+impl Vt {
+    fn on() -> Vt {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::Console::{ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE, SetConsoleMode};
+            // SAFETY: plain console calls on this process's own standard output.
+            let out = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+            let mut mode = 0;
+            // Not a console (piped: the terminal part is skipped), or on already.
+            if unsafe { GetConsoleMode(out, &mut mode) } == 0 || mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+                return Vt { restore: None, escapes: true };
+            }
+            if unsafe { SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) } == 0 {
+                return Vt { restore: None, escapes: false };
+            }
+            Vt { restore: Some((out, mode)), escapes: true }
+        }
+        #[cfg(not(windows))]
+        Vt { escapes: true }
+    }
+}
+
+impl Drop for Vt {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some((out, mode)) = self.restore {
+            // SAFETY: the handle and mode read in `on`.
+            unsafe { windows_sys::Win32::System::Console::SetConsoleMode(out, mode) };
+        }
+    }
 }
 
 /// Raw mode for as long as it lives, off again when it drops (also on a panic).
@@ -128,18 +181,19 @@ fn found(name: &str) -> String {
     tr(if on_path(name) { FOUND } else { MISSING }).into_owned()
 }
 
-/// What the terminal answers: queried in raw mode for a moment, before anything else reads the input.
-fn terminal() -> (Vec<(String, Option<bool>)>, Option<bool>) {
+/// What the terminal answers: queried in raw mode for a moment, before anything else reads the input (not asked when
+/// the console takes no `escapes`: the questions would show as text).
+fn terminal(escapes: bool) -> (Vec<(String, Option<bool>)>, Option<bool>) {
     use crate::tui::i18n::tr;
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return (Vec::new(), None);
     }
     let var = |n: &str| std::env::var(n).ok();
-    let mut rows = vec![(tr(UTF8).into_owned(), utf8(&[var("LC_ALL").as_deref(), var("LC_CTYPE").as_deref(), var("LANG").as_deref()]))];
+    let mut rows = vec![(tr(UTF8).into_owned(), utf8(&[var("LC_ALL").as_deref(), var("LC_CTYPE").as_deref(), var("LANG").as_deref()], cfg!(windows)))];
     rows.push((tr(TRUE_COLOUR).into_owned(), true_colour(var("COLORTERM").as_deref())));
     let (mut graphics, mut osc99, mut modes) = (None, false, Vec::new());
-    if let Some(_raw) = Raw::on() {
+    if let Some(_raw) = escapes.then(Raw::on).flatten() {
         let media = crate::tui::media::Media::detect("auto");
         (graphics, osc99) = (Some(media.graphics()), media.osc99);
         modes = crate::tui::media::device_attributes("\x1b[?1000$p\x1b[?1004$p\x1b[?2004$p");
@@ -148,8 +202,7 @@ fn terminal() -> (Vec<(String, Option<bool>)>, Option<bool>) {
     rows.push((tr(FOCUS).into_owned(), mode(&modes, 1004)));
     rows.push((tr(PASTE).into_owned(), mode(&modes, 2004)));
     rows.push((tr(LINKS).into_owned(), None));
-    let heard = answered(&modes);
-    let (graphics, osc99) = (graphics.filter(|_| heard), heard.then_some(osc99));
+    let (graphics, osc99) = heard(graphics, osc99, &modes);
     rows.push((tr(OSC99).into_owned(), osc99));
     let pictures = match graphics {
         Some(true) => crate::tui::media::drawable().iter().filter(|m| **m != "auto" && **m != "halfblocks").copied().collect::<Vec<_>>().join(", "),
@@ -210,13 +263,14 @@ fn notifications(terminal: Option<String>) -> Vec<(String, Option<String>)> {
     std::thread::spawn(work).join().unwrap_or_default()
 }
 
-/// What the terminal answered and what the system has. Nothing leaves the machine.
-pub fn findings() -> Findings {
+/// What the terminal answered and what the system has (`escapes`: the console takes escape sequences). Nothing leaves
+/// the machine.
+pub fn findings(escapes: bool) -> Findings {
     use crate::tui::{i18n::tr, osc99, raise};
     if let Err(e) = crate::tui::i18n::set(&crate::tui::settings::load().0.region.language) {
         tracing::debug!("language: {e}");
     }
-    let (terminal, osc99_answered) = terminal();
+    let (terminal, osc99_answered) = terminal(escapes);
     let mut system = Vec::new();
     let opener = if cfg!(windows) { tr(BUILT_IN).into_owned() } else { found(if cfg!(target_os = "macos") { "open" } else { "xdg-open" }) };
     system.push((tr(OPENER).into_owned(), Some(opener)));
@@ -229,7 +283,7 @@ pub fn findings() -> Findings {
         let wayland = std::env::var("WAYLAND_DISPLAY").is_ok_and(|v| !v.is_empty());
         system.push((tr(CLIPBOARD).into_owned(), Some(tr(if wayland { WAYLAND_CLIPBOARD } else { SYSTEM_CLIPBOARD }).into_owned())));
     }
-    Findings { terminal, system }
+    Findings { terminal, system, no_escapes: !escapes }
 }
 
 /// The report as text. Every word goes through `tr`.
@@ -249,6 +303,9 @@ pub fn report(f: &Findings) -> String {
             };
             out += &format!("  {label}: {value}\n");
         }
+        if f.no_escapes {
+            out += &format!("  {}\n", tr(NO_ESCAPES));
+        }
     }
     out += &format!("\n{}\n", tr(SYSTEM));
     for (label, value) in &f.system {
@@ -264,14 +321,18 @@ pub fn report(f: &Findings) -> String {
             let pad = 24usize.saturating_sub(glyphs.width());
             out += &format!("  {name}{name_pad}{glyphs}{}|\n", " ".repeat(pad));
         }
-        out += &format!("  {}: \x1b]8;;https://ttyak.sh\x1b\\{}\x1b]8;;\x1b\\\n", tr(LINKS_NAME), tr(LINK_TEXT));
+        if !f.no_escapes {
+            out += &format!("  {}: \x1b]8;;https://ttyak.sh\x1b\\{}\x1b]8;;\x1b\\\n", tr(LINKS_NAME), tr(LINK_TEXT));
+        }
         out += &format!("\n{}. {}\n", tr(LOOK_FOR), tr(FONTS_HINT));
     }
     out
 }
 
 pub fn run() {
-    print!("{}", report(&findings()));
+    // (On until the report, its link sample included, is printed.)
+    let vt = Vt::on();
+    print!("{}", report(&findings(vt.escapes)));
 }
 
 #[cfg(test)]
@@ -283,6 +344,7 @@ mod tests {
         Findings {
             terminal: vec![("UTF-8 text".into(), Some(true)), ("mouse reporting".into(), Some(false)), ("focus reporting".into(), None)],
             system: vec![("link opener".into(), Some("found".into())), ("ffmpeg".into(), None)],
+            no_escapes: false,
         }
     }
 
@@ -309,7 +371,7 @@ mod tests {
 
     #[test]
     fn outside_a_terminal_the_terminal_part_is_skipped() {
-        let r = report(&Findings { terminal: vec![], system: vec![("ffmpeg".into(), Some("found".into()))] });
+        let r = report(&Findings { terminal: vec![], system: vec![("ffmpeg".into(), Some("found".into()))], no_escapes: false });
         assert!(r.contains("Not a terminal"), "{r}");
         assert!(!r.contains("Look for empty boxes"), "{r}");
         assert!(r.contains("ffmpeg: found"), "{r}");
@@ -343,6 +405,27 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_da1_keeps_what_the_picture_query_found() {
+        // Windows Terminal answered ratatui-image's query with sixel, whatever came of DA1.
+        assert_eq!(heard(Some(true), false, b""), (Some(true), None));
+        assert_eq!(heard(Some(true), false, b"\x1b[?61;4c"), (Some(true), Some(false)));
+        // Half blocks only says no only when the terminal was heard at all.
+        assert_eq!(heard(Some(false), false, b""), (None, None));
+        assert_eq!(heard(Some(false), true, b"\x1b[?1;0c"), (Some(false), Some(true)));
+        assert_eq!(heard(None, false, b""), (None, None));
+    }
+
+    #[test]
+    fn a_console_without_escape_sequences_says_so_and_gets_none() {
+        let f = Findings { no_escapes: true, ..sample() };
+        let r = report(&f);
+        assert!(r.contains("This console does not take escape sequences"), "{r}");
+        assert!(!r.contains('\x1b'), "{r:?}");
+        assert!(r.contains("Glyphs:"), "{r}");
+        assert!(report(&sample()).contains("\x1b]8;;"), "the link sample where escapes work");
+    }
+
+    #[test]
     fn colour_from_the_environment() {
         assert_eq!(true_colour(Some("truecolor")), Some(true));
         assert_eq!(true_colour(Some("24bit")), Some(true));
@@ -352,9 +435,12 @@ mod tests {
 
     #[test]
     fn utf8_from_the_locale() {
-        assert_eq!(utf8(&[Some("en_US.UTF-8")]), Some(true));
-        assert_eq!(utf8(&[None, Some("C.utf8")]), Some(true));
-        assert_eq!(utf8(&[Some(""), Some("POSIX")]), Some(false));
-        assert_eq!(utf8(&[None, None]), None);
+        assert_eq!(utf8(&[Some("en_US.UTF-8")], false), Some(true));
+        assert_eq!(utf8(&[None, Some("C.utf8")], false), Some(true));
+        assert_eq!(utf8(&[Some(""), Some("POSIX")], false), Some(false));
+        assert_eq!(utf8(&[None, None], false), None);
+        // Windows' console takes ttyak's text as UTF-16, whatever its code page; the locale variables still decide first.
+        assert_eq!(utf8(&[None, None], true), Some(true));
+        assert_eq!(utf8(&[Some("POSIX")], true), Some(false));
     }
 }

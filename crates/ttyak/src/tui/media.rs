@@ -227,7 +227,7 @@ fn pick_protocol(choice: &str, env: Option<&str>, detected: ProtocolType, drawab
 /// The [`GRAPHICS`] this terminal can draw, in that order, from what detection learnt: the
 /// protocol "auto" draws with (`detected`, after the sixel and WezTerm corrections), the
 /// terminal's answers to the query (`capabilities`), whether it listed sixel in its device
-/// attributes when asked on its own (`da1_sixel`; never asked on Windows) and `$TERM_PROGRAM`.
+/// attributes when asked on its own (`da1_sixel`) and `$TERM_PROGRAM`.
 /// "auto" and "halfblocks" are always in it; nothing the terminal did not report is guessed,
 /// except iTerm2's protocol where ratatui-image or [`override_for`] already rely on it.
 pub fn drawable_modes(detected: ProtocolType, capabilities: &[Capability], da1_sixel: bool, term_program: &str) -> Vec<&'static str> {
@@ -278,7 +278,7 @@ pub fn device_attributes(before: &str) -> Vec<u8> {
     let stdin = rustix::stdio::stdin();
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     let mut reply = Vec::new();
-    while !reply.ends_with(b"c") || !reply.windows(3).any(|w| w == b"\x1b[?") {
+    while !da1_ended(&reply) {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
             break;
@@ -297,9 +297,61 @@ pub fn device_attributes(before: &str) -> Vec<u8> {
     reply
 }
 
-#[cfg(not(unix))]
+/// Windows: the answers come from the console's input as key presses (as ratatui-image reads them); nothing when the
+/// input is not a console.
+#[cfg(windows)]
+pub fn device_attributes(before: &str) -> Vec<u8> {
+    use std::io::Write;
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Console::{GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT, ReadConsoleInputW, STD_INPUT_HANDLE};
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    // SAFETY: plain console calls on this process's own standard input, with buffers that outlive them.
+    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    let mut mode = 0;
+    if unsafe { GetConsoleMode(input, &mut mode) } == 0 {
+        return Vec::new();
+    }
+    let mut out = std::io::stdout();
+    if out.write_all(before.as_bytes()).and_then(|_| out.write_all(b"\x1b[c")).and_then(|_| out.flush()).is_err() {
+        return Vec::new();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    let mut reply = Vec::new();
+    while !da1_ended(&reply) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() || unsafe { WaitForSingleObject(input, left.as_millis().max(1) as u32) } != WAIT_OBJECT_0 {
+            break;
+        }
+        let mut records = [INPUT_RECORD::default(); 64];
+        let mut read = 0;
+        if unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), records.len() as u32, &mut read) } == 0 {
+            break;
+        }
+        for record in records.iter().take(read as usize).filter(|r| u32::from(r.EventType) == KEY_EVENT) {
+            let key = unsafe { record.Event.KeyEvent };
+            key_text(key.bKeyDown != 0, unsafe { key.uChar.UnicodeChar }, &mut reply);
+        }
+    }
+    reply
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn device_attributes(_before: &str) -> Vec<u8> {
     Vec::new()
+}
+
+/// Whether `reply` holds DA1's answer (`CSI ? … c`), which ends what the terminal answers.
+fn da1_ended(reply: &[u8]) -> bool {
+    reply.ends_with(b"c") && reply.windows(3).any(|w| w == b"\x1b[?")
+}
+
+/// Add what a key event of the Windows console (`down`, its UTF-16 `unit`) typed to `reply`: the terminal's answers
+/// come as key presses there.
+#[cfg(any(windows, test))]
+fn key_text(down: bool, unit: u16, reply: &mut Vec<u8>) {
+    if let Some(c) = char::from_u32(u32::from(unit)).filter(|c| down && *c != '\0') {
+        reply.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+    }
 }
 
 /// Fit the image's pixel size (from the file metadata, 4:3 if unknown) into
@@ -563,6 +615,27 @@ mod tests {
     }
 
     #[test]
+    fn the_windows_console_hands_the_answers_over_as_key_presses() {
+        // Windows Terminal's DA1 answer, one key-down (and key-up) per character, between a focus event (no key) and a
+        // user's key-up.
+        let mut keys: Vec<(bool, u16)> = vec![(false, 'x' as u16)];
+        for c in "\x1b[?61;4;6;7;14;21;22;23;24;28;32;42c".encode_utf16() {
+            keys.extend([(true, c), (false, c)]);
+        }
+        keys.push((true, 0));
+        let mut reply = Vec::new();
+        for (down, unit) in keys {
+            key_text(down, unit, &mut reply);
+        }
+        assert_eq!(reply, b"\x1b[?61;4;6;7;14;21;22;23;24;28;32;42c");
+        assert!(da1_ended(&reply) && da1_has_sixel(&reply));
+        let mut reply = Vec::new();
+        key_text(true, 'é' as u16, &mut reply);
+        assert_eq!(reply, "é".as_bytes());
+        assert!(!da1_ended(b"\x1b[?1004;2$y") && !da1_ended(b"abc") && da1_ended(b"\x1b[?1004;2$y\x1b[?1;0c"));
+    }
+
+    #[test]
     fn graphics_choices() {
         // xterm's real replies: as a VT340 (sixel) and by default.
         assert_eq!(override_for(ProtocolType::Kitty, "WezTerm"), Some(ProtocolType::Iterm2), "WezTerm: no kitty placeholders");
@@ -606,9 +679,7 @@ mod tests {
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, "iTerm.app"), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[CellSize(None)], false, "WezTerm"), ["auto", "halfblocks"]);
-        // Windows: DA1 is never asked on its own (`device_attributes` answers nothing there), so only the query counts —
-        // Windows PowerShell's console answers nothing; Windows Terminal answers sixel.
-        assert!(!cfg!(windows) || device_attributes("").is_empty());
+        // Windows: Windows PowerShell's console answers the query with no cell size; Windows Terminal answers sixel.
         assert_eq!(drawable_modes(ProtocolType::Halfblocks, &[], false, ""), ["auto", "halfblocks"]);
         assert_eq!(drawable_modes(ProtocolType::Sixel, &[Sixel, cell], false, ""), ["auto", "sixel", "halfblocks"]);
     }
