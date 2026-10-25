@@ -746,18 +746,20 @@ but ttyak's name and version as the User-Agent (no cookies). A new version is to
 (when they are on; on Linux a click opens the update screen) and `⬆ <version>` in the status line, which comes back
 after a restart until you open the update screen or that version is installed — and the last one told, the newer version
 found and the last one whose update screen you opened are kept in `updates.json` in ttyak's data folder (a check that
-finds nothing newer forgets the version found). F6 → Updates shows the version and how this ttyak was installed (the
-install script, Homebrew, Scoop, winget, Chocolatey, the Arch package, a .deb or .rpm package, or manual download for a
-copy downloaded by hand), turns the check on or off and sets how often it runs (`[updates] check`, `check_every_secs` in
-`settings.toml`), how long it waits for an answer (`check_timeout_secs`, 10 seconds) and how long the update screen's
-download waits for data (`download_timeout_secs`). Check now looks at once, due or not and with the check off too, and
-says what it found on its row — never with a desktop notification; a version it finds counts as told, so no notification
-or `⬆` comes for it later either, but the Update row stays while it is known, in a later run from the start. Hand-edited
-seconds below the least F6 offers count as it (an hour between checks, 5 s for the check's answer, which waits 10
-minutes at most, 10 s for the download, which waits a day at most). The page also shows what to run to update this
-install (Enter copies it), and while a newer version is known an Update row that opens the update screen: a copy the
-install script put in a folder ttyak can write updates itself there (downloaded, checked against the release's SHA256s,
-put in place; ttyak never restarts by itself), any other says the command or the page to download from.
+finds nothing newer forgets the version found; with the check off nothing does, so a version found before is offered
+from the start of every run, even one no longer out, until Check now says otherwise). F6 → Updates shows the version and
+how this ttyak was installed (the install script, Homebrew, Scoop, winget, Chocolatey, the Arch package, a .deb or .rpm
+package, or manual download for a copy downloaded by hand), turns the check on or off and sets how often it runs
+(`[updates] check`, `check_every_secs` in `settings.toml`), how long it waits for an answer (`check_timeout_secs`, 10
+seconds) and how long the update screen's download waits for data (`download_timeout_secs`). Check now looks at once,
+due or not and with the check off too, and says what it found on its row — never with a desktop notification; a version
+it finds counts as told, so no notification or `⬆` comes for it later either, but the Update row stays while it is
+known, in a later run from the start. Hand-edited seconds below the least F6 offers count as it (an hour between checks,
+5 s for the check's answer, which waits 10 minutes at most, 10 s for the download, which waits a day at most). The page
+also shows what to run to update this install (Enter copies it), and while a newer version is known an Update row that
+opens the update screen: a copy the install script put in a folder ttyak can write updates itself there (downloaded,
+checked against the release's SHA256s, put in place; ttyak never restarts by itself), any other says the command or the
+page to download from.
 
 ### Themes
 

@@ -385,7 +385,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("This ttyak's version and how it was installed: the install script, a package manager (Homebrew, Scoop, winget, Chocolatey, the Arch package, a .deb or .rpm package), or manual download — a copy downloaded by hand. How it was installed decides how it is updated.");
         }
         Field::UpdateCheck => {
-            b.text("Looks for a new version of ttyak now and then: a plain request for the site's latest.json, which sends nothing about you but ttyak's name and version. A new version is told once: a desktop notification (when they are on) and ⬆ in the status line. Off: no check at all, unless you ask for one (Check now).");
+            b.text("Looks for a new version of ttyak now and then: a plain request for the site's latest.json, which sends nothing about you but ttyak's name and version. A new version is told once: a desktop notification (when they are on) and ⬆ in the status line. A later run has the ⬆ and the Update row from its start, until you open the update screen or that version is installed. Off: no check at all, unless you ask for one (Check now); a version found before is still offered, even one no longer out, until Check now says otherwise.");
         }
         Field::UpdateEvery => {
             b.text("How often the check runs at most, in seconds; a check that got no answer counts too. Less than an hour (written by hand in settings.toml) counts as an hour.").blank();
@@ -400,7 +400,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.step("10, 15, 30, 60, 120 or 300 seconds");
         }
         Field::UpdateCheckNow => {
-            b.text("Looks for a new version at once, whether a check is due or not, with the check off too. It never shows a desktop notification: what it finds is said here, and a new version adds the Update row below. A version found this way is not announced later either (no notification, no ⬆ in the status line), but whenever a check finds it again — the daily one in a later run too — the Update row is back here.").blank();
+            b.text("Looks for a new version at once, whether a check is due or not, with the check off too. It never shows a desktop notification: what it finds is said here, and a new version adds the Update row below. A version found this way is not announced later either (no notification, no ⬆ in the status line), but the Update row stays here while it is known — in a later run from its start, until that version is installed.").blank();
             b.change("check now (a press while one runs does nothing)");
         }
         Field::UpdateCommand => {
