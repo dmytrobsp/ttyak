@@ -362,9 +362,9 @@ the sound itself — except `system`, the desktop's own sound, which then stays 
 Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before an
 interruption (the answer stands for the next ones for up to 2 seconds), whoever plays the sound: SwayNotificationCenter,
 mako (a `do-not-disturb` or `dnd` mode), dunst (paused), GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
-fires nothing: no notification, no sound, no bell (a huddle invitation still rings: its ring follows only Slack's
-do-not-disturb) — except on Windows, where the toast still goes out without its sound or the bell, the huddle ring
-keeps quiet, and Windows' do-not-disturb files the toast in the notification center as it does other apps' (in a busy
+fires nothing: no notification, no sound, no bell, and a huddle invitation's ring keeps quiet (asked when it starts
+ringing; it rings if no answer comes within 2 seconds) — except on Windows, where the toast still goes out without its
+sound or the bell, and Windows' do-not-disturb files the toast in the notification center as it does other apps' (in a busy
 state — a full-screen app — with Windows' full-screen rule off it may still show a banner). With any other server, or
 when it does not answer within a second, notifications go through. F6 → Notifications → Follow the system's
 do-not-disturb (`follow_system_dnd` in `settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
@@ -444,7 +444,8 @@ Settings → Privacy & Security → Automation; ttyak waits a minute for the ans
 it is. A newer notification of a conversation takes the older one out of the Notification Center, and reading takes it
 out (the older interface knows a notification only by its title and text, so two that read the same both go). Can't do
 on macOS: the Focus modes (no program can read them without extra rights, so Follow the system's do-not-disturb has
-nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own sounds still play); and
+nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own sounds and a huddle
+invitation's ring still play); and
 inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
 
 **On Windows** ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu
@@ -687,7 +688,8 @@ no silent fallback.
 F6 → Huddles has the huddle sounds (at the notification sound volume; each can be turned off): a soft
 rising arpeggio when you join, and while you are in a huddle a short "pop" when someone joins and a
 falling pair when someone leaves. A huddle invitation (someone starts one in a DM with you) rings — a
-soft trill every few seconds, with "📞 X invites you to a huddle" in the status bar — until you join (`␣hh`,
+soft trill every few seconds (silent under the system's do-not-disturb, when followed and ttyak can read it), with
+"📞 X invites you to a huddle" in the status bar — until you join (`␣hh`,
 from any conversation), decline (`␣hd`), the huddle ends, or it has rung for the set time (30 s); then,
 if "Then decline it on Slack" is on, it is declined for you. When you have been the only one in a
 huddle for a while (300 s by default, adjustable), a quiet melody loops until someone joins or you leave.

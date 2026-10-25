@@ -3165,6 +3165,18 @@ impl App {
         });
     }
 
+    /// Start ringing for `user`'s invitation to the huddle `room` in `channel`.
+    fn start_ring(&mut self, channel: String, room: String, user: String) {
+        // The system's do-not-disturb (followed) keeps the ring quiet: asked now (can't tell, as on macOS: it rings).
+        let quiet = std::sync::Arc::new(std::sync::Mutex::new(Some(false)));
+        if self.ws.settings.notifications.follow_system_dnd {
+            *quiet.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let answer = quiet.clone();
+            self.notifier.read_system_dnd(move |_, on| *answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(on == Some(true)));
+        }
+        self.ringing = Some(Ring { channel, room, user, started: std::time::Instant::now(), last_ring: None, quiet });
+    }
+
     /// Play the ring every few seconds while an invitation rings; when it has rung long
     /// enough, stop (and decline it, if so set).
     fn ring_tick(&mut self) {
@@ -4644,7 +4656,7 @@ struct Ring {
     user: String,
     started: std::time::Instant,
     last_ring: Option<std::time::Instant>,
-    /// The system's do-not-disturb holds its sound back (Windows, following it; None: the answer is awaited).
+    /// The system's do-not-disturb holds its sound back (following it; None: the answer is awaited).
     quiet: std::sync::Arc<std::sync::Mutex<Option<bool>>>,
 }
 
@@ -6778,14 +6790,7 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
                 if super::notify::huddle_notification(&app.ws, &channel, &user, in_it, now, "").is_some() && app.call.is_none() {
                     tracing::debug!(channel, room, user, "huddle invitation rings");
-                    // Windows' do-not-disturb (followed): the toast goes out silently, and the ring keeps quiet too.
-                    let quiet = std::sync::Arc::new(std::sync::Mutex::new(Some(false)));
-                    if cfg!(windows) && app.ws.settings.notifications.follow_system_dnd {
-                        *quiet.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                        let answer = quiet.clone();
-                        app.notifier.read_system_dnd(move |_, on| *answer.lock().unwrap_or_else(|e| e.into_inner()) = Some(on == Some(true)));
-                    }
-                    app.ringing = Some(Ring { channel, room, user, started: std::time::Instant::now(), last_ring: None, quiet });
+                    app.start_ring(channel, room, user);
                 }
             }
             if let Some(channel) = fx.invite_cancelled {
@@ -11612,6 +11617,39 @@ mod tests {
         assert!(!super::ring_sounds(Some(true), Duration::from_secs(60)), "held back: never");
         assert!(!super::ring_sounds(None, Duration::ZERO), "the answer awaited");
         assert!(super::ring_sounds(None, super::RING_ASK_WAIT), "no answer in time: it rings");
+    }
+
+    #[tokio::test]
+    async fn the_ring_asks_the_system_on_every_platform_when_followed() {
+        let quiet_of = |app: &super::App| *app.ringing.as_ref().unwrap().quiet.lock().unwrap();
+        let (mut app, server, _clicked) = notified_by_the_system(&["C1"]);
+        server.set_suppressed(Some(true));
+        app.ws.settings.notifications.follow_system_dnd = true;
+        app.start_ring("C1".into(), "R1".into(), "U2".into());
+        for _ in 0..300 {
+            if quiet_of(&app).is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(quiet_of(&app), Some(true), "the system's do-not-disturb keeps the ring quiet");
+        // Not followed: it rings at once, the system not asked.
+        let asked = server.asked();
+        app.ws.settings.notifications.follow_system_dnd = false;
+        app.start_ring("C1".into(), "R1".into(), "U2".into());
+        assert_eq!(quiet_of(&app), Some(false));
+        assert_eq!(server.asked(), asked);
+        // A system that can't tell (macOS's Focus): it rings.
+        server.set_suppressed(None);
+        app.ws.settings.notifications.follow_system_dnd = true;
+        app.start_ring("C1".into(), "R1".into(), "U2".into());
+        for _ in 0..300 {
+            if quiet_of(&app).is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(quiet_of(&app), Some(false), "can't tell: it rings");
     }
 
     #[tokio::test]
