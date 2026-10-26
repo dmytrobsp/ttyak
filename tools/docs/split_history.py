@@ -26,7 +26,7 @@ from pathlib import Path
 WIDTH = 120
 # (file, title, first row of the era: a prefix of the row's first cell; None = from the start)
 ERAS = [
-    ("0.1-0.9.md", "History 0.1–0.9 — slacktui and klack", None),
+    ("0.1-0.9.md", "History 0.1–0.9 — slacktui and klack", None),  # old-name-ok
     ("0.10-0.11.md", "History 0.10–0.11 — the rename to ttyak and distribution", "TY0 — "),
     ("0.12.md", "History 0.12 — attention, the README/wiki split, 0.12.2", "AT1 — "),
 ]

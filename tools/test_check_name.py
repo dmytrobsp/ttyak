@@ -54,6 +54,7 @@ class CheckName(unittest.TestCase):
     def test_allowlisted_files_pass(self):
         self.write("PROGRESS.md", "%s\n" % OLD)
         self.write("docs/superpowers/x.md", "%s\n" % OLD)
+        self.write("docs/history/0.1-0.9.md", "%s\n" % OLD)
         self.write("tools/move-to-ttyak.sh", "%s\n" % OLD)
         self.write("tools/check-name.sh", "%s\n" % OLD)
         self.assertEqual(self.run_guard("."), (0, ""))
@@ -61,10 +62,12 @@ class CheckName(unittest.TestCase):
     def test_allowlist_is_exact(self):
         self.write("docs/PROGRESS.md", "%s\n" % OLD)
         self.write("docs/superpowers-x.md", "%s\n" % OLD)
+        self.write("docs/history-x.md", "%s\n" % OLD)
         code, out = self.run_guard(".")
         self.assertEqual(code, 1)
         self.assertIn("docs/PROGRESS.md:1:", out)
         self.assertIn("docs/superpowers-x.md:1:", out)
+        self.assertIn("docs/history-x.md:1:", out)
 
     def test_marked_line_passes_unmarked_line_fails(self):
         self.write("site/fill.py", "a = '%s-'  # old-name-ok\nb = '%s-'\n" % (OLD, OLD))
