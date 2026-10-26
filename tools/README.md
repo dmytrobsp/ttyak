@@ -10,6 +10,7 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 - `shot.sh OUT_DIR NAME` — screenshot that window (then Read the PNG).
 - `jsgrep.py PATTERN CONTEXT MAX FILE…` — regex matches with context in minified JS (ugrep chokes on wide contexts).
 - `apiargs.py METHOD DIR…` — find a Slack Web API method's webpack module and print its call sites/args.
+- `wiki/check_links.py [--wiki DIR] [--readme FILE] [EXTRA…]` — check the wiki pages', README's and site's links (page names, `#anchors`); `wiki/publish.sh [--ref REF] [--push]` — check, then mirror `docs/wiki/` at REF (default: the latest `v*` tag) into the GitHub wiki repo; nothing is pushed without `--push`.
 
 Web client bundles: `ttyak ctl get https://app.slack.com/client/<TEAM> client.html`, then chunk names/hashes from the
 `__cf` map in it → `https://a.slack-edge.com/bv1-13/gantry-v2-async-<name>.<hash>.min.js`; entry: `client-boot.<hash>.min.js`
