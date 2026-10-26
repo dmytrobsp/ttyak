@@ -771,12 +771,14 @@ mod tests {
         apply(&mut w, &room("C1", "R1", true), None, true);
         apply(&mut w, &room("C2", "R2", false), None, true);
         // Its answer, from before: R1 live, nothing in C2.
-        w.set_live_huddles(vec![live("C1", "R1")], since);
+        let over = w.set_live_huddles(vec![live("C1", "R1")], since);
         assert_eq!(w.joinable_live(None), ["C2"], "R1 stays ended, R2 stays live");
+        assert!(over.is_empty(), "R1's end was told by its event: {over:?}");
         // A fetch after those events is taken as it is.
         let later = w.huddle_seq;
-        w.set_live_huddles(vec![live("C3", "R3")], later);
+        let over = w.set_live_huddles(vec![live("C3", "R3")], later);
         assert_eq!(w.joinable_live(None), ["C3"]);
+        assert_eq!(over, ["C2"]);
         // An answer older than one taken already changes nothing.
         w.set_live_huddles(vec![live("C1", "R1")], since);
         assert_eq!(w.joinable_live(None), ["C3"]);

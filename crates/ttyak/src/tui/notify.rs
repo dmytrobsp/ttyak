@@ -1061,6 +1061,9 @@ enum Cmd {
     /// Whether `key` has a bubble on screen.
     #[cfg(test)]
     Live(Key, tokio::sync::oneshot::Sender<bool>),
+    /// How many bubbles the server may still answer for.
+    #[cfg(test)]
+    Coming(tokio::sync::oneshot::Sender<usize>),
 }
 
 /// When a bubble is withdrawn.
@@ -1124,6 +1127,8 @@ struct Coming {
     on_click: Option<OnClick>,
     /// A withdrawal that takes it came meanwhile.
     withdrawn: bool,
+    /// The bubble (by generation) closed before it went out, to make room for it (macOS).
+    closed_first: Option<u64>,
 }
 
 /// How notifications reach the user on this machine, for F6's "On this machine", in the current language.
@@ -1482,8 +1487,9 @@ pub const TEST_BELL_AFTER: std::time::Duration = std::time::Duration::from_secs(
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
 async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::UnboundedReceiver<Cmd>, back: mpsc::WeakUnboundedSender<Cmd>) {
     let mut live: HashMap<Key, Live> = HashMap::new();
-    // The bubbles the server may still answer for, by their generation.
+    // The bubbles the server may still answer for, by their generation; the newest bubble that went up for each key.
     let mut coming: HashMap<u64, Coming> = HashMap::new();
+    let mut newest: HashMap<Key, u64> = HashMap::new();
     let mut generation = 0;
     while let Some(cmd) = queue.recv().await {
         match cmd {
@@ -1520,11 +1526,13 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 bubble.replaces = key.as_ref().and_then(|k| live.get(k)).map(|o| o.shown.id());
                 // A server that can't replace in place (macOS): the older bubble goes first, so the newer one is the
                 // only one left (they may show the same).
-                if let Some(old) = key.as_ref().and_then(|k| live.get(k)).filter(|o| o.shown.closed_to_replace() && terminal.is_none()) {
+                let closed_first = key.as_ref().and_then(|k| live.get(k)).filter(|o| o.shown.closed_to_replace() && terminal.is_none());
+                if let Some(old) = closed_first {
                     if tokio::time::timeout(SERVER_WAIT, old.shown.close()).await.is_err() {
                         tracing::warn!("replacing a notification: the notification server did not answer");
                     }
                 }
+                let closed_first = closed_first.map(|o| o.generation);
                 let shown = match &terminal {
                     Some(t) => Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble)),
                     None => {
@@ -1536,7 +1544,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                                 tracing::warn!("notification: the notification server did not answer in time (kept if it comes later)");
                                 *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = None;
                                 generation += 1;
-                                coming.insert(generation, Coming { key, at, on_click, withdrawn: false });
+                                coming.insert(generation, Coming { key, at, on_click, withdrawn: false, closed_first });
                                 drop(tokio::spawn(follow(task, back.clone(), generation)));
                                 continue;
                             }
@@ -1560,25 +1568,32 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 // that came in just now is lost with it.)
                 generation += 1;
                 let on = if terminal.is_some() { ClickedOn::Terminal } else { ClickedOn::System };
+                if let Some(key) = &key {
+                    newest.insert(key.clone(), generation);
+                }
                 track(&mut live, &back, key, at, generation, shown, on, on_click);
             }
             Cmd::Late { generation: late, shown } => {
-                let (Some(Coming { key, at, on_click, withdrawn }), Some(shown)) = (coming.remove(&late), shown) else { continue };
-                let newer = key.as_ref().and_then(|k| live.get(k)).filter(|l| l.generation > late);
-                if let Some(newer) = newer {
+                let (Some(Coming { key, at, on_click, withdrawn, closed_first }), Some(shown)) = (coming.remove(&late), shown) else { continue };
+                if key.as_ref().and_then(|k| newest.get(k)).is_some_and(|n| *n > late) {
                     // (One that took the older bubble's place shows the newer one now: closing it would close that.)
-                    if !same_place(shown.as_ref(), newer.shown.as_ref()) {
+                    let newer = key.as_ref().and_then(|k| live.get(k)).filter(|l| l.generation > late);
+                    if !newer.is_some_and(|newer| same_place(shown.as_ref(), newer.shown.as_ref())) {
                         close(shown.as_ref(), "closing a late notification").await;
                     }
-                    tracing::debug!("a late notification: a newer one is up");
+                    tracing::debug!("a late notification: a newer one went up since");
                 } else if withdrawn {
                     close(shown.as_ref(), "closing a late notification").await;
                     tracing::debug!("a late notification: read meanwhile, closed");
                 } else {
                     tracing::debug!("a late notification: kept");
-                    // An older one that came late itself is not the one it replaced: it goes.
+                    if let Some(key) = &key {
+                        newest.insert(key.clone(), late);
+                    }
+                    // An older one that came late itself is not the one it replaced: it goes (unless closed for it
+                    // already).
                     let older = track(&mut live, &back, key, at, late, shown.clone(), ClickedOn::System, on_click);
-                    if let Some(older) = older.filter(|o| !same_place(shown.as_ref(), o.shown.as_ref())) {
+                    if let Some(older) = older.filter(|o| !same_place(shown.as_ref(), o.shown.as_ref()) && closed_first != Some(o.generation)) {
                         close(older.shown.as_ref(), "closing an older notification").await;
                     }
                 }
@@ -1631,6 +1646,8 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
             Cmd::Settled(done) => drop(done.send(())),
             #[cfg(test)]
             Cmd::Live(key, answer) => drop(answer.send(live.contains_key(&key))),
+            #[cfg(test)]
+            Cmd::Coming(answer) => drop(answer.send(coming.len())),
         }
     }
 }
@@ -1651,8 +1668,8 @@ fn track(live: &mut HashMap<Key, Live>, back: &mpsc::WeakUnboundedSender<Cmd>, k
     older
 }
 
-/// Whether bubbles `a` and `b` take one place on screen (the server put one in the other's, by its id; Windows by
-/// their tag): closing one closes both.
+/// Whether bubbles `a` and `b` of one conversation take one place on screen (the server put one in the other's, by its
+/// id; Windows' toasts, all id 0, by their conversation's tag): closing one closes both.
 fn same_place(a: &dyn Shown, b: &dyn Shown) -> bool {
     !a.closed_to_replace() && a.id() == b.id()
 }
@@ -1673,15 +1690,7 @@ const LATE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 async fn follow(task: tokio::task::JoinHandle<anyhow::Result<Arc<dyn Shown>>>, back: mpsc::WeakUnboundedSender<Cmd>, generation: u64) {
     let abort = task.abort_handle();
     let shown = match tokio::time::timeout(LATE_WAIT, task).await {
-        Ok(Ok(Ok(shown))) => Some(shown),
-        Ok(Ok(Err(e))) => {
-            tracing::debug!("a late notification failed: {e}");
-            None
-        }
-        Ok(Err(e)) => {
-            tracing::debug!("a late notification failed: {e}");
-            None
-        }
+        Ok(done) => done.unwrap_or_else(|e| Err(e.into())).inspect_err(|e| tracing::debug!("a late notification failed: {e}")).ok(),
         Err(_) => {
             abort.abort();
             tracing::debug!("a late notification never came");
@@ -2074,6 +2083,19 @@ pub mod fake {
             let (answer, live) = tokio::sync::oneshot::channel();
             self.send(Cmd::Live(key.clone(), answer));
             tokio::time::timeout(std::time::Duration::from_secs(5), live).await.ok().and_then(|r| r.ok()).unwrap_or(false)
+        }
+
+        /// Once no bubble the server did not answer for in time is on its way any more (at most 5 s).
+        pub async fn all_came(&self) {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while tokio::time::Instant::now() < deadline {
+                let (answer, count) = tokio::sync::oneshot::channel();
+                self.send(Cmd::Coming(answer));
+                if count.await.unwrap_or(0) == 0 {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
         }
 
         /// As [`Notifier::use_terminal`], a close reported within `guard` of a newer bubble with its id taken for the older's.
@@ -2863,6 +2885,77 @@ mod tests {
         n.settled_after(|| server.calls().contains(&fake::Call::Close(1))).await;
         assert!(!n.live(&d1).await);
         assert_eq!(server.calls()[2..], [fake::Call::Close(1)], "{:?}", server.calls());
+    }
+
+    /// The usual Linux case: a late bubble took the older one's place (its id): kept, and closed once, by its read.
+    #[tokio::test]
+    async fn a_late_bubble_in_the_older_ones_place_is_kept() {
+        let (n, server) = Notifier::fake();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.settled().await;
+        server.set_slow(SERVER_WAIT * 2);
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|_| {}));
+        n.all_came().await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(Some(1), "two")], "nothing closed");
+        n.read(&key, None, "2.0");
+        n.settled().await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(Some(1), "two"), fake::Call::Close(1)], "closed once");
+    }
+
+    /// A late bubble whose place a newer one took meanwhile (the same id) is left to it: closing it would close that.
+    #[tokio::test]
+    async fn a_late_bubble_a_newer_one_replaced_is_left_to_it() {
+        let (n, server) = Notifier::fake();
+        let (clicked, on_click) = recorder();
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.settled().await;
+        server.set_slow(SERVER_WAIT * 2);
+        n.show(note("D1", "2.0", None, "two"), None, on_click("two"));
+        n.settled().await;
+        server.set_slow(std::time::Duration::ZERO);
+        n.show(note("D1", "3.0", None, "three"), None, on_click("three"));
+        n.all_came().await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(Some(1), "two"), shown(Some(1), "three")], "nothing closed");
+        server.click(1);
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert_eq!(*clicked.lock().unwrap(), ["three"]);
+    }
+
+    /// A late bubble older than one shown since is closed, also when that one is gone already (clicked).
+    #[tokio::test]
+    async fn a_late_bubble_outdated_by_one_gone_since_is_closed() {
+        let (n, server) = Notifier::fake();
+        let (clicked, on_click) = recorder();
+        let key = Key { workspace: 0, channel: "D1".into() };
+        server.set_slow(SERVER_WAIT * 3);
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.settled().await;
+        server.set_slow(std::time::Duration::ZERO);
+        n.show(note("D1", "2.0", None, "two"), None, on_click("two"));
+        n.settled().await;
+        server.click(2);
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert!(!n.live(&key).await, "clicked: gone");
+        n.all_came().await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(None, "two"), fake::Call::Close(1)]);
+        assert!(!n.live(&key).await);
+    }
+
+    /// macOS: the bubble a late one replaces was closed before it went out, once.
+    #[tokio::test]
+    async fn a_late_bubble_closes_the_one_it_replaces_once() {
+        let (n, server) = Notifier::fake();
+        server.set_closes_to_replace(true);
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.settled().await;
+        server.set_slow(SERVER_WAIT * 2);
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|_| {}));
+        n.all_came().await;
+        assert_eq!(server.calls(), [shown(None, "one"), fake::Call::Close(1), shown(Some(1), "two")]);
+        n.withdraw(&Key { workspace: 0, channel: "D1".into() });
+        n.settled().await;
+        assert_eq!(server.calls().pop(), Some(fake::Call::Close(2)), "the late one is the conversation's");
     }
 
     /// A huddle's start goes once the huddle is over (#15); a message's bubble stays.

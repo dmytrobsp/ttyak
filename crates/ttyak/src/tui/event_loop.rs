@@ -7266,7 +7266,9 @@ fn handle_net(app: &mut App, msg: Net) {
         },
         Net::LiveHuddles { since, result } => match result {
             Ok(live) => {
-                app.ws.set_live_huddles(live, since);
+                // (Huddles that ended while the connection was down: no event told their end.)
+                let over = app.ws.set_live_huddles(live, since);
+                super::notify::huddles_over(&app.notifier, app.workspace, &over, None);
                 app.sidebar.rebuild(&app.ws);
             }
             // The huddles kept from the live events stay.
