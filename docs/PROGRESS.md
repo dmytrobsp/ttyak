@@ -17,20 +17,21 @@ Last rewritten: 2026-10-27.
   attention: notifications, the bell, the tab title, clicks; `ctl status` and `ctl check`).
 - The wiki was published at the v0.12.2 tag; the README is the short front door, the
   [wiki](https://github.com/dmytrobsp/ttyak/wiki) is the manual.
-- Tests at 0.12.2 on Linux: slack-core 89, huddle 44, ttyak 1020 (`cargo test`, all passing).
+- The whole `cargo test` passed at 0.12.2: in CI on Linux and macOS, and on a Windows test machine (CI does not run
+  the Windows tests: #61). How to run it: [AGENTS.md](../AGENTS.md).
 - How a release is made: [RELEASING.md](RELEASING.md).
 
 ## In flight
 
-- **No release milestone is open.** The next one is created when its first issue is picked.
-- **Documentation housekeeping** (2026-10-26): design
+- **Nothing.** No release milestone is open and no plan is in flight.
+- **Last done: documentation housekeeping** (2026-10-26 – 2026-10-27; design
   [2026-10-26-docs-housekeeping-design.md](superpowers/specs/2026-10-26-docs-housekeeping-design.md), plan
-  [2026-10-26-docs-housekeeping.md](superpowers/plans/2026-10-26-docs-housekeeping.md).
-  - Done: `docs/DESIGN.md` moved; the history archive in `docs/history/`; AGENTS.md and `docs/agents/`; the setup page
-    and the test-VM tools (`tools/vm/`); the audit of the old open items (filed as #43–#62); this page.
-  - Left: the maintainer's local agent notes trimmed (outside the repository); a cold read by a fresh agent.
-  - Its ledger is git-ignored scratch: the plan started before the committed-ledger convention, which applies from the
-    next plan ([ledgers](superpowers/ledgers/README.md)).
+  [2026-10-26-docs-housekeeping.md](superpowers/plans/2026-10-26-docs-housekeeping.md)): `docs/DESIGN.md` moved; the
+  history archive in `docs/history/`; AGENTS.md, `docs/agents/` and SECURITY.md; the setup page and the test-VM tools
+  (`tools/vm/`); the audit of the old open items (filed as #43–#62); this page; a cold read by a fresh agent, whose
+  gaps were fixed.
+- Its ledger stayed git-ignored, as for every plan before 2026-10-27: no committed ledger exists for it. Committed
+  ledgers start with the next plan ([ledgers](superpowers/ledgers/README.md)).
 
 ## Outside waits
 
@@ -42,6 +43,10 @@ Last rewritten: 2026-10-27.
 
 ## Next topics
 
+**How the next work is chosen:** with no milestone open, an agent does not pick from `later` on its own. It proposes
+a milestone to the maintainer (a few related issues, and why they go together), and the maintainer decides.
+`needs-user` issues wait for the maintainer.
+
 The maintainer's next topics, all about how the work gets done (`process`, `needs-user`):
 
 - [#29](https://github.com/dmytrobsp/ttyak/issues/29) — a multi-agent milestone workflow: agents pull issues, pull
@@ -51,7 +56,7 @@ The maintainer's next topics, all about how the work gets done (`process`, `need
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
   re-test when they change.
 
-Then the queue: the [`later` milestone](https://github.com/dmytrobsp/ttyak/milestones), curated with
+The rest of the queue: the [`later` milestone](https://github.com/dmytrobsp/ttyak/milestones), curated with
 `-label:triage`.
 
 - Recent filings (2026-10-27, from the housekeeping audit): [#43](https://github.com/dmytrobsp/ttyak/issues/43) — what

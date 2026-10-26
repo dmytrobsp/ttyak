@@ -92,7 +92,9 @@ Full text: [docs/agents/workflow.md](docs/agents/workflow.md).
 1. **Where we are**: [docs/PROGRESS.md](docs/PROGRESS.md), the open issues of the current milestone, the newest ledger
    in [docs/superpowers/ledgers/](docs/superpowers/ledgers/README.md) with unfinished tasks, `git log`. Never re-run a
    task the ledger or the log shows done.
-2. **Pick work** from the milestone, then `later`; issues labelled `triage` are user reports nobody has looked at.
+2. **Pick work** from the open milestone. With none open, don't pick from `later` on your own: propose a milestone
+   (a few related issues, and why) and the maintainer decides. `needs-user` issues wait for the maintainer; `triage`
+   issues are user reports nobody has looked at.
 3. **Plan** anything bigger than a focused fix: brainstorm with the maintainer → design in `docs/superpowers/specs/`
    → a builder's read → the maintainer's approval → a plan in `docs/superpowers/plans/` → subagent-driven execution
    with a committed ledger, a review per task and a final review; deferred items become issues. Before big work the

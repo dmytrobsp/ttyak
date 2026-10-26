@@ -17,7 +17,8 @@ Read, in this order:
    appended to.
 2. The open issues of the current milestone: `gh issue list -R dmytrobsp/ttyak -m <milestone>`.
 3. The newest ledger in [docs/superpowers/ledgers/](../superpowers/ledgers/README.md) that still has unfinished tasks,
-   with its design and plan.
+   with its design and plan. Plans before 2026-10-27 kept their ledgers git-ignored: none is committed for them, and
+   none in the folder means no plan is in flight.
 4. `git log --oneline -20`, `git status`, and the latest runs: `gh run list -R dmytrobsp/ttyak -L 5`.
 
 Never re-run a task that the ledger or `git log` shows done. History (every step since the start, with its
@@ -27,9 +28,11 @@ LIVE/UNIT/NOT record and commit) is in `docs/history/`.
 
 Everything to do is an [issue](https://github.com/dmytrobsp/ttyak/issues); nothing is queued in a file.
 
-- **Milestones**: one per coming release (`0.13.0`, …) plus `later`. Pick from the current milestone first, then
-  `later`. A milestone is created when its first issue is picked; it is closed when its issues are closed and its
-  release is out (in the repository: `gh api -X PATCH 'repos/{owner}/{repo}/milestones/<number>' -f state=closed`).
+- **Milestones**: one per coming release (`0.13.0`, …) plus `later`. When a release milestone is open, take its
+  issues. When none is open, do not pick from `later` on your own: propose a milestone to the maintainer (a few
+  related issues, and why they go together); they decide. `needs-user` issues wait for the maintainer. A milestone is
+  created when the maintainer agrees to it; it is closed when its issues are closed and its release is out (in the
+  repository: `gh api -X PATCH 'repos/{owner}/{repo}/milestones/<number>' -f state=closed`).
 - **Labels**: the kind (`bug`, `minor`, `feature`, `known-issue`); `area:*` (notifications, tui, linux, macos, windows,
   install, release, ci, huddles, docs); `size:s` / `size:m` / `size:l` (`l` needs a plan first); `process` (how the work
   gets done); `needs-user` (a decision, an account or a live check with the maintainer); `triage` (a user report not

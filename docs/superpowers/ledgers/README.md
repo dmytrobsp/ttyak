@@ -10,10 +10,13 @@ The workflow around it is in [workflow.md](../../agents/workflow.md#executing-a-
   `docs/superpowers/plans/2026-11-02-<topic>.md`). The controller commits it at every task boundary, in its own
   docs-only commit (no CI runs).
 - **Not committed**: the bulky scratch — the rules file given to every implementer, task briefs, review packages,
-  implementers' reports — in `.superpowers/sdd/<plan>/`, git-ignored. Never `git add -f` it: it can hold private names.
+  implementers' reports — in `.superpowers/sdd/<plan>/`, git-ignored. Never `git add -f` it: it can hold private
+  names.
 
-Plans started before 2026-10-27 kept their ledgers in the scratch folder only; this convention applies from the next
-plan on. Their outcomes are in [docs/history/](../../history/README.md) and `git log`.
+Plans started before 2026-10-27 — the documentation housekeeping plan of 2026-10-26 included — kept their ledgers
+git-ignored in the scratch folder, so no committed ledger exists for them; their outcomes are in
+[docs/history/](../../history/README.md) (up to 0.12.2) and `git log`. The committed convention starts with the next
+plan.
 
 ## What goes in
 
