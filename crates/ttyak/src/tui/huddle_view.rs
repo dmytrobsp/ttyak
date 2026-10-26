@@ -11,6 +11,7 @@ use ratatui_image::sliced::{SignedPosition, SlicedImage};
 use slack_core::types::File;
 
 use super::call::Call;
+use super::i18n::tr;
 use super::media::{Media, Thumb};
 use super::state::Workspace;
 
@@ -191,11 +192,16 @@ pub fn wrapped_rows(text: &str, width: usize) -> u16 {
     rows
 }
 
+/// The words of the audio line's long form, for `tr`.
+pub const WORDS: &[&str] = &["volume", "mic gain", "threshold", "noise suppression", "echo cancellation", "on", "off", "F6 → Audio & video"];
+
 /// The audio settings in a line, shortened when `width` is too narrow for the long form.
 pub fn audio_summary(a: &super::settings::Audio, width: usize) -> String {
+    let long_on = |b: bool| if b { tr("on") } else { tr("off") };
+    let long_threshold = a.speaking_threshold_db.map_or_else(|| tr("off").into_owned(), |d| format!("{d} dB"));
     let threshold = a.speaking_threshold_db.map_or("off".to_string(), |d| format!("{d} dB"));
     let on = |b: bool| if b { "on" } else { "off" };
-    let long = format!(" volume {}% · mic gain {}% · threshold {threshold} · noise suppression {} · echo cancellation {} · F6 → Audio", a.huddle_volume, a.mic_gain, on(a.noise_suppression), on(a.echo_cancellation));
+    let long = format!(" {} {}% · {} {}% · {} {long_threshold} · {} {} · {} {} · {}", tr("volume"), a.huddle_volume, tr("mic gain"), a.mic_gain, tr("threshold"), tr("noise suppression"), long_on(a.noise_suppression), tr("echo cancellation"), long_on(a.echo_cancellation), tr("F6 → Audio & video"));
     if long.chars().count() <= width {
         long
     } else {
@@ -584,7 +590,7 @@ mod tests {
     #[test]
     fn audio_line_shortens() {
         let a = crate::tui::settings::Audio { speaking_threshold_db: Some(-45), noise_suppression: true, ..Default::default() };
-        assert_eq!(audio_summary(&a, 200), " volume 100% · mic gain 100% · threshold -45 dB · noise suppression on · echo cancellation on · F6 → Audio");
+        assert_eq!(audio_summary(&a, 200), " volume 100% · mic gain 100% · threshold -45 dB · noise suppression on · echo cancellation on · F6 → Audio & video");
         assert_eq!(audio_summary(&a, 60), " vol 100% · gain 100% · gate -45 dB · noise on · echo on");
         assert_eq!(wrapped_rows(" vol 100% · gain 100% · gate off · noise off", 80), 1);
         assert_eq!(wrapped_rows(" vol 100% · gain 100% · gate off · noise off", 38), 2);

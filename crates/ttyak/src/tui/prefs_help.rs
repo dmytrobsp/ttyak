@@ -210,12 +210,12 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("No blank rows between authors in messages, or between sections of the sidebar.");
         }
         Field::HideInactive => {
-            b.text("Channels and DMs without a message for this long leave the sidebar. Starred, unread and open ones stay, and the switcher still finds the rest.").blank();
+            b.text("Channels and DMs without a message for this long leave the sidebar. Starred, unread, open and previewed ones, one with a huddle going on and one created within the period stay, and the switcher still finds the rest.").blank();
             b.step("never, 1, 7, 14, 30, 60 or 90 days");
         }
         // Messages & media
         Field::InlineImages => {
-            b.text("Shows attached images as thumbnails in the message list, where the terminal draws pictures.");
+            b.text("Shows attached images as thumbnails in the message list (in half blocks where the terminal draws no pictures).");
         }
         Field::Avatars => {
             b.text("Shows profile pictures next to author names, where the terminal draws pictures.");
@@ -276,7 +276,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.text("Puts a mark in front of the terminal's tab title: ○ nothing unread, ● something unread, ◆ something for you (a direct message or a mention). When ttyak ends, or this is switched off, your terminal's own title comes back in terminals that keep a title stack (kitty, …); elsewhere the title is cleared. In tmux this needs set-titles on.");
         }
         Field::FollowSystemDnd => {
-            b.text("Holds back every notification, its sound, the bell and a huddle invitation's ring while the system's do-not-disturb is on, as ttyak's own pause does. ttyak asks the notification server each time (an answer stands for 2 seconds, so a do-not-disturb switched just before may be missed for that long): SwayNotificationCenter, mako (a do-not-disturb or dnd mode), dunst (paused), GNOME (banners off) and KDE (notifications inhibited) can be asked; with any other, or when the server does not answer, notifications go through. On Windows (Focus Assist and the notification state are asked) the toast still goes out, without its sound or the bell: Windows' do-not-disturb files it in the notification center, though in a busy state (a full-screen app) with Windows' full-screen rule off it may still show a banner. Off: only ttyak's own pause and schedule hold them back.");
+            b.text("Holds back every notification, its sound, the bell and a huddle invitation's ring while the system's do-not-disturb is on, as ttyak's own pause does. ttyak asks the notification server each time (an answer stands for 2 seconds, so a do-not-disturb switched just before may be missed for that long): SwayNotificationCenter, mako (a do-not-disturb or dnd mode), dunst (paused), GNOME (banners off) and KDE (notifications inhibited) can be asked; with any other, or when the server does not answer, notifications go through. On macOS nothing can be asked (Focus can't be read): the row has no effect there. On Windows (Focus Assist and the notification state are asked) the toast still goes out, without its sound or the bell: Windows' do-not-disturb files it in the notification center, though in a busy state (a full-screen app) with Windows' full-screen rule off it may still show a banner. Off: only ttyak's own pause and schedule hold them back.");
         }
         Field::Sound => {
             b.text("The sound played with each notification. How loud is the volume below. Where the notification server plays sounds itself (it lists the sound capability), the sound goes with the notification, so the system's do-not-disturb silences it too; the volume and speaker set here then do not apply. Otherwise ttyak plays it; then system, the desktop's own sound, stays silent, as ttyak has none to play.").blank();
@@ -284,13 +284,13 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.change("the next sound, played for you to hear");
         }
         Field::ShownBy => {
-            b.text("Who shows ttyak's notifications on this machine and who plays their sound: the terminal itself where it can (kitty, over OSC 99), else the system's notifications. Found out when this page opens; shown only.");
+            b.text("Who shows ttyak's notifications on this machine and who plays their sound: the terminal itself when it answers ttyak's probe (kitty, foot, Konsole or Contour; OSC 99), else the system's notifications. Found out when this page opens; shown only.");
         }
         Field::ClickResult => {
             b.text("What happens when you click a notification: it opens the message in ttyak, and the window is brought forward by the terminal, or by ttyak through the window manager (the tools it found are named). Shown only.");
         }
         Field::SystemDnd => {
-            b.text("What the system says about do-not-disturb right now, as Follow the system's do-not-disturb reads it: the notification server's own state (swaync, mako, dunst, GNOME, KDE) or Windows' Focus Assist; can't tell when the server can't be asked. Read in the background, again every few seconds while this page is open. Shown only.");
+            b.text("What the system says about do-not-disturb right now, as Follow the system's do-not-disturb reads it: the notification server's own state (swaync, mako, dunst, GNOME, KDE) or Windows' Focus Assist; can't tell when the server can't be asked (on macOS it always can't: Focus can't be read). Read in the background, again every few seconds while this page is open. Shown only.");
         }
         Field::TestNotification => {
             b.text("Sends a notification like one for you, through the same route and with the sound set above, to check this machine's setup. A few seconds later the bell rings, if the terminal is then not focused and the bell is on: switch away to see it. Clicking the notification opens nothing in ttyak but brings the window forward the same way, so the click can be checked too.").blank();
@@ -316,7 +316,7 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
         }
         Field::VipOverride => {
             b.text("While notifications are paused (a pause or the schedule), a VIP's message still notifies you if it is a DM or group DM or mentions a person, a user group or a channel (@here, @channel and @everyone don't count), and a VIP app's message always does. It never makes a message notify that otherwise wouldn't: the conversation's level and mutes still apply.").blank();
-            b.text("Kept on Slack; it needs a paid plan.").blank();
+            b.text("Off by default on Slack. Kept on Slack; it needs a paid plan.").blank();
             b.change("turn it on or off");
         }
         // Audio & video

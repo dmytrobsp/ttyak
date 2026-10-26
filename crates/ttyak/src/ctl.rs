@@ -109,8 +109,8 @@ pub enum Ctl {
         /// connected. Only the named camera is ever opened.
         #[arg(long)]
         camera: Option<String>,
-        /// Share your screen: the desktop asks what to share (nothing is captured before you
-        /// choose).
+        /// Share your screen: in a Wayland session the desktop asks what to share (nothing is
+        /// captured before you choose); elsewhere the whole screen.
         #[arg(long)]
         share_screen: bool,
     },

@@ -64,6 +64,7 @@ pub fn translatable() -> Vec<String> {
     out.push(super::state::IN_A_HUDDLE.to_string());
     out.extend(super::feed::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::activity::WORDS.iter().map(|w| w.to_string()));
+    out.extend(super::huddle_view::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::huddles::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::threads::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::event_loop::HUDDLE_NOTES.iter().map(|n| n.to_string()));

@@ -486,7 +486,7 @@ actions! {
         HuddleThread "huddle_thread" "open the huddle's thread (yours, or this conversation's)" "huddle thread" "🧵" ["<leader> h t"]
         HuddleView "huddle_view" "show or hide the huddle view (in place of the messages)" "huddle view" "📺" ["<leader> h v"]
         Camera "camera" "switch your camera on or off in the huddle (chosen in F6)" "camera" "📷" ["<leader> h c"]
-        ShareScreen "share_screen" "share your screen in the huddle, or stop (the desktop asks what to share)" "share screen" "💻" ["<leader> h s"]
+        ShareScreen "share_screen" "share your screen in the huddle, or stop (in a Wayland session the desktop asks what to share; elsewhere the whole screen)" "share screen" "💻" ["<leader> h s"]
         DeclineHuddle "decline_huddle" "decline the huddle invitation that is ringing (the huddle key joins it)" "decline" "📵" ["<leader> h d"]
         Activity "activity" "the Activity view: mentions, reactions, threads, DMs (in it: load again)" "activity" "🔔" ["ctrl+a", "<leader> f a"]
         Threads "threads" "the Threads view: every thread you are in, unread first (in it: load again)" "threads" "🧵" ["ctrl+t", "<leader> f t"]

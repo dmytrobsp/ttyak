@@ -16,10 +16,12 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/snippet [lang] [title]", "post the following lines as a snippet"),
     ("/join [#channel] · /leave", "join (default: the previewed channel) · leave this channel"),
     ("/create[-private] <name>", "create a channel"),
-    ("/dm @a [@b…]", "open a DM, or a group DM with several people"),
+    // (Up to `commands::MAX_GROUP` = 8 other people; a test pins the number here and in the composer's table.)
+    ("/dm @a [@b…]", "open a DM, or a group DM with up to 8 other people"),
     ("/star · /section rename|delete", "star this conversation · rename / delete its section"),
-    ("/status [:e:] [text] [for 30m|today]", "set your status · /status clear"),
-    ("/away · /active · /dnd [30m|off]", "appear away / active · pause notifications (alone: 30 min, or resume)"),
+    ("/status [:emoji:] [text] [for 30m|2h|1d|today]", "set your status · /status clear"),
+    ("/away · /active", "appear away / active"),
+    ("/dnd [30m|off|schedule …]", "pause notifications (alone: 30 min, or resume)"),
     ("/workspace [name]", "list the profile's workspaces or switch"),
     ("/prefs", "preferences (also F6)"),
     ("/remind, /giphy, … any other", "run by Slack (its answer only you see); a leading space sends it as text"),
@@ -111,6 +113,31 @@ mod tests {
 
     fn text(lines: &[Line]) -> Vec<String> {
         lines.iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect::<String>()).collect()
+    }
+
+    #[test]
+    fn help_and_composer_command_tables_agree() {
+        let help = |name: &str| COMMANDS.iter().find(|(c, _)| c.contains(name)).unwrap_or_else(|| panic!("{name}"));
+        for (name, usage, what) in super::super::commands::OWN {
+            if !["/dm", "/status", "/dnd"].contains(name) {
+                continue;
+            }
+            let (row, help_what) = help(name);
+            assert!(row.contains(&format!("{name} {usage}").replace(" | clear", "")), "{name}: {row} vs {usage}");
+            if *name == "/dm" {
+                assert_eq!(*help_what, *what, "the same words for /dm");
+            }
+        }
+        let dm = COMMANDS.iter().find(|(c, _)| c.starts_with("/dm")).unwrap().1;
+        let max = super::super::commands::MAX_GROUP.to_string();
+        assert!(dm.contains(&format!("up to {max} other people")), "{dm}");
+        assert!(super::super::commands::OWN.iter().any(|(n, _, w)| *n == "/dm" && w.contains(&format!("up to {max} other people"))));
+    }
+
+    #[test]
+    fn share_screen_says_when_the_desktop_asks() {
+        let a = ACTIONS.iter().find(|a| a.name == "share_screen").unwrap();
+        assert!(a.description.contains("Wayland") && a.description.contains("elsewhere the whole screen"), "{}", a.description);
     }
 
     #[test]
