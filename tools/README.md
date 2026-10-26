@@ -3,7 +3,10 @@
 Helpers used while developing and testing; none of them is needed to build or run ttyak. The
 live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 
-- `launch.sh` — start ttyak on profile `default` (given by name, so it is account A even when another profile is the default) in the `ttyak-test` kitty window (abstract socket `unix:@ttyak-test`), DM with B open.
+- `launch.sh PROFILE [DM_NAME]` — start the debug build on PROFILE, a test profile from `AGENTS.local.md` (it refuses
+  to start without one), in the `ttyak-test` kitty window (abstract socket `unix:@ttyak-test`), and with DM_NAME open
+  that DM. The window is **visible**: only while the maintainer watches (the hidden recipe is in
+  `docs/agents/live-testing.md`).
   Drive it with `kitty @ --to unix:@ttyak-test send-key …/send-text …`; quit with `send-key ctrl+q`.
 - `streamrec.py OUT_DIR TOTAL_S [PER_STREAM_S]` — record every new ttyak playback stream (never a source) with
   pw-record while it runs; `tonecheck.py HZ[,HZ…] FILE.wav…` — peak level per frequency (to tell sounds apart).

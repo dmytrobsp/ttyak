@@ -54,10 +54,10 @@ whole suite). The package list for a fresh Debian, Ubuntu, Fedora and Arch is ch
 **The tool tests** are exactly the `Tool tests` step of `.github/workflows/ci.yml`; at the time of writing:
 
 ```sh
-python3 -m unittest tools/test_check_name.py tools/test_move_to_ttyak.py tools/install/test_install_sh.py \
-  tools/signing/test_apple_csr.py tools/publish/test_aur_key.py tools/wiki/test_check_links.py \
-  tools/wiki/test_publish.py tools/wiki/test_readme.py tools/docs/test_split_history.py \
-  tools/vm/test_vm_scripts.py
+python3 -m unittest tools/test_check_name.py tools/test_launch.py tools/test_move_to_ttyak.py \
+  tools/install/test_install_sh.py tools/signing/test_apple_csr.py tools/publish/test_aur_key.py \
+  tools/wiki/test_check_links.py tools/wiki/test_publish.py tools/wiki/test_readme.py \
+  tools/docs/test_split_history.py tools/vm/test_vm_scripts.py
 ```
 
 When the two differ, `ci.yml` is right. The packaging tests run apart:

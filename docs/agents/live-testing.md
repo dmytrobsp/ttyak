@@ -106,8 +106,8 @@ hyprctl dispatch exec "[workspace special:<name> silent] kitty --class <class> -
   messages. Read the screen before destructive keys (`d`, `y`) and before every Enter in F6 (it opens on Availability,
   where Enter edits the real Slack status).
 - Another size: `kitty @ set-font-size 6` gives about 170×44 cells (`0` restores); the default is a "narrow" ~95 columns.
-- `tools/launch.sh` opens a *visible* `ttyak-test` window as profile `default` and opens the DM with B: use it only if
-  `default` is your A profile and the maintainer is watching.
+- `tools/launch.sh <A> [<B's name>]` opens a *visible* `ttyak-test` window on your A profile (it refuses without a
+  profile) and opens the DM with B: use it only while the maintainer is watching.
 - **No screenshots of the real screen** (grim, `tools/shot.sh` grab a screen region and have captured the maintainer's
   own windows). Use `get-text`. If a picture is truly needed, focus the test window, check it is the active one, look
   at the picture before relying on it, and delete any capture that shows something else.
