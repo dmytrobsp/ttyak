@@ -82,15 +82,25 @@ machine, understand where the project stands, and pick up the next issue followi
    convention for this project).
 9. **Docs under `docs/`**: `DESIGN.md` → `docs/DESIGN.md`. `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `CLAUDE.md`
    and the licences stay at the root (GitHub and agents look for them there).
-10. **References follow the moves**: `tools/check-name.sh` (its allow-list names PROGRESS.md), the wiki's Project-layout
+10. **The after-compact recipe points at sources and holds no state** (agreed with the user; it stays local, see
+    Non-goals). Today it hard-codes a release state ("0.12.0 is released, don't re-run its tasks") and goes stale. The
+    rewritten recipe names no release or task; it points at and snapshots:
+    - the rules: AGENTS.md (and CLAUDE.md, reloaded anyway) and the memory index;
+    - where we are: `docs/PROGRESS.md`, the newest committed plan ledger in `docs/superpowers/ledgers/` that has
+      unfinished tasks (with its design and plan), and the open issues of the current milestone;
+    - a live snapshot it computes: the last commits, uncommitted files, commits not pushed, the latest CI and Release
+      runs, open test windows (`hyprctl clients`, the test class), ttyak processes started by tests (`pgrep -x`), and
+      whether a test VM is running;
+    - what to do: report where things stand and continue only what the conversation summary shows was in progress.
+    The edit is outside the repo: shown to the user before it is written.
+11. **References follow the moves**: `tools/check-name.sh` (its allow-list names PROGRESS.md), the wiki's Project-layout
     page, CONTRIBUTING, RELEASING (its "PROGRESS.md" steps), README if it links them. Old specs/plans keep their
     historical text.
 
 ## Non-goals
 
-- The after-compact hook is not redesigned (the user: "let's leave it out for now … we'll generalize that later").
-  My call: its text gets only the new path of PROGRESS (`docs/PROGRESS.md`), so it doesn't point at a missing file; the
-  hook is outside the repo, so that edit is shown to the user first.
+- The after-compact recipe is not moved into the repo or generalized for other machines (the user: "let's leave it out
+  for now … we'll generalize that later"). It stays at `~/.claude/hooks/after-compact.d/klack.sh`.
 - No code changes; no wiki content changes beyond links; no rewriting of old specs/plans.
 - The memory system is not removed: it keeps who the user is and their preferences, plus pointers into the repo docs.
 
@@ -147,5 +157,5 @@ do with a security finding — and points out anything it couldn't find. Gaps fo
 `AGENTS.md` + one-line `CLAUDE.md`; `AGENTS.local.md` as the single git-ignored local file with a committed template;
 `docs/PROGRESS.md` short and rewritten; history in `docs/history/` by era; ledgers committed under
 `docs/superpowers/ledgers/`; security findings as GitHub private advisories; VM tools brought into `tools/vm/` if
-straightforward; the hook gets only the new PROGRESS path (shown to the user); the free test workspace documented with
-its `team.plan` quirk.
+straightforward; the after-compact recipe rewritten to point at sources with a computed snapshot and no hard-coded
+state (shown to the user before it is written); the free test workspace documented with its `team.plan` quirk.
