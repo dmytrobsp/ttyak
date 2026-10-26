@@ -18,10 +18,10 @@ that is missing or does not parse is named with the reason. `en` (or empty) is t
 
 ## What is translated
 
-So far: the key names and labels (F1, which-key, F6 → Keys), the preferences and their help, the commands list,
-overlay titles and the status-bar hints, the Threads, Activity and Huddles views' own words, the update notice and the
-update screen, and the lines of `ttyak ctl check` and `ttyak ctl status`. Messages, most status-line messages and the
-command line's own help stay in English.
+So far: the key names and labels (F1, which-key, F6 → Keys), the preferences and their help, the commands list, overlay
+titles and the status-bar hints, some status-line notes (links, huddles), the Threads, Activity and Huddles views' own
+words, the update notice and the update screen, and the lines of `ttyak ctl check` and `ttyak ctl status`. Messages,
+most status-line messages and the command line's own help stay in English.
 
 ## If it doesn't work
 

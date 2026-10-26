@@ -37,4 +37,5 @@ syntect theme for snippets).
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Colours look wrong](Troubleshooting#colours-look-wrong)
+- everything else: [Troubleshooting](Troubleshooting)

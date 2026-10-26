@@ -29,4 +29,6 @@ passes only for a file this repository's release workflow (`.github/workflows/re
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Windows: SmartScreen warns about ttyak.exe](Troubleshooting#windows-smartscreen-warns-about-ttyakexe)
+- [Reporting a bug](Troubleshooting#reporting-a-bug)
+- everything else: [Troubleshooting](Troubleshooting)

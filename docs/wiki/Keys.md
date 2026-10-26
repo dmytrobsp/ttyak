@@ -1,6 +1,6 @@
 The keys ttyak uses by default. Press **F1** (or `?` in the sidebar, the messages and the views) in the app for the full
 list with the keys in effect, your own bindings included. `ttyak ctl keys-template` prints every action with its
-default keys. To change a key, see [Rebinding keys](Rebinding-keys).
+default keys (see [Scripting](Scripting)). To change a key, see [Rebinding keys](Rebinding-keys).
 
 ## Modes and the leader
 
@@ -38,7 +38,7 @@ it, rebind `insert_leader` in F6 → Keys.
 | Ctrl+A · `␣fa` | the [Activity view](The-screen#the-activity-view) |
 | `␣fh` | the [Huddles view](The-screen#the-huddles-view) |
 | `␣fc` | every channel (as Ctrl+K with `#`) |
-| F6 · `/prefs` | preferences: Availability, Appearance, Messages & media, Language & region, Notifications (the whole notification system: what notifies you, how you are told, quiet hours, what this machine does, a test notification), Audio & video, Huddles, Updates, Keys |
+| F6 · `/prefs` | preferences: Availability, Appearance, Messages & media, Language & region, Notifications (the whole notification system: what notifies you, how you are told, quiet hours, what this machine does, a test notification), Audio & video, Huddles, Updates, Keys ([Settings](Settings), [Notifications and attention](Notifications-and-attention#settings-in-f6)) |
 | F1 · `?` | all keys |
 | Alt+1 … Alt+9 · `␣w1` … `␣w9` | the profile's workspace 1 … 9 |
 | Ctrl+Q | quit |
@@ -138,7 +138,7 @@ On a **conversation** in the sidebar:
 | `␣s` | star / unstar |
 | `␣m` | move to a section (or a new one) |
 | `␣d` | details: about, members, pins |
-| `␣b` | what it notifies about (the next level) |
+| `␣b` | what it notifies about (the next level; see [Notifications and attention](Notifications-and-attention#desktop-notifications)) |
 | `␣M` | mute / unmute |
 | `␣y` | copy the conversation's link |
 | `␣l` | leave (asks first) |
@@ -151,7 +151,7 @@ conversation's section. The sidebar's right-click menu offers mute, mark unread 
 
 | Group | |
 |---|---|
-| `␣h` huddle | `h` join or leave · `m` mute · `t` its thread · `v` huddle view · `c` camera · `s` share screen · `d` decline an invitation |
+| `␣h` huddle | `h` join or leave · `m` mute · `t` its thread · `v` huddle view · `c` camera · `s` share screen · `d` decline an invitation ([Huddles](Huddles)) |
 | `␣n` new | `c` channel · `p` private channel · `d` DM · `s` snippet · `f` upload a file |
 | `␣a` availability | `s` set status · `c` clear it · `a` away / active · `n` pause notifications for 30 minutes, or resume them when paused · `N` pause for a time you type (`/dnd `) |
 | `␣f` find | `f` jump to · `s` search · `a` activity · `t` threads · `h` huddles · `c` every channel |
@@ -209,7 +209,7 @@ runs on Enter. The suggestions also offer the fixed choices (`/dnd 30m` … `off
 |---|---|
 | `/status [:emoji:] [text] [for 30m\|2h\|1d\|today]` · `/status clear` | set or clear your status |
 | `/away` · `/active` | appear away · active |
-| `/dnd` · `/dnd 30m` (`2h`, `1d`) · `/dnd off` | plain `/dnd` pauses notifications for 30 minutes, or resumes them when paused · pause for a time · resume (ends a pause and the current quiet hours of your notification schedule; the schedule stays) |
+| `/dnd` · `/dnd 30m` (`2h`, `1d`) · `/dnd off` | plain `/dnd` pauses notifications for 30 minutes, or resumes them when paused · pause for a time · resume (ends a pause and the current quiet hours of your notification schedule; the schedule stays; see [Do-not-disturb](Notifications-and-attention#do-not-disturb)) |
 | `/dnd schedule` · `/dnd schedule off` · `… every day 9:00-17:00` · `… weekdays 9:00-17:00` | say the notification schedule · turn it off · receive notifications every day / Monday to Friday in these hours (the account's time zone), paused outside them; per-day hours in F6 → Availability |
 | `/upload <path> [text]` | upload a file (the path completes as you type: Tab goes into a folder; `~` is your home; names with spaces are quoted for you) |
 | `/snippet [lang] [title]` + lines | post the lines after the command (Alt+Enter) as a text snippet |
@@ -228,7 +228,7 @@ Each dialog shows its keys at the bottom. Esc closes every one of them (`q` too 
 
 | Dialog | Keys |
 |---|---|
-| Jump to (Ctrl+K), search (Ctrl+F) | ↑ / ↓ (also Tab) move · PgUp / PgDn a page (jump to) · Enter goes there (search: searches, then goes to the result) |
+| Jump to (Ctrl+K), search (Ctrl+F) | ↑ / ↓ move (Tab: next) · PgUp / PgDn a page (jump to) · Enter goes there (search: searches, then goes to the result) |
 | reaction picker (`␣r`) | ↑ / ↓ · PgUp / PgDn ten · Enter reacts with it |
 | conversation details (`␣d`) | ← / → (`h` `l`, Shift+Tab / Tab) tabs · ↑ / ↓ (`k` `j`) rows · Enter: a member's profile, a pin's message |
 | move to section (`␣m`) | ↑ / ↓ · Home / End · Enter moves there (New section…: name it) |
@@ -250,4 +250,7 @@ Single letters and F-keys moved behind `Space`, and every one of them can be put
 ## If it doesn't work
 
 - [Rebinding keys](Rebinding-keys#when-a-binding-does-not-work)
-- [Troubleshooting](Troubleshooting)
+- [Ctrl+Space does nothing](Troubleshooting#ctrlspace-does-nothing)
+- [keys.toml or settings.toml is ignored](Troubleshooting#keystoml-or-settingstoml-is-ignored)
+- [Copy or paste doesn't work](Troubleshooting#copy-or-paste-doesnt-work)
+- everything else: [Troubleshooting](Troubleshooting)

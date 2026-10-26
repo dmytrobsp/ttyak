@@ -8,7 +8,7 @@ before it opens, its largest height, icons) and the two leaders.
 
 - `/` filters the list (Enter keeps the filter, Esc clears it).
 - Enter on a row records the new keys: press them, or a whole sequence such as `Space r`. The recording ends after a
-  1 s pause, and any key counts.
+  1 s pause, and any key counts; then Enter keeps the keys and Esc discards them.
 - Delete (or Backspace) unbinds the action, `r` restores its default.
 - Enter on a group renames it, `i` changes its icon (empty: the default).
 
@@ -27,11 +27,11 @@ that is a symbolic link (dotfiles) stays a link: its target is written.
 | Windows | `%APPDATA%\ttyak\config\keys.toml` |
 
 `ttyak ctl keys-template` prints a complete `keys.toml` with every default and a comment for each action — a good start
-to edit by hand. Each table is a context: `[global]`, `[sidebar]`, `[messages]`, `[huddle_view]`, `[composer]`,
-`[completion]`, and one per dialog or view (`[switcher]` for Ctrl+K, `[search]`, `[reaction_picker]`, `[details]`,
-`[profile]`, `[activity]`, `[threads]`, `[huddles]`, `[move_to_section]`, `[text_field]`, `[snippet]`,
-`[image_viewer]`, `[video_player]`, `[confirm]`, `[help]`, `[preferences]`, `[menu]`, `[save]`, `[update]`). Each
-entry replaces an action's keys, and a line left out keeps its default:
+to edit by hand ([Scripting](Scripting) has the other `ctl` commands). Each table is a context: `[global]`, `[sidebar]`,
+`[messages]`, `[huddle_view]`, `[composer]`, `[completion]`, and one per dialog or view (`[switcher]` for Ctrl+K,
+`[search]`, `[reaction_picker]`, `[details]`, `[profile]`, `[activity]`, `[threads]`, `[huddles]`, `[move_to_section]`,
+`[text_field]`, `[snippet]`, `[image_viewer]`, `[video_player]`, `[confirm]`, `[help]`, `[preferences]`, `[menu]`,
+`[save]`, `[update]`). Each entry replaces an action's keys, and a line left out keeps its default:
 
 ```toml
 leader = "space"              # the leader in NORMAL; "" for none
@@ -76,4 +76,6 @@ Windows input methods is the usual one — rebind `insert_leader` in F6 → Keys
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Ctrl+Space does nothing](Troubleshooting#ctrlspace-does-nothing)
+- [keys.toml or settings.toml is ignored](Troubleshooting#keystoml-or-settingstoml-is-ignored)
+- everything else: [Troubleshooting](Troubleshooting)

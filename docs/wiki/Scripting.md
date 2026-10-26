@@ -68,4 +68,6 @@ ttyak ctl status --json | jq -r .mark                      # the mark only
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [A workspace is signed out](Troubleshooting#a-workspace-is-signed-out)
+- [Reporting a bug](Troubleshooting#reporting-a-bug)
+- everything else: [Troubleshooting](Troubleshooting)

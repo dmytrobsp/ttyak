@@ -39,16 +39,18 @@ that can't be checked starts as usual). In a terminal it asks about each signed-
 - **launch anyway** without it, while another workspace can start; when none can, **quit**
 
 Without a terminal it prints a warning for each signed-out workspace and starts the others (and fails when none can
-start). A session that ends while ttyak runs is shown in the status line (`Acme: signed out — ttyak auth login, then
-restart ttyak`) and dim with ⊘ in the workspace rail.
+start). A session that ends while ttyak runs is dim with ⊘ in the workspace rail and shown in the
+[status line](The-screen#the-status-line): `Acme: signed out — ttyak auth login, then restart ttyak`.
 
 ## Several workspaces in one profile
 
 Signing in to more workspaces with the same profile adds them to it. Inside the app, `Alt+1` … `Alt+9` switch between
-them and `/workspace [name]` lists them or switches by name. The rail on the left (shown with two or more workspaces,
-in a terminal at least 60 columns wide) shows unread messages in the others (checked every 30 s), and their desktop
-notifications still arrive, titled with the workspace; clicking one switches there. To tell workspaces apart, give each
-a theme of its own (F6 → Appearance → Theme for this workspace).
+them and `/workspace [name]` lists them or switches by name ([Keys](Keys#everywhere)). The
+[rail](The-screen#several-workspaces-the-rail) on the left (shown with two or more workspaces, in a terminal at least
+60 columns wide) shows unread messages in the others (checked every 30 s), and their
+[desktop notifications](Notifications-and-attention#desktop-notifications) still arrive, titled with the workspace;
+clicking one switches there. To tell workspaces apart, give each a theme of its own (F6 → Appearance → Theme for this
+workspace: [Themes](Themes#choosing-one)).
 
 ## Several profiles
 
@@ -84,4 +86,7 @@ says so). Files you saved from messages stay; Slack is not signed out.
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [A workspace is signed out](Troubleshooting#a-workspace-is-signed-out)
+- [Signing in: no browser found, or a browser can't be read](Troubleshooting#signing-in-no-browser-found-or-a-browser-cant-be-read)
+- [keys.toml or settings.toml is ignored](Troubleshooting#keystoml-or-settingstoml-is-ignored)
+- everything else: [Troubleshooting](Troubleshooting)

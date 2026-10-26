@@ -78,10 +78,10 @@ browser through a remote desktop (such as RDP) while ttyak runs in the SSH sessi
 
 ## Paste a cookie
 
-ttyak asks for the value of the `d` cookie for `slack.com`, from a browser where you are signed in (its developer
-tools → Application → Cookies; Firefox: Storage → Cookies). What you paste is not shown, only how many characters; a leading `d=` is dropped.
-Slack then lists the workspaces that cookie is signed in to: mark them and press Enter. A cookie that is signed in
-nowhere is asked for again.
+ttyak asks for the value of the `d` cookie for `slack.com`, from a browser where you are signed in (its developer tools
+→ Application → Cookies; Firefox: Storage → Cookies). What you paste is not shown, only how many characters; a leading
+`d=` is dropped. Slack then lists the workspaces that cookie is signed in to: mark them and press Enter. A cookie that
+is signed in nowhere is asked for again.
 
 ## One workspace
 
@@ -115,9 +115,9 @@ you are signed in to Slack with, without the guide.
 Without a terminal ttyak asks nothing:
 
 - `ttyak auth login --workspace acme.slack.com` reads the value of the `d` cookie for `slack.com` from standard input
-  (sign in in any browser, then devtools → Application → Cookies; Firefox: Storage → Cookies). `TTYAK_COOKIE_D` or `--cookie VALUE` give it
-  directly (`--cookie` ends up in your shell history: prefer the variable or standard input). Either way ttyak fetches
-  the token itself and checks it with `auth.test`.
+  (sign in in any browser, then devtools → Application → Cookies; Firefox: Storage → Cookies). `TTYAK_COOKIE_D` or
+  `--cookie VALUE` give it directly (`--cookie` ends up in your shell history: prefer the variable or standard input).
+  Either way ttyak fetches the token itself and checks it with `auth.test`.
 - `--from-browser` works without a terminal too: it takes the profile used most recently.
 - `ttyak auth login --email you@example.com` prints the link (on standard error), reads the code from standard input
   and signs in to every listed workspace that can be used; it fails when none was.
@@ -129,4 +129,9 @@ In a terminal `--cookie`, `TTYAK_COOKIE_D` and `--from-browser` work the same an
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Signing in: no browser found, or a browser can't be read](Troubleshooting#signing-in-no-browser-found-or-a-browser-cant-be-read)
+- [Signing in: the email code doesn't work](Troubleshooting#signing-in-the-email-code-doesnt-work)
+- [A workspace needs SSO or two-factor](Troubleshooting#a-workspace-needs-sso-or-two-factor)
+- [The Keychain or the keyring asks](Troubleshooting#the-keychain-or-the-keyring-asks)
+- [A workspace is signed out](Troubleshooting#a-workspace-is-signed-out)
+- everything else: [Troubleshooting](Troubleshooting)

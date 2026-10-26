@@ -24,8 +24,7 @@ while it joins, the picture and name of whoever is talking with their level ("ta
 or "N here", your microphone (🎙 live with your level, or 🔇 muted), "📹 camera on" or "camera off", and a screen share
 ("🖥 sharing your screen", or "🖥 <name> is sharing"). When the speaker cannot be opened it says "no sound: …". In a
 narrow window the bar takes more rows rather than cutting a piece in half (up to four rows; what does not fit then is
-left out). It shows no keys: after `␣h` the
-which-key panel lists them. A click on the bar opens the huddle view.
+left out). It shows no keys: after `␣h` the which-key panel lists them. A click on the bar opens the huddle view.
 
 ## The huddle view
 
@@ -44,16 +43,16 @@ Someone starting a huddle in a DM or group DM with you sends a desktop notificat
 (see [Notifications and attention](Notifications-and-attention)) and, while you are not in a huddle yourself, the
 invitation rings: a soft trill every few seconds, with "📞 X invites you to a huddle · ␣hh join · ␣hd decline" in the
 status line. It rings until you join (`␣hh`, from any conversation), decline (`␣hd`), the invitation is withdrawn
-(the caller left, or the huddle ended), or it has rung for the set time (30 s by default); then it is declined for you if "Then decline it
-on Slack" is on, else the status line says "missed X's huddle".
+(the caller left, or the huddle ended), or it has rung for the set time (30 s by default); then it is declined for you
+if "Then decline it on Slack" is on, else the status line says "missed X's huddle".
 
 While you are in Do Not Disturb (snoozed or in your schedule), Slack sends no invitation at all, so nothing rings — as
 in Slack's own app (tried). The system's do-not-disturb keeps the ring quiet when ttyak follows it and can ask (not on
 macOS): see [Do-not-disturb](Notifications-and-attention#do-not-disturb).
 
-Clicking a desktop notification opens what it showed in ttyak — a huddle's notification its conversation, a thread
-reply the thread with the reply selected — for 30 minutes after it was shown, and brings the window forward where it
-can (see [A click brings the window forward](Notifications-and-attention#a-click-brings-the-window-forward)).
+Clicking the huddle's desktop notification opens its conversation in ttyak, for 30 minutes after it was shown, and
+brings the window forward where it can (Linux desktops with an XDG notification server; macOS and Windows differ: see
+[A click brings the window forward](Notifications-and-attention#a-click-brings-the-window-forward)).
 
 ## Sounds (F6 → Huddles)
 
@@ -105,7 +104,8 @@ built from source — note that H.264 is patent-encumbered when you distribute b
 **Your camera**: choose it in F6 → Audio & video → Camera (until you do, it can never switch on), then `␣hc` in a
 huddle switches it on and off; you see yourself in your tile. Capture goes through the `ffmpeg` tool: V4L2 on Linux,
 AVFoundation on macOS, DirectShow on Windows. On macOS and Windows the cameras are listed with ffmpeg's
-`-list_devices`; capture and that list are written but have not been run there yet.
+`-list_devices`. On Windows that list has run, on a machine without a camera (it came back empty); capture on macOS and
+Windows, and the macOS list, are written but have not been run yet.
 
 **Your screen**: `␣hs` in a huddle starts sharing, `␣hs` again stops. Others see it as your screen share; you see it in
 a "🖥 Your screen" tile.
@@ -143,4 +143,8 @@ a patched copy of webrtc-rs' TURN client that keeps a huddle's audio from droppi
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Huddle audio: no sound, or the wrong microphone or speaker](Troubleshooting#huddle-audio-no-sound-or-the-wrong-microphone-or-speaker)
+- [Video, the camera or screen sharing doesn't work](Troubleshooting#video-the-camera-or-screen-sharing-doesnt-work)
+- [A huddle invitation doesn't ring](Troubleshooting#a-huddle-invitation-doesnt-ring)
+- [A click on a notification doesn't bring the window forward](Troubleshooting#a-click-on-a-notification-doesnt-bring-the-window-forward)
+- everything else: [Troubleshooting](Troubleshooting)

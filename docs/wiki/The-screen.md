@@ -2,10 +2,11 @@ What you see in ttyak and what each part tells you. The keys that move you aroun
 
 ## The layout
 
-From left to right: the sidebar, the messages of the open conversation, and a reply pane for a thread on the right.
-The thread opens beside the messages when the part right of the sidebar is at least 100 columns wide; narrower, it
-takes the messages' place until you close it. The composer (the message box) is under the messages, and the status
-line is at the bottom. With two or more workspaces in the profile a rail on the far left has a tile for each.
+From left to right: the sidebar, the messages of the open conversation, and a reply pane for a thread on the right. The
+thread opens beside the messages when the part right of the sidebar is at least 100 columns wide; narrower, it takes the
+messages' place until you close it or go back to the messages or the composer (which closes it). The composer (the
+message box) is under the messages, and the status line is at the bottom. With two or more workspaces in the profile a
+[rail](#several-workspaces-the-rail) on the far left has a tile for each.
 
 A thumb on a pane's right border shows where you are when it scrolls.
 
@@ -18,9 +19,9 @@ From the top:
   Channels and the conversations of your own sections are in order of name; direct messages have the most recently
   active first
 
-Channels and DMs without a message for 30 days are left out unless they are starred, unread, open or have a huddle
-going on (F6 → Appearance → Hide conversations quiet for: never, 1, 7, 14, 30, 60 or 90 days). Ctrl+K still finds
-them, and shows them while they are open.
+Channels and DMs without a message for 30 days (and not created within them) are left out unless they are starred,
+unread, open, previewed or have a huddle going on (F6 → Appearance → Hide conversations quiet for: never, 1, 7, 14,
+30, 60 or 90 days). Ctrl+K still finds them, and shows them while they are open.
 
 What you have not read is bold, with a bar in the first column. Muted conversations are dimmed and not counted.
 A conversation with a draft kept is marked ✎. Each section's name heads a rule, with a blank row between sections
@@ -53,7 +54,7 @@ or a ringing huddle, takes their place for a while.
 
 On the right: the keys of a sequence under way (`␣h`, or `^␣h` for Ctrl+Space), and the hints of where you are,
 ending in `? help` (`↑/↓ move · Enter thread · i type · ␣ actions · ? help`). When a newer ttyak is out, a pill with
-`⬆` and its version stands at the right end.
+`⬆` and its version stands at the right end (a click opens the update screen: see [Updates](Updates)).
 
 ## Several workspaces: the rail
 
@@ -61,7 +62,8 @@ With two or more workspaces in the profile, a rail on the far left has a tile fo
 the terminal draws pictures, else its initials and number in a colour of its own. The shown one is marked by an accent
 bar, the others with unread messages by a thinner, dimmer one, and below such a tile `@3` says three unread DMs or
 mentions there. A workspace whose session has ended is dim, with `⊘`. A click on a tile switches to it, like
-Alt+1 … 9.
+Alt+1 … 9. How workspaces get into a profile is on
+[Profiles and sessions](Profiles-and-sessions#several-workspaces-in-one-profile).
 
 ## Statuses
 
@@ -179,7 +181,7 @@ the All tab's unread items, counted when the workspace starts and each time it l
 ## The Huddles view
 
 `␣fh`, or the **Huddles** row in the sidebar (under Activity), opens it in the main pane: every huddle going on now and
-who is in it, then the recent ones.
+who is in it, then the recent ones. Huddles themselves are on [Huddles](Huddles).
 
 - **Live now** lists the huddles in conversations you are a member of (not muted ones, as Slack does), yours first,
   each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going,
@@ -199,4 +201,8 @@ a view.
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [The thread doesn't open beside the conversation](Troubleshooting#the-thread-doesnt-open-beside-the-conversation)
+- [Emoji or symbols show as boxes](Troubleshooting#emoji-or-symbols-show-as-boxes)
+- [Colours look wrong](Troubleshooting#colours-look-wrong)
+- [A workspace is signed out](Troubleshooting#a-workspace-is-signed-out)
+- everything else: [Troubleshooting](Troubleshooting)

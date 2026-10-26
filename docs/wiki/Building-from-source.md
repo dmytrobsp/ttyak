@@ -8,9 +8,9 @@ To build: a recent stable Rust toolchain (edition 2024; [rustup](https://rustup.
 | Arch | `pacman -S base-devel cmake alsa-lib git` |
 | macOS | Xcode command-line tools, then `brew install cmake` |
 
-The Linux lines are checked with a clean checkout in a fresh container: `tools/container-build.sh debian|ubuntu|fedora|arch`
-(needs podman) installs those packages (plus curl, and on Debian/Ubuntu CA certificates, for rustup) and rustup's
-stable toolchain, then builds and tests. On macOS, CI builds
+The Linux lines are checked with a clean checkout in a fresh container:
+`tools/container-build.sh debian|ubuntu|fedora|arch` (needs podman) installs those packages (plus curl, and on
+Debian/Ubuntu CA certificates, for rustup) and rustup's stable toolchain, then builds and tests. On macOS, CI builds
 and tests on macOS 14 (Apple Silicon); the list above on a fresh Mac is not tried yet.
 
 ## Build and run
@@ -40,4 +40,6 @@ is one `ttyak.exe` that needs no MinGW DLLs (`crates/ttyak/build.rs` links OpenH
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [CONTRIBUTING.md](https://github.com/dmytrobsp/ttyak/blob/master/CONTRIBUTING.md) (building and testing)
+- [Reporting a bug](Troubleshooting#reporting-a-bug)
+- everything else: [Troubleshooting](Troubleshooting)

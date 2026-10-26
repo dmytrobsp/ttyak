@@ -3,10 +3,11 @@ not in the browser.
 
 ## How such a link looks
 
-It is shown as `↪ <label>` in a colour of its own (`app_link` in the theme). The label is the link's own text when its
-author gave it one, else where it goes: `#deploys`, `#deploys › message from <author>` (once ttyak has looked the
-author up; `› message` until then), `› thread reply`, `<name>'s profile`, `file <name>`. Where it goes into another
-workspace of the profile, the label starts with that workspace's name (`<workspace> · #deploys`).
+It is shown as `↪ <label>` in a colour of its own (`app_link` in the theme: see [Themes](Themes#your-own-theme)). The
+label is the link's own text when its author gave it one, else where it goes: `#deploys`,
+`#deploys › message from <author>` (once ttyak has looked the author up; `› message` until then), `› thread reply`,
+`<name>'s profile`, `file <name>`. Where it goes into another workspace of the profile, the label starts with that
+workspace's name (`<workspace> · #deploys`).
 
 Hovering a link names where it goes in the status line ("↪ opens … in ttyak"); for any other link it shows the
 address.
@@ -26,4 +27,5 @@ handler) or the program `TTYAK_OPEN_WITH` names; only web and mail links are ope
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [Links don't open in the browser](Troubleshooting#links-dont-open-in-the-browser)
+- everything else: [Troubleshooting](Troubleshooting)

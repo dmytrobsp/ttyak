@@ -21,8 +21,8 @@ irm https://ttyak.sh/install.ps1 | iex
 The script takes the latest release's zip for your system, checks it against the release's `SHA256SUMS` and puts
 `ttyak` in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\ttyak`). When that folder is not on your PATH yet, it
 puts it there: a marked line in your shell's startup file (sh, dash, ksh, bash, zsh, fish; for csh, nushell, elvish,
-xonsh and other shells it prints the line to add instead) or, on Windows, an entry in your user PATH. Open a new terminal
-afterwards. Then `ttyak auth login`, or plain `ttyak`, signs you in.
+xonsh and other shells it prints the line to add instead) or, on Windows, an entry in your user PATH. Open a new
+terminal afterwards. Then `ttyak auth login`, or plain `ttyak`, signs you in: see [Signing in](Signing-in).
 
 Run it as yourself: it needs no sudo, and under sudo it stops unless you give it a folder with `--dir`.
 
@@ -37,8 +37,9 @@ curl -fsSL https://ttyak.sh/install.sh | sh -s -- --version 0.12.0 --dir ~/bin
 & ([scriptblock]::Create((irm https://ttyak.sh/install.ps1))) -Version 0.12.0 -Dir C:\tools\ttyak
 ```
 
-The environment variables `TTYAK_VERSION`, `TTYAK_DIR`, `TTYAK_NO_MODIFY_PATH=1` and `TTYAK_YES=1` do the same (the
-flags win). Running the script again over an installed copy updates it in place.
+The environment variables `TTYAK_VERSION`, `TTYAK_DIR`, `TTYAK_NO_MODIFY_PATH=1`, `TTYAK_YES=1`, and for
+[uninstalling](#uninstall) `TTYAK_UNINSTALL=1` and `TTYAK_KEEP_DATA=1`, do the same (the flags win). Running the script
+again over an installed copy updates it in place.
 
 The macOS builds are signed and notarized by Apple. `ttyak.exe` is **not code-signed** yet (a later release will be),
 so SmartScreen may warn the first time you run it: **More info → Run anyway**.
@@ -59,9 +60,9 @@ winget and Chocolatey review each new version before they list it: a version sho
 release. winget has not listed ttyak yet (its first version is waiting for review); until it does,
 `winget install dmytrobsp.ttyak` finds nothing, so use the install script or Scoop.
 
-Homebrew on Linux uses the system's ALSA library: `libasound2` (`libasound2t64` on Ubuntu 24.04, Debian 13 and later) on
-Debian/Ubuntu, `alsa-lib` on Fedora/Arch. Homebrew's own alsa-lib is only a fallback for systems without one, and it needs
-glibc 2.38 or newer.
+Homebrew on Linux uses the system's ALSA library: `libasound2` (`libasound2t64` on Ubuntu 24.04, Debian 13 and later)
+on Debian/Ubuntu, `alsa-lib` on Fedora/Arch. Homebrew's own alsa-lib is only a fallback for systems without one, and it
+needs glibc 2.38 or newer.
 
 ### By hand
 
@@ -88,8 +89,8 @@ real pictures (see [Requirements](Requirements)). To build it yourself instead, 
 ## Update
 
 ttyak says once when a new version is out (a desktop notification when they are on, and `⬆ <version>` in the status
-line), and
-F6 → Updates shows how this copy was installed and what to run to update it (its "To update it" row; Enter copies it):
+line: see [Updates](Updates)), and F6 → Updates shows how this copy was installed and what to run to update it (its
+"To update it" row; Enter copies it):
 
 - the install script: while a newer version is known, F6 → Updates has an **Update** row that opens the update screen;
   **Update now** there downloads the new version, checks it against the release's `SHA256SUMS` and puts it in place
@@ -107,7 +108,8 @@ F6 → Updates shows how this copy was installed and what to run to update it (i
   marked line in your shell's startup file; on Windows the user PATH entry), and asks whether to keep your settings,
   sign-ins and drafts. For scripts: `ttyak uninstall --yes` deletes the data too, `ttyak uninstall --yes --keep-data`
   keeps it. A startup file that is a link, or lies in a linked folder, or is not writable, is left alone: ttyak shows
-  the lines to remove by hand. The install script's `--uninstall` (`-Uninstall`) runs the same command.
+  the lines to remove by hand. The install script's `--uninstall` (`-Uninstall`) runs the same command, with
+  `--keep-data` (`-KeepData`) to keep your data.
 - `brew uninstall ttyak` · `winget uninstall dmytrobsp.ttyak` · `sudo apt remove ttyak` · `sudo dnf remove ttyak` ·
   Arch: `sudo pacman -Rns ttyak-bin` — these leave your ttyak data (settings, sign-ins, drafts, caches) in your home
   folder: run `ttyak purge` first to delete it
@@ -116,8 +118,14 @@ F6 → Updates shows how this copy was installed and what to run to update it (i
 - by hand: `ttyak purge` (if you want your data gone), then delete `ttyak`
 
 `ttyak purge` lists what it will delete and asks first (`--yes` for scripts), and refuses while a ttyak runs. Files you
-saved from messages stay, and Slack is not signed out.
+saved from messages stay, and Slack is not signed out. What it deletes, folder by folder, is on
+[Profiles and sessions](Profiles-and-sessions#deleting-everything).
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [winget finds nothing](Troubleshooting#winget-finds-nothing)
+- [Windows: SmartScreen warns about ttyak.exe](Troubleshooting#windows-smartscreen-warns-about-ttyakexe)
+- [Windows: the first keys after start are lost](Troubleshooting#windows-the-first-keys-after-start-are-lost)
+- [An update says it cannot write the folder](Troubleshooting#an-update-says-it-cannot-write-the-folder)
+- [No update notice](Troubleshooting#no-update-notice)
+- everything else: [Troubleshooting](Troubleshooting)

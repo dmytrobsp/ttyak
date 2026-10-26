@@ -1,5 +1,6 @@
 How ttyak gets your attention: a mark in the terminal's tab title, desktop notifications, the terminal's bell and a
-sound. All of it is set in F6 → Notifications. Clicking a notification opens what it showed and brings ttyak's window
+sound. All of it is set in F6 → Notifications (the other F6 pages are on [Settings](Settings)). What your system needs
+for it is on [Requirements](Requirements). Clicking a notification opens what it showed and brings ttyak's window
 forward, by different means on each system (below).
 
 ## The tab title
@@ -19,10 +20,11 @@ What notifies you follows Slack's notification settings, kept on Slack (F6 → N
 
 - direct messages and group DMs, mentions of you, your keywords (Keywords in F6: they count as mentions), and replies
   in threads you started or replied in
-- in a channel whose level is "all new messages", every new message too (F6 → This conversation notifies about; the
-  other channels follow Channels notify about (default))
+- in a channel whose level is "all new messages", every new message too (thread replies only in threads you are in;
+  F6 → This conversation notifies about; the other channels follow Channels notify about (default))
 - nothing from a conversation whose level is "nothing", nor from a muted one
-- someone starting a huddle in a DM or group DM with you (not in channels)
+- someone starting a huddle in a DM or group DM with you (not in channels; the invitation also rings: see
+  [Huddles](Huddles#invitations))
 
 Nothing fires for a conversation (or its thread) you are looking at in a focused terminal. Your own messages never
 notify.
@@ -34,7 +36,8 @@ macOS and Windows). A thread reply's notification stays until that thread is rea
 take it away).
 
 Notifications from the other workspaces of the profile still arrive, titled with the workspace; clicking one switches
-there.
+there ([Profiles and sessions](Profiles-and-sessions#several-workspaces-in-one-profile)). A new version of ttyak is told
+by a notification too, once: see [Updates](Updates#the-check).
 
 F6 → Notifications → Desktop notifications (`desktop`, on by default) turns them off; there is no sound then either,
 but the bell (below) still rings.
@@ -54,7 +57,7 @@ desktop notifications off.
 
 F6 → Notifications → Sound (`sound`): `off` (the default), `chime`, `ping`, `knock` (built in), or `system`, the
 desktop's own notification sound. Notification sound volume (`sound_volume`, 0 to 200 %, 100 by default) sets how loud
-ttyak plays it, and the huddle's own sounds too.
+ttyak plays it, and the huddle's own sounds too ([Huddles](Huddles#sounds-f6--huddles)).
 
 The sound goes with the notification where the notification server can play it (it lists the `sound` capability). Then
 the system's do-not-disturb silences both, and ttyak's volume and speaker setting do not apply. swaync's server does
@@ -149,7 +152,10 @@ as below (tried).
 ## A click brings the window forward
 
 A click on a notification the system's notifier showed (every terminal that does not show them itself, tmux,
-`TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above, and then brings ttyak's window
+`TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed in ttyak — a message its conversation, a
+thread reply the thread with the reply selected, a huddle's notification its conversation — for 30 minutes after it
+was shown. That is on Linux desktops with an XDG notification server; on macOS and Windows see their sections below
+(on Windows only the toast on screen takes a click, not one in the notification center). Then it brings ttyak's window
 forward by the first of these that works here:
 
 - inside tmux: ttyak's tmux window and pane are selected and the client last active on its session is switched to
@@ -285,4 +291,9 @@ ttyak let go of the toast (ttyak ended, or 30 minutes passed).
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [No desktop notifications](Troubleshooting#no-desktop-notifications)
+- [No notification sound](Troubleshooting#no-notification-sound)
+- [Notifications during do-not-disturb](Troubleshooting#notifications-during-do-not-disturb)
+- [No bell, or no mark in the tab title](Troubleshooting#no-bell-or-no-mark-in-the-tab-title)
+- [A click on a notification doesn't bring the window forward](Troubleshooting#a-click-on-a-notification-doesnt-bring-the-window-forward)
+- everything else: [Troubleshooting](Troubleshooting)

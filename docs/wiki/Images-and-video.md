@@ -32,7 +32,7 @@ the terminal at start), `kitty`, `sixel`, `iterm2` or `halfblocks`. It offers on
 it can draw — `auto` and `halfblocks` always — and its help marks the others "not available in this terminal". A
 `settings.toml` naming one of those draws as `auto`, with a note in the status bar (the file is left as it is).
 
-Two environment variables:
+Two environment variables (all of them are on [Settings](Settings#environment-variables)):
 
 - `TTYAK_GRAPHICS` (`kitty`, `sixel`, `iterm2` or `halfblocks`) forces the way it names, for when the terminal is not
   asked right (over ssh or tmux) — with a warning in the log when the terminal did not report it.
@@ -63,7 +63,8 @@ and "2/3" when the message has several pictures.
 
 Videos play in the terminal, with sound. That needs `ffmpeg` and `ffprobe` on your PATH, on every system (optional:
 only video, cameras and screen sharing need them; `ctl check` has a row for them). Without them the status line says
-"cannot play video: …".
+"cannot play video: …". Cameras and screen shares in a huddle are on
+[Huddles](Huddles#video-cameras-and-screen-shares).
 
 | Key | |
 |---|---|
@@ -73,5 +74,8 @@ only video, cameras and screen sharing need them; `ctl check` has a row for them
 
 ## If it doesn't work
 
+- [Pictures show as half blocks](Troubleshooting#pictures-show-as-half-blocks)
+- [Emoji or symbols show as boxes](Troubleshooting#emoji-or-symbols-show-as-boxes)
+- [Video, the camera or screen sharing doesn't work](Troubleshooting#video-the-camera-or-screen-sharing-doesnt-work)
 - [Requirements](Requirements)
-- [Troubleshooting](Troubleshooting)
+- everything else: [Troubleshooting](Troubleshooting)

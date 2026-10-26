@@ -52,4 +52,6 @@ It shows the new version, its date and the version you have, with a link to the 
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [No update notice](Troubleshooting#no-update-notice)
+- [An update says it cannot write the folder](Troubleshooting#an-update-says-it-cannot-write-the-folder)
+- everything else: [Troubleshooting](Troubleshooting)

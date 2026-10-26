@@ -52,4 +52,6 @@ The install scripts read their own (`TTYAK_VERSION`, `TTYAK_DIR`, `TTYAK_NO_MODI
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [keys.toml or settings.toml is ignored](Troubleshooting#keystoml-or-settingstoml-is-ignored)
+- [Reporting a bug](Troubleshooting#reporting-a-bug) (the log)
+- everything else: [Troubleshooting](Troubleshooting)
