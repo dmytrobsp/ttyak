@@ -41,10 +41,15 @@ After this work:
       ways in one line each (a code from your email, your browser, a pasted cookie), say that two-factor/SSO
       workspaces need the browser way (verify against the code first), link to the wiki's Signing in page.
    5. **Install / update / uninstall.** The one-line installers, the package-manager table (kept compact), one line
-      each for update and uninstall → the wiki's Install page. It keeps two one-line subheadings, **Requirements**
-      and **Verify**, each pointing at the wiki (my call): the released 0.12.1 binary says "install the fonts listed
-      under Requirements in the README", and the site links to `#requirements` and `#verify` (`fill.py`
-      `render_signing_note`), so those anchors must keep landing somewhere useful.
+      each for update and uninstall → the wiki's Install page. It keeps two subheadings whose anchors the released
+      0.12.1 binary ("install the fonts listed under Requirements in the README") and the site (`#requirements`,
+      `#verify` from `fill.py` `render_signing_note`) link to:
+      - **Requirements:** a short list of what is needed and why (the user: "requirements can keep a short list of
+        things needed and why they are needed. everything else goes to wiki") — e.g. a UTF-8 terminal of 80 × 24,
+        the fonts (so emoji and symbols aren't boxes), ALSA on Linux (sound), ffmpeg (video, cameras, screen
+        sharing), a graphics-capable terminal (real pictures), a notification server (desktop notifications) —
+        one line each, then a link to the wiki for the per-platform detail.
+      - **Verify:** one line and a link to the wiki.
    6. **Build it yourself and contributing** → the wiki's Building page and `CONTRIBUTING.md`.
    7. **Project layout.** The crates and `vendor/rtc-turn`, a few lines → the wiki's Project layout page.
    8. **Licence.** As today, short.
@@ -69,8 +74,8 @@ After this work:
 
 ## Non-goals
 
-- The in-app help (F6, `?`) is not rewritten (my call, told to the user). Anything wrong found there becomes a
-  GitHub issue. The exception: code strings that point the user *at the README* (below) are changed, since they
+- The in-app help (F6, `?`) is not rewritten (agreed by the user). Everything wrong found there goes into **one**
+  GitHub issue (the user: "any in-app help discrepancies should be filed as a single issue"). The exception: code strings that point the user *at the README* (below) are changed, since they
   would be wrong after the split.
 - No new features. The Troubleshooting page and the "If it doesn't work" sections are assembled from what the README,
   the code and the GitHub issues (label `known-issue`) already know; nothing is invented.
@@ -137,8 +142,12 @@ After this work:
   are updated to the new place.
 - `packaging/templates/ttyak.nuspec` `docsUrl` → the wiki Home.
 - `.github/workflows/release.yml` copies `README.md` into each zip; `packaging/templates/nfpm.yaml` and `PKGBUILD`
-  install it to `/usr/share/doc/ttyak/`; `tools/install/test_install_*.py` expect it in the zip. → Unchanged: the
-  short README ships, and its links lead to the wiki (my call: offline readers get the front door, not the manual).
+  install it to `/usr/share/doc/ttyak/`; `tools/install/test_install_*.py` expect it in the zip. → **The README is
+  no longer shipped** (the user: "i dont think we should ship a readme at all"): the zips hold the binary and the two
+  licences; the `.deb`/`.rpm`/AUR packages stop installing it (the licences stay); the tests and fixtures that
+  expect it change; any doc that says "the zip has the README" (README, wiki Install page, `docs/RELEASING.md`) is
+  corrected. `release.yml` only runs at a release, so this is UNIT-verified here (packaging/install tests) and checked
+  for real in the next release's dry run — `docs/RELEASING.md` gets a line to look at the zip's contents then.
 - `CONTRIBUTING.md` points at the README's Requirements and "Signing in" → the wiki pages.
 - The site: the "Requirements" block ends with a link to `github.com/dmytrobsp/ttyak#requirements`; the footer says
   "the manual (the README)".
@@ -165,7 +174,16 @@ goes into a page:
 2–4 real images for the README (and reused by the wiki where useful): the main screen (sidebar, a conversation, a
 thread), the sign-in guide, a huddle; the builder may swap one for the image viewer. Made in the test workspace only,
 with the same care as the site's captures (`tools/site/CAPTURES.md`: raw kitty captures, the private rename/fixes
-files outside the repo, nothing personal on screen). The builder chooses the route: the existing capture pipeline
+files outside the repo, nothing personal on screen). The user's rules (2026-10-26):
+
+- **The workspace name is blurred** (a visible blur, not a made-up name).
+- **No real user names**: every person shown has a made-up name (the test accounts' names too).
+- **Made-up conversations**: the screenshots do not show the test workspace's existing test messages. The builder
+  picks how: post a made-up conversation into a fresh channel of the test workspace from accounts A and B (posting
+  there is allowed; one account per test at a time) and rename the authors at capture, or substitute the text at
+  capture time — whichever keeps the layout true to what ttyak draws.
+
+The builder chooses the route: the existing capture pipeline
 (`tools/site/captures.py` / `ansi2html.py` already turn a kitty capture into an SVG of the cell grid; a standalone
 SVG renders in a GitHub README as an `<img>`) or PNGs from a hidden kitty window — whichever gives a faithful,
 legible image on github.com in light and dark mode. Images live in the main repo (e.g. `docs/images/`), and the user
@@ -186,12 +204,14 @@ sees them before they are committed.
 - The order of the work, as long as each step is small, verified and committed on its own, and nothing half-moved is
   pushed (e.g. the README is cut only once the wiki pages holding its content exist in `docs/wiki/`).
 
-## Calls I made (for the user to check)
+## Decisions (the user reviewed these on 2026-10-26)
 
-- Wiki source in `docs/wiki/`, published by a script; web edits are overwritten (accepted in the conversation).
-- The in-app help is out of scope except strings that point at the README.
-- The zips and Linux packages keep shipping the (now short) README.
-- Screenshots from the test workspace only, shown to the user before committing.
+- Wiki source in `docs/wiki/`, published by a script; no GitHub web editor ("we dont need github web editor").
+- The in-app help is out of scope except strings that point at the README; its discrepancies → one issue.
+- The README is not shipped in the zips or the Linux packages.
+- Screenshots from the test workspace only, workspace name blurred, made-up names and conversations, shown to the
+  user before committing.
 - What counts as "tried": the README, a LIVE row in PROGRESS.md, or a closed issue; no new VM/Mac checks.
-- The short README keeps one-line Requirements and Verify subheadings (anchors the 0.12.1 binary and the site use).
-- No release in this project; the wiki is republished at each release by a script, no workflow or token.
+- The short README's Requirements is a short list of what's needed and why; Verify is one line; the rest is wiki.
+- No release in this project; the wiki describes the latest release and is republished at each release by a script,
+  no workflow or token.
