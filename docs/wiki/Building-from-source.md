@@ -9,7 +9,8 @@ To build: a recent stable Rust toolchain (edition 2024; [rustup](https://rustup.
 | macOS | Xcode command-line tools, then `brew install cmake` |
 
 The Linux lines are checked with a clean checkout in a fresh container: `tools/container-build.sh debian|ubuntu|fedora|arch`
-(needs podman) installs only those packages and rustup's stable toolchain, then builds and tests. On macOS, CI builds
+(needs podman) installs those packages (plus curl, and on Debian/Ubuntu CA certificates, for rustup) and rustup's
+stable toolchain, then builds and tests. On macOS, CI builds
 and tests on macOS 14 (Apple Silicon); the list above on a fresh Mac is not tried yet.
 
 ## Build and run

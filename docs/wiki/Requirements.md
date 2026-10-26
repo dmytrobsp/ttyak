@@ -8,7 +8,8 @@ Any system:
 
 - needs: UTF-8, and 80 × 24 cells. A thread opens beside the conversation when the part right of the sidebar is at
   least 100 columns wide (a terminal of 132 columns; 138 with the workspace rail, shown with two or more workspaces);
-  narrower, it takes the conversation's place until you close it
+  narrower, it takes the conversation's place until you close it or go back to the messages or the message box
+  (which closes it)
 - works best with: mouse reporting; true colour for the built-in themes (otherwise choose the `terminal` theme in F6 →
   Appearance, which uses your terminal's own palette); focus reporting (the bell, the tab-title badge and read marks
   need it); OSC 8 links
@@ -38,7 +39,7 @@ The terminal draws with what your system has:
 
 - needs: ALSA (`libasound.so.2`), glibc 2.34
 - works best with: a notification server for the bubbles (swaync, mako, dunst, GNOME or KDE's own) — without one there
-  are none, and ttyak's bell and title badge still work; `xdg-open` (xdg-utils) to open links in your browser; a
+  are none, and ttyak's bell and title badge still work; `xdg-open` (xdg-utils) to open web and mail links; a
   Wayland compositor with the data-control protocol (or X11) for the clipboard, else ttyak copies through the terminal
   (OSC 52); a browser for the browser sign-in; `ffmpeg` / `ffprobe` for video, cameras and screen sharing, and
   GStreamer (with the PipeWire plugin) for screen sharing on Wayland
