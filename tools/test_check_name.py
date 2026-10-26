@@ -52,7 +52,6 @@ class CheckName(unittest.TestCase):
         self.assertEqual(self.run_guard("src"), (0, ""))
 
     def test_allowlisted_files_pass(self):
-        self.write("docs/PROGRESS.md", "%s\n" % OLD)
         self.write("docs/superpowers/x.md", "%s\n" % OLD)
         self.write("docs/history/0.1-0.9.md", "%s\n" % OLD)
         self.write("tools/move-to-ttyak.sh", "%s\n" % OLD)
@@ -61,13 +60,13 @@ class CheckName(unittest.TestCase):
 
     def test_allowlist_is_exact(self):
         self.write("PROGRESS.md", "%s\n" % OLD)
-        self.write("docs/PROGRESS-x.md", "%s\n" % OLD)
+        self.write("docs/PROGRESS.md", "%s\n" % OLD)  # the current-state page is checked
         self.write("docs/superpowers-x.md", "%s\n" % OLD)
         self.write("docs/history-x.md", "%s\n" % OLD)
         code, out = self.run_guard(".")
         self.assertEqual(code, 1)
         self.assertIn("\nPROGRESS.md:1:", "\n" + out)
-        self.assertIn("docs/PROGRESS-x.md:1:", out)
+        self.assertIn("docs/PROGRESS.md:1:", out)
         self.assertIn("docs/superpowers-x.md:1:", out)
         self.assertIn("docs/history-x.md:1:", out)
 

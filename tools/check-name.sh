@@ -3,8 +3,8 @@
 # Usage: sh tools/check-name.sh PATH...
 #        sh tools/check-name.sh [--except PATH]... [PATH...]   (no PATH: every tracked file, minus the exceptions)
 # Exit 0: clean. Exit 1: hits, printed as file:line:text (or the file name). Exit 2: usage or git error.
-# Allowed: docs/PROGRESS.md, docs/superpowers/, docs/history/ (the archive keeps the old text), tools/move-to-ttyak.sh,
-# this script, and lines marked old-name-ok.
+# Allowed: docs/superpowers/, docs/history/ (the archive keeps the old text), tools/move-to-ttyak.sh, this script, and
+# lines marked old-name-ok.
 set -u
 
 usage() { echo "usage: sh tools/check-name.sh [--except PATH]... [PATH...]" >&2; exit 2; }
@@ -27,7 +27,6 @@ done
 [ "$paths" -gt 0 ] || set -- ":(top)" "$@"
 
 set -- "$@" \
-    ':(top,exclude)docs/PROGRESS.md' \
     ':(top,exclude)docs/superpowers/' \
     ':(top,exclude)docs/history/' \
     ':(top,exclude)tools/move-to-ttyak.sh' \
