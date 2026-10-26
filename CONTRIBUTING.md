@@ -59,6 +59,13 @@ account without marking anything read: `TTYAK_FAIL=conversations.mark,subscripti
 
 `DESIGN.md` has the architecture and portability rules; `PROGRESS.md` the development log.
 
+## The wiki
+
+The user manual is the [wiki](https://github.com/dmytrobsp/ttyak/wiki). Its pages are edited in `docs/wiki/` in this
+repository, with GitHub-wiki file names (`Page-Name.md`) and `[text](Page-Name)` links between pages. Check them with
+`python3 tools/wiki/check_links.py`. They are published at each release with `tools/wiki/publish.sh`; an edit made in
+GitHub's wiki editor is overwritten by the next publish.
+
 ## Style
 
 Match the surrounding code. The code base is not formatted with `rustfmt`; do not reformat files

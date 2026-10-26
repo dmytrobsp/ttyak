@@ -29,6 +29,8 @@ A tag is pushed only with the maintainer's word.
   platforms plus the packaging and winget's dry run; it publishes nothing.
 - Worth it whenever the release changes dependencies, platform code or the workflow itself: release builds differ
   from CI's (fat LTO, the Windows build is optimised), and a failure after the tag fails mid-publish.
+- Look at the packaging step's output: the zips hold `ttyak` (`ttyak.exe`) and the two licences, no README (true from
+  the release after 0.12.1; the first one that ships this is the check that `release.yml` really stopped adding it).
 - Typical times (0.12.1): Windows 4.6 min, aarch64 Linux 4.9, x86_64 Linux 8.0, x86_64 macOS 8.2, aarch64 macOS 9.5.
 
 ## 4. Release notes
@@ -61,7 +63,17 @@ A tag is pushed only with the maintainer's word.
 - Chocolatey: each version is moderated by hand; a new version is refused while an older one is still in moderation —
   skip a version rather than queue it behind the next.
 
-## 7. Close out
+## 7. Publish the wiki
+
+- The wiki (https://github.com/dmytrobsp/ttyak/wiki) is the user manual; its pages live in `docs/wiki/`. With the
+  maintainer's word, publish them at the new tag: `tools/wiki/publish.sh` (it defaults to the latest `v*` tag; it
+  prints the identity it commits as and the wiki remote, and pushes nothing). Then `tools/wiki/publish.sh --push` —
+  only with the maintainer's word.
+- The first release without the README in its zips and packages: the zip sentence in `docs/wiki/Install.md` must read
+  right ("0.12.1 and older: the README too" can stay), and once winget lists ttyak, the winget wording on the wiki,
+  the README and the site changes from "can list it a few days after the release" to listed.
+
+## 8. Close out
 
 - Close the milestone: `gh api -X PATCH repos/dmytrobsp/ttyak/milestones/<number> -f state=closed`
   (`gh api repos/dmytrobsp/ttyak/milestones` lists the numbers). Create the next one when its first issue is picked.
