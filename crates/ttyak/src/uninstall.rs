@@ -69,7 +69,7 @@ fn plan_in(install: &Install, keep_data: bool, home: &Path, zdotdir: Option<&Pat
     let mut notes = Vec::new();
     if windows {
         // What install.ps1 can leave: old copies that were running during an update, files of a run cut short.
-        let mut names: Vec<String> = std::fs::read_dir(&dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| is_old_copy(n)).collect();
+        let mut names: Vec<String> = std::fs::read_dir(&dir).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).filter_map(|e| e.file_name().into_string().ok()).filter(|n| is_old_copy(n)).collect();
         names.sort();
         remove.extend(names.iter().map(|n| dir.join(n)));
         remove.extend([".ttyak.exe.new", ".install.json.new"].map(|n| dir.join(n)));
@@ -184,8 +184,8 @@ fn run_in(plan: &Plan, windows: bool, spawn: impl Fn(&str) -> io::Result<()>) ->
         }
         match std::fs::remove_file(path) {
             Ok(()) => done.push((format!("deleted {shown}"), Ok(()))),
-            // An old copy a self-update left that a ttyak still runs: deleted once it has quit.
-            Err(_) if windows && path.file_name().and_then(|n| n.to_str()).is_some_and(is_old_copy) => later.push(path.clone()),
+            // An old copy (a regular file) a self-update left that a ttyak still runs: deleted once it has quit.
+            Err(_) if windows && path.file_name().and_then(|n| n.to_str()).is_some_and(is_old_copy) && path.symlink_metadata().is_ok_and(|m| m.file_type().is_file()) => later.push(path.clone()),
             Err(e) if windows && path.file_name().is_some_and(|n| n == "ttyak.exe") => {
                 // The running program: Windows lets it be renamed, not deleted.
                 let aside = path.with_file_name(format!("ttyak.old-{:08x}.exe", std::process::id() ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0)));
@@ -783,6 +783,53 @@ mod tests {
         // Elsewhere: said as it is.
         let done = run_in(&plan, false, |_| panic!("no cleanup"));
         assert!(done[0].0 == format!("could not delete {}", old.display()) && done[0].1.is_err(), "{done:?}");
+    }
+
+    /// Windows: a link or a folder named like an old copy is not one; it is not planned.
+    #[cfg(unix)]
+    #[test]
+    fn windows_plan_skips_old_copy_links() {
+        let t = Temp::new("old-links");
+        let install = t.script("Programs/ttyak", "ttyak.exe");
+        let dir = t.0.join("Programs/ttyak");
+        write(&t.0.join("target/file"), "x");
+        std::os::unix::fs::symlink(t.0.join("target"), dir.join("ttyak.old-0123abcd.exe")).unwrap();
+        std::fs::create_dir_all(dir.join("ttyak.old.exe")).unwrap();
+        write(&dir.join("ttyak.old-89abcdef.exe"), "x");
+        let plan = plan_in(&install, true, &t.home(), None, None, true);
+        assert!(plan.remove.contains(&dir.join("ttyak.old-89abcdef.exe")), "{:?}", plan.remove);
+        assert!(!plan.remove.contains(&dir.join("ttyak.old-0123abcd.exe")) && !plan.remove.contains(&dir.join("ttyak.old.exe")), "{:?}", plan.remove);
+    }
+
+    /// Windows: a link named like an old copy is never handed to `cmd` (`del` would follow it into the folder).
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_old_copy_is_never_handed_to_cmd() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: getuid has no preconditions and cannot fail.
+        if unsafe { libc::getuid() } == 0 {
+            return;
+        }
+        let t = Temp::new("old-linked");
+        let dir = t.0.join("ttyak");
+        let target = t.0.join("target");
+        write(&target.join("file"), "keep");
+        write(&dir.join("other"), "x");
+        let old = dir.join("ttyak.old.exe");
+        std::os::unix::fs::symlink(&target, &old).unwrap();
+        /// Writable again at the end, so the folder can go.
+        struct Writable<'a>(&'a Path);
+        impl Drop for Writable<'_> {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o700));
+            }
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let _writable = Writable(&dir);
+        let plan = Plan { remove: vec![old.clone()], ..Plan::default() };
+        let done = run_in(&plan, true, |_| panic!("no cleanup"));
+        assert!(done.len() == 1 && done[0].0 == format!("could not delete {}", old.display()) && done[0].1.is_err(), "{done:?}");
+        assert!(target.join("file").exists());
     }
 
     #[test]

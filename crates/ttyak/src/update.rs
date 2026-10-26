@@ -917,15 +917,19 @@ fn swap(staged: &Path, exe: &Path) -> Result<()> {
 /// the running executable, where they can go (Windows; nothing elsewhere).
 pub fn remove_old_copies() {
     #[cfg(windows)]
-    {
-        let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) else { return };
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let name = entry.file_name();
-            if name.to_str().is_some_and(crate::uninstall::is_old_copy) {
-                // Still in use (another ttyak runs it): left for the next start.
-                if let Err(e) = std::fs::remove_file(entry.path()) {
-                    tracing::debug!("{}: {e}", entry.path().display());
-                }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        remove_old_copies_in(&dir);
+    }
+}
+
+/// `remove_old_copies` in `dir`: regular files only, never a link or a folder with such a name.
+#[cfg(any(windows, test))]
+fn remove_old_copies_in(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_name().to_str().is_some_and(crate::uninstall::is_old_copy) && entry.file_type().is_ok_and(|t| t.is_file()) {
+            // Still in use (another ttyak runs it): left for the next start.
+            if let Err(e) = std::fs::remove_file(entry.path()) {
+                tracing::debug!("{}: {e}", entry.path().display());
             }
         }
     }
@@ -1087,6 +1091,24 @@ mod tests {
         assert_eq!(load_state(&path), State::default(), "a broken file starts afresh");
         std::fs::remove_dir_all(&dir.0).unwrap();
         assert_eq!(load_state(&path), State::default(), "no file yet");
+    }
+
+    /// Only regular files named like an old copy are removed; a link or a folder is left alone.
+    #[cfg(unix)]
+    #[test]
+    fn remove_old_copies_skips_links() {
+        let dir = std::env::temp_dir().join(format!("ttyak-test-old-copies-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+        std::fs::write(dir.join("target/file"), "keep").unwrap();
+        std::os::unix::fs::symlink(dir.join("target"), dir.join("ttyak.old.exe")).unwrap();
+        std::os::unix::fs::symlink(dir.join("target/file"), dir.join("ttyak.old-0123abcd.exe")).unwrap();
+        std::fs::write(dir.join("ttyak.old-89abcdef.exe"), "x").unwrap();
+        remove_old_copies_in(&dir);
+        assert!(!dir.join("ttyak.old-89abcdef.exe").exists(), "a file goes");
+        assert!(dir.join("ttyak.old.exe").is_symlink() && dir.join("ttyak.old-0123abcd.exe").is_symlink());
+        assert!(dir.join("target/file").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
