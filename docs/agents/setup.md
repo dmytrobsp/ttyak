@@ -8,9 +8,9 @@ machines. The rules for using all this are in [AGENTS.md](../../AGENTS.md), [wor
 Most steps need the maintainer: signing in to GitHub and to Slack, Slack accounts, the Windows and macOS machines.
 An agent prepares the exact commands and asks; it never signs anything in or out on its own.
 
-Each section ends with how it was checked. "Here" means the maintainer's Linux machine (Pop!_OS 24.04, an Ubuntu
-24.04 base, x86_64), which was set up long before this page was written: the commands were run there on 2026-10-26,
-but **no step of this page has been tried on a fresh machine**.
+Each section ends with how it was checked. "Here" means the maintainer's Linux machine (an Ubuntu 24.04-based
+desktop, x86_64), which was set up long before this page was written: the commands were run there on 2026-10-26, but
+**no step of this page has been tried on a fresh machine**.
 
 ## 1. Build tools
 
@@ -48,7 +48,7 @@ tests in `ttyak`, plus the other crates). The package list for a fresh Debian, U
 | Python 3 (3.12 here; standard library only) | the tool, packaging and site tests ([Tests](workflow.md#tests)) | `python3 --version` |
 | node 22 or newer (no packages) | the site's tests (`node --test "tools/site/*.test.mjs"`; Pages uses 22), `tools/cdp.mjs` (written for 24) | `node --version` |
 | podman | `tools/container-build.sh`, and container steps inside some tests (below) | `podman --version`, `podman images` |
-| dash, fish, wget, shasum | `tools/install/test_install_sh.py` runs `site/install.sh` under each one present; the rest are skipped | `command -v dash fish wget shasum` |
+| dash, bash; fish, wget, shasum | `tools/install/test_install_sh.py` runs `site/install.sh` under dash and bash (each one present); fish, wget and shasum each enable a particular test (the fish PATH line, the wget download, the shasum check) | `command -v dash bash fish wget shasum` |
 | `ssh` to a Windows machine | `tools/install/test_install_ps1.py` (not in CI; skipped when the machine can't be reached) | see [A Windows machine](#a-windows-machine) |
 
 The container images the tests use (pulled on first use; `podman pull <image>` ahead of time saves waiting):
@@ -66,7 +66,7 @@ For live checks on this machine the helpers in [live-testing.md](live-testing.md
 with remote control, PipeWire (`pw-record`, `pactl`), `wl-clipboard`, D-Bus tools (`dbus-monitor`, `gdbus`) and
 ffmpeg. Another desktop needs other recipes for hidden windows and input; none is written yet.
 
-*Checked here*: Python 3.12.3, node v24.22.0, podman 4.9.3. CI's `Tool tests` line (168 tests), the packaging tests
+*Checked here*: Python 3.12.3, node v24.22.0, podman 4.9.3. CI's `Tool tests` line (169 tests), the packaging tests
 (38, the `makepkg` one in podman) and the site's tests (206 Python, 49 node) passed; the PowerShell image was pulled
 and ran the `tools/vm` parse check. `test_install_ps1.py` was not run for this page (it uses the Windows machine).
 `container-build.sh` was not re-run for this page.
@@ -246,7 +246,8 @@ Windows machine is NOT tried here (the current VM was set up before this page).
 
 An Apple Silicon Mac on the local network with:
 
-- **Remote Login** on (System Settings → General → Sharing), reached with a key (`ssh -o BatchMode=yes <host> true`).
+- **Remote Login** on (System Settings → General → Sharing), reached with a key
+  (`ssh -o BatchMode=yes <host> true`).
 - Xcode's command-line tools, Homebrew, `brew install cmake`, rustup's stable toolchain. A non-interactive ssh shell
   lacks `/opt/homebrew/bin`: `export PATH=/opt/homebrew/bin:$PATH` in every command.
 - A work folder, `~/ttyak-test`; the source goes there with
@@ -262,14 +263,18 @@ ssh <host> 'cat > /tmp/ttyak-probe.plist' <<'EOF'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>ttyak.probe</string>
-  <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>…the command…</string></array>
+  <key>ProgramArguments</key><array>
+    <string>/bin/sh</string><string>-c</string><string>…the command…; echo "probe exit $?"</string>
+  </array>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/ttyak-probe.out</string>
   <key>StandardErrorPath</key><string>/tmp/ttyak-probe.out</string>
 </dict></plist>
 EOF
 ssh <host> 'launchctl bootstrap gui/$(id -u) /tmp/ttyak-probe.plist'
-ssh <host> 'cat /tmp/ttyak-probe.out; launchctl bootout gui/$(id -u)/ttyak.probe'
+# wait for the job's last line, at most 30 s, then read its output
+ssh <host> 'for i in $(seq 30); do grep -q "^probe exit" /tmp/ttyak-probe.out 2>/dev/null && break; sleep 1; done
+  cat /tmp/ttyak-probe.out; launchctl bootout gui/$(id -u)/ttyak.probe'
 ssh <host> 'rm -f /tmp/ttyak-probe.plist /tmp/ttyak-probe.out'
 ```
 

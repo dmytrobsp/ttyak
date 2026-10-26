@@ -11,13 +11,12 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 - `jsgrep.py PATTERN CONTEXT MAX FILE…` — regex matches with context in minified JS (ugrep chokes on wide contexts).
 - `apiargs.py METHOD DIR…` — find a Slack Web API method's webpack module and print its call sites/args.
 - `wiki/check_links.py [--wiki DIR] [--readme FILE] [EXTRA…]` — check the wiki pages', README's and site's links (page names, `#anchors`); `wiki/publish.sh [--ref REF] [--push]` — check, then mirror `docs/wiki/` at REF (default: the latest `v*` tag) into the GitHub wiki repo; nothing is pushed without `--push`.
+- `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
+  session, keys and clicks, captures): see `vm/README.md`.
 
 Web client bundles: `ttyak ctl get https://app.slack.com/client/<TEAM> client.html`, then chunk names/hashes from the
 `__cf` map in it → `https://a.slack-edge.com/bv1-13/gantry-v2-async-<name>.<hash>.min.js`; entry: `client-boot.<hash>.min.js`
 (see the end of client.html). The CDN serves gzip: decompress before searching. Details: `../docs/protocol/huddles.md`.
-
-- `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
-  session, keys and clicks, captures): see `vm/README.md`.
 
 - `cdp.mjs PORT cookie|goto|eval|click|shot ARG` — drive a test Chrome over the DevTools protocol (Node 24, no
   packages). Real Slack web client as B with a fake camera/mic (never real devices):

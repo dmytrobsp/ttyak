@@ -42,7 +42,8 @@ there; relative `scp` paths start in the user's home folder):
 
 ```sh
 set -euo pipefail
-ssh -T -o BatchMode=yes <host> 'if not exist %USERPROFILE%\ttyak-test\vm mkdir %USERPROFILE%\ttyak-test\vm' < /dev/null
+W='%USERPROFILE%\ttyak-test\vm'
+ssh -T -o BatchMode=yes <host> "if not exist $W mkdir $W" < /dev/null
 scp -q -o BatchMode=yes tools/vm/*.ps1 '<host>:ttyak-test/vm/'
 # a capture of the machine's desktop, copied back into the scratch folder
 RUN='powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\ttyak-test\vm'
@@ -59,13 +60,13 @@ scp -q -o BatchMode=yes '<host>:ttyak-test/vm/shots/desk.png' <scratch>/desk.png
 
 ## Where they came from
 
-Copied on 2026-10-26 from the maintainer's public `fastview-rea` repository on GitHub (`tools/vm/`, commit
-`a204dd2`; same author, same licences), where they drove the same Windows test machine for another project. Changed here: the test user is a
-parameter (default: the user running the script) instead of a fixed name; the scheduled tasks are named `ttyak-…`;
-`cleanup.ps1` stops only ttyak processes from the work folder and only this copy's `keys.ps1` runs (the machine is
-shared); `wakeshot.ps1` nudges the cursor at the screen's right edge instead of fixed pixels; that project's own
-options (`-Soft`, `-SoftLog`) and its program's name are gone; the files are plain ASCII (Windows PowerShell 5.1 reads
-a file without a byte-order mark in the system's code page).
+Copied on 2026-10-26 from the maintainer's public `fastview-rea` repository on GitHub (`tools/vm/`, commit `a204dd2`;
+same author, same licences), where they drove the same Windows test machine for another project. Changed here: the test
+user is a parameter (default: the user running the script) instead of a fixed name; the scheduled tasks are named
+`ttyak-…`; `cleanup.ps1` stops only ttyak processes from the work folder and only this copy's `keys.ps1` runs (the
+machine is shared); `wakeshot.ps1` nudges the cursor at the screen's right edge instead of fixed pixels; that project's
+own options (`-Soft`, `-SoftLog`) and its program's name are gone; the files are plain ASCII (Windows PowerShell 5.1
+reads a file without a byte-order mark in the system's code page).
 
 **Verified**: the originals were used LIVE on the Windows test machine in that project, and the same technique (an
 interactive scheduled task, injected input, captures of the machine's desktop) for ttyak's Windows notification checks

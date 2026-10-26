@@ -2,7 +2,7 @@
 
 - every script is plain ASCII: Windows PowerShell 5.1 reads a file without a byte-order mark in the system's code page;
 - every script parses (PowerShell's own parser): with `pwsh` on PATH (GitHub's Ubuntu runners have it), else in a
-  podman container (not in CI unless TTYAK_PODMAN_TESTS=1), else skipped."""
+  podman container (not in CI unless TTYAK_PODMAN_TESTS=1), else skipped — except in CI, where it fails."""
 import glob
 import os
 import shutil
@@ -54,6 +54,13 @@ def parse_command(folder, env=None):
     return None
 
 
+def without_powershell(env=None):
+    """What the parse check does with no PowerShell to run: "fail" in CI (env CI set), where the runner is expected to
+    have pwsh, so a runner-image change can't switch the check off unnoticed; "skip" elsewhere."""
+    env = os.environ if env is None else env
+    return "fail" if env.get("CI") else "skip"
+
+
 def parse_errors(folder=HERE):
     """PowerShell's parse errors for the scripts in `folder` ('' when there are none); None without PowerShell."""
     # a copy, so that the container never relabels the repository
@@ -82,8 +89,16 @@ class VmScripts(unittest.TestCase):
     def test_they_parse(self):
         errors = parse_errors()
         if errors is None:
-            self.skipTest("needs pwsh, or podman (in CI only with TTYAK_PODMAN_TESTS=1)")
+            why = "needs pwsh, or podman (in CI only with TTYAK_PODMAN_TESTS=1)"
+            if without_powershell() == "fail":
+                self.fail("no PowerShell in CI: " + why)
+            self.skipTest(why)
         self.assertEqual(errors, "")
+
+    def test_ci_without_powershell_fails(self):
+        # a runner image without pwsh must not turn the parse check off unnoticed
+        self.assertEqual(without_powershell({"CI": "true"}), "fail")
+        self.assertEqual(without_powershell({}), "skip")
 
     def test_podman_only_when_asked_in_ci(self):
         if shutil.which("pwsh") or not shutil.which("podman"):
