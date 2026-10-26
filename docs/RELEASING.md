@@ -80,8 +80,8 @@ A tag is pushed only with the maintainer's word.
 - Once winget lists ttyak, the lines that state winget's status change to say it is listed: the winget row of the
   package table in `README.md` ("not listed yet …"), `docs/wiki/Install.md` ("winget has not listed ttyak yet …",
   under the package table), `docs/wiki/Troubleshooting.md` ("winget finds nothing": "winget has not listed ttyak
-  yet …"), and on the site `tools/site/fill.py` (the winget item of the package list and the note "winget and
-  Chocolatey review each new version: they can list it a few days after the release"; check both still read right),
+  yet …"), and on the site `tools/site/fill.py` (the winget item of the package list, "not listed yet (its first version is waiting for review)", and the
+  note "Chocolatey reviews each new version: it can list it a few days after the release"; check both still read right),
   then `python3 tools/site/fill.py site`.
 
 ## 8. Close out

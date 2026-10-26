@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Publish docs/wiki/ at a ref to the GitHub wiki repo: export, check links and privacy, mirror, commit, push on --push.
 # usage: publish.sh [--ref REF] [--push] [--wiki-dir DIR]     (REF defaults to the latest v* tag; first publish: --ref master)
-# --wiki-dir DIR keeps the wiki clone (relative to where you run it; outside the repo). A folder that is already a git
-# clone is reused only when its origin is the wiki remote; local edits there make its `git pull --ff-only` fail.
+# --wiki-dir DIR keeps the wiki clone (relative to where you run it; outside the repo). The clone is the script's cache:
+# a folder that is already a git clone is reused only when its origin is the wiki remote, and it is reset to the
+# wiki's current state first (local commits, edits and untracked files in it are dropped).
 # Without --wiki-dir the clone is a temp folder, deleted on exit.
 # The wiki commit is made with the main repo's own user.name/user.email (never the global identity); the wiki remote
 # is derived from the repo's origin URL (keeps the user@ part the credential helper matches).
@@ -18,7 +19,26 @@ wiki_url_from_origin() {
     *) return 1 ;;
   esac
 }
-# Sourced by the tests for the helper only.
+# Whether DIR (a path that may not exist yet) is the repo, inside it ("inside") or holds it ("holds"): compared by
+# inode (os.path.samefile) up the path, so a differently spelled or cased path, or a bind mount, is still caught.
+wiki_dir_clash() {
+  python3 -c '
+import os, sys
+repo, d = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
+def chain(p):
+    while True:
+        yield p
+        up = os.path.dirname(p)
+        if up == p:
+            return
+        p = up
+if any(os.path.exists(p) and os.path.samefile(p, repo) for p in chain(d)):
+    print("inside")
+elif os.path.exists(d) and any(os.path.samefile(p, d) for p in chain(repo)):
+    print("holds")
+' "$1" "$2"
+}
+# Sourced by the tests for the helpers only.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,8 +57,10 @@ repo="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
 # apart from the repo, so the mirror's delete-every-tracked-file never runs on the repo itself.
 if [ -n "$wiki_dir" ]; then
   wiki_dir="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$wiki_dir")"
-  case "$wiki_dir/" in "${repo%/}/"*) echo "refusing: --wiki-dir $wiki_dir is the repo or inside it" >&2; exit 1 ;; esac
-  case "$repo/" in "${wiki_dir%/}/"*) echo "refusing: --wiki-dir $wiki_dir holds the repo" >&2; exit 1 ;; esac
+  case "$(wiki_dir_clash "$repo" "$wiki_dir")" in
+    inside) echo "refusing: --wiki-dir $wiki_dir is the repo or inside it" >&2; exit 1 ;;
+    holds) echo "refusing: --wiki-dir $wiki_dir holds the repo" >&2; exit 1 ;;
+  esac
 fi
 cd "$repo"
 if [ -z "$ref" ]; then
@@ -105,25 +127,41 @@ if [ -d "$wiki_dir/.git" ]; then
     echo "refusing: --wiki-dir $wiki_dir is a git clone whose origin is '$have', not the wiki remote $url" >&2; exit 1
   fi
   copy_credentials
-  if [ -n "$(git -C "$wiki_dir" ls-remote "$url")" ]; then git -C "$wiki_dir" pull -q --ff-only; fi
+  # A reused clone is only a cache: it becomes exactly the wiki's state (no local commits, edits or leftovers).
+  if [ -n "$(git -C "$wiki_dir" ls-remote "$url")" ]; then
+    git -C "$wiki_dir" fetch -q origin HEAD
+    git -C "$wiki_dir" reset -q --hard FETCH_HEAD
+  else
+    git -C "$wiki_dir" symbolic-ref HEAD refs/heads/master
+    git -C "$wiki_dir" update-ref -d refs/heads/master
+  fi
+  git -C "$wiki_dir" clean -q -fdx
 else
   git clone -q "$url" "$wiki_dir"
   copy_credentials
 fi
-if ! git -C "$wiki_dir" rev-parse -q --verify HEAD >/dev/null; then git -C "$wiki_dir" checkout -q -b master; fi
+if ! git -C "$wiki_dir" rev-parse -q --verify HEAD >/dev/null; then git -C "$wiki_dir" symbolic-ref HEAD refs/heads/master; fi
+# What the wiki has now (empty when it has no commits yet): a push is due whenever HEAD differs from it.
+remote_head="$(git -C "$wiki_dir" ls-remote "$url" HEAD | cut -f1)"
 
-# Mirror: drop what the wiki tracks, copy the export over.
+# Mirror: drop what the wiki tracks, copy the export over (tar -m: files get the time of the copy, not the commit's).
 git -C "$wiki_dir" ls-files -z | (cd "$wiki_dir" && xargs -0 -r rm -f --)
-tar -C "$export_dir/docs/wiki" -c . | tar -C "$wiki_dir" -x
+tar -C "$export_dir/docs/wiki" -c . | tar -m -C "$wiki_dir" -x
+# Empty the index so every file is hashed again: a same-size edit with an unchanged mtime must not look unchanged.
+git -C "$wiki_dir" read-tree --empty
 git -C "$wiki_dir" add -A
 if git -C "$wiki_dir" diff --cached --quiet; then
-  echo "the wiki already matches docs/wiki at $ref"
-  exit 0
+  if [ "$(git -C "$wiki_dir" rev-parse -q --verify HEAD || true)" = "$remote_head" ]; then
+    echo "the wiki already matches docs/wiki at $ref"
+    exit 0
+  fi
+  echo "the clone is ahead of the wiki"
+else
+  GIT_AUTHOR_NAME="$id_name" GIT_AUTHOR_EMAIL="$id_email" GIT_COMMITTER_NAME="$id_name" GIT_COMMITTER_EMAIL="$id_email" \
+  git -C "$wiki_dir" -c "user.name=$id_name" -c "user.email=$id_email" commit -q --author="$id_name <$id_email>" -m "wiki: docs/wiki at $ref ($short)"
+  git -C "$wiki_dir" show --stat HEAD
+  git -C "$wiki_dir" show HEAD
 fi
-GIT_AUTHOR_NAME="$id_name" GIT_AUTHOR_EMAIL="$id_email" GIT_COMMITTER_NAME="$id_name" GIT_COMMITTER_EMAIL="$id_email" \
-git -C "$wiki_dir" -c "user.name=$id_name" -c "user.email=$id_email" commit -q --author="$id_name <$id_email>" -m "wiki: docs/wiki at $ref ($short)"
-git -C "$wiki_dir" show --stat HEAD
-git -C "$wiki_dir" show HEAD
 if [ "$push" = 1 ]; then
   git -C "$wiki_dir" push -q "$url" HEAD
   echo "pushed"

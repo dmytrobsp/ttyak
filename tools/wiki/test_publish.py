@@ -231,6 +231,78 @@ class Publish(unittest.TestCase):
         self.assertIn("new", self.wiki_file("Home.md"))
         self.assertTrue(self.wiki_log().startswith("wiki: docs/wiki at master ("), self.wiki_log())
 
+    def test_same_size_edit_with_equal_mtimes_is_published(self):
+        # the exported files carry their commit's time; two commits in one second and an edit of the same size must
+        # still differ for git (a stat-only compare, as on a coarse file system, sees none)
+        env = {**os.environ, **GIT_ENV, "GIT_AUTHOR_DATE": "2020-01-01T00:00:00", "GIT_COMMITTER_DATE": "2020-01-01T00:00:00"}
+        for text, tag in (("# Home\nold\n", "same-a"), ("# Home\nnew\n", "same-b")):
+            self.write("Home", text)
+            subprocess.run(["git", "commit", "-q", "-am", tag], cwd=self.repo, env=env, check=True)
+            git(self.repo, "tag", tag)
+        wd = self.tmp / "clone"
+        r = self.run_publish("--ref", "same-a", "--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        git(wd, "config", "core.checkStat", "minimal")
+        git(wd, "config", "core.trustctime", "false")
+        r = self.run_publish("--ref", "same-b", "--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("new", self.wiki_file("Home.md"))
+
+    def test_dry_run_then_push_with_same_wiki_dir_pushes(self):
+        wd = self.tmp / "clone"
+        r = self.run_publish("--wiki-dir", str(wd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.wiki_log(), "")
+        r = self.run_publish("--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.wiki_log().startswith("wiki: docs/wiki at v1.0.0 ("), self.wiki_log())
+        self.assertIn("old", self.wiki_file("Home.md"))
+
+    def seeded_clone(self):
+        wd = self.tmp / "clone"
+        self.assertEqual(self.run_publish("--wiki-dir", str(wd), "--push").returncode, 0)
+        return wd
+
+    def test_reused_clone_leftover_untracked_file_is_not_published(self):
+        wd = self.seeded_clone()
+        (wd / "Secret.md").write_text("# Secret\n", encoding="utf-8")
+        r = self.run_publish("--ref", "master", "--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsNone(self.wiki_file("Secret.md"))
+        self.assertFalse((wd / "Secret.md").exists())
+
+    def test_reused_clone_local_commit_is_not_published(self):
+        wd = self.seeded_clone()
+        (wd / "x.md").write_text("# x\n", encoding="utf-8")
+        git(wd, "add", "-A")
+        git(wd, "commit", "-q", "-m", "local")
+        r = self.run_publish("--ref", "master", "--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIsNone(self.wiki_file("x.md"))
+        self.assertNotIn("local", self.wiki_log())
+
+    def test_reused_clone_dirty_edit_is_not_published(self):
+        wd = self.seeded_clone()
+        (wd / "Home.md").write_text("# Home\ndirty\n", encoding="utf-8")
+        r = self.run_publish("--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("dirty", self.wiki_file("Home.md"))
+        self.assertNotIn("dirty", (wd / "Home.md").read_text())
+
+    def test_same_dir_spelled_otherwise_is_refused(self):
+        link = self.tmp / "link"
+        link.symlink_to(self.tmp)
+        spelled = link / "repo" / "sub"
+        r = subprocess.run(["bash", "-c", 'source "$1"; wiki_dir_clash "$2" "$3"', "x", str(SCRIPT), str(self.repo), str(spelled)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "inside", r.stderr)
+        r = subprocess.run(["bash", "-c", 'source "$1"; wiki_dir_clash "$2" "$3"', "x", str(SCRIPT), str(self.repo), str(link)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "holds", r.stderr)
+        r = subprocess.run(["bash", "-c", 'source "$1"; wiki_dir_clash "$2" "$3"', "x", str(SCRIPT), str(self.repo), str(link / "beside")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "", r.stderr)
+
     def test_default_clone_is_said_to_be_deleted(self):
         r = self.run_publish()
         self.assertEqual(r.returncode, 0, r.stderr)
