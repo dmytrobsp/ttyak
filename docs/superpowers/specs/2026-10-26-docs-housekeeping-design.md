@@ -31,7 +31,9 @@ machine, understand where the project stands, and pick up the next issue followi
      identity, never a global one; public wording in commits, issues and docs);
    - the whole workflow (below, "Workflow"), compact, linking to the detailed pages;
    - "read `AGENTS.local.md` if present" (the local file, Goal 5).
-2. **The workflow written down** (in AGENTS.md, details in `docs/agents/`): planning (brainstorm → design in
+2. **The workflow written down** (a compact version in AGENTS.md; the full text in `docs/agents/workflow.md` — planning,
+   queue, commits/pushes, verification, docs, releasing — and `docs/agents/live-testing.md` — profiles, windows,
+   clipboard, sound/mic/camera, test machines, waits; setup in `docs/agents/setup.md`): planning (brainstorm → design in
    `docs/superpowers/specs` → a builder's read → the maintainer's approval → plan → subagent-driven execution with a
    ledger, per-task review, final review, deferred items filed as issues; a handoff before big work); the queue
    (GitHub Issues, milestones, labels incl. `triage`/`needs-user`, `Fixes #N`, public wording; registry submissions in
@@ -85,7 +87,11 @@ machine, understand where the project stands, and pick up the next issue followi
 10. **The after-compact recipe points at sources and holds no state** (agreed with the user; it stays local, see
     Non-goals). Today it hard-codes a release state ("0.12.0 is released, don't re-run its tasks") and goes stale. The
     rewritten recipe names no release or task; it points at and snapshots:
-    - the rules: AGENTS.md (and CLAUDE.md, reloaded anyway) and the memory index;
+    - the rules and the workflow, by name: AGENTS.md (CLAUDE.md is reloaded anyway), `docs/agents/workflow.md`,
+      `docs/agents/live-testing.md` (before any live check), `docs/RELEASING.md` (before anything release-related), and
+      the memory index; plus the few rules that bite hardest after a compaction, in one line each (never a profile
+      other than the local file's test profiles; tags, releases, force-pushes and outward posts only with the
+      maintainer's word; never re-run finished tasks — check the ledger and `git log` first; LIVE/UNIT/NOT honesty);
     - where we are: `docs/PROGRESS.md`, the newest committed plan ledger in `docs/superpowers/ledgers/` that has
       unfinished tasks (with its design and plan), and the open issues of the current milestone;
     - a live snapshot it computes: the last commits, uncommitted files, commits not pushed, the latest CI and Release
