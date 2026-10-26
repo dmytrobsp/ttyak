@@ -59,10 +59,12 @@ A tag is pushed only with the maintainer's word.
 - Homebrew: `dmytrobsp/homebrew-ttyak` `Formula/ttyak.rb` points at the vX.Y.Z archives. Scoop:
   `dmytrobsp/scoop-ttyak` `bucket/ttyak.json` says X.Y.Z.
 - winget: the release run opens a PR on `microsoft/winget-pkgs`. If the bot asks for the CLA, the maintainer (or the
-  agent, with the maintainer's word) comments `@microsoft-github-policy-service agree`. Close an older ttyak PR that
-  this one supersedes. Then it waits for a volunteer moderator.
+  agent, with the maintainer's word) comments `@microsoft-github-policy-service agree`. Older ttyak PRs stay open (the
+  maintainer's call). Then it waits for a volunteer moderator.
 - Chocolatey: each version is moderated by hand; a new version is refused while an older one is still in moderation —
   skip a version rather than queue it behind the next.
+- Update the tracking issue of registry submissions (#40): the new winget PR and Chocolatey version, and the state of the
+  older ones.
 
 ## 7. Publish the wiki
 
