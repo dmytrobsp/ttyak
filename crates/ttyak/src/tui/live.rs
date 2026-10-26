@@ -290,6 +290,11 @@ pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>, reading: boo
                 fx.rebuild_sidebar = true;
             }
         }
+        // The VIP list changed (Slack's client takes the list from it as from the pref).
+        "vip_users_updated" => {
+            ws.apply_prefs(&serde_json::json!({"vip_users": ev["vip_users"]}));
+            fx.rebuild_sidebar = true;
+        }
         "manual_presence_change" => {
             let self_id = ws.self_id.clone();
             ws.presence.insert(self_id, ev["presence"] != "away");
@@ -694,6 +699,11 @@ mod tests {
         assert!(w.vip_override);
         apply(&mut w, &json!({"name":"priority_dnd_override","type":"pref_change","value":"false"}), None, true);
         assert!(!w.vip_override);
+        // The VIP list as Slack's client follows it too.
+        let fx = apply(&mut w, &json!({"type":"vip_users_updated","vip_users":"U2,U3"}), None, true);
+        assert!(w.vip.contains("U2") && w.vip.contains("U3") && fx.rebuild_sidebar);
+        apply(&mut w, &json!({"type":"vip_users_updated","vip_users":""}), None, true);
+        assert!(w.vip.is_empty());
     }
 
     #[test]

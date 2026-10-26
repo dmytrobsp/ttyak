@@ -103,9 +103,9 @@ a mute and the other rules above still decide first. The one difference: with Sl
 VIPs** on (Slack's Preferences → VIP; off by default; kept on Slack), a message that would notify but is held back only
 by the pause or the schedule gets through when
 
-- its sender is one of your VIPs (an app counts by its bot user), and
-- it is a direct message or group DM, or it mentions someone, a user group or a channel (the mention needn't be of
-  you; `@here`, `@channel` and `@everyone` don't count).
+- its sender is one of your VIPs, and it is a direct message or group DM, or it mentions someone, a user group or a
+  channel (the mention needn't be of you; `@here`, `@channel` and `@everyone` don't count), or
+- it is a message from an app that is one of your VIPs (by its bot user), even without a DM or a mention.
 
 It needs a paid Slack plan, as in Slack. It holds for the other workspaces of the profile too, and follows the setting
 when it changes elsewhere. A VIP starting a huddle still stays quiet during a pause, and the system's do-not-disturb

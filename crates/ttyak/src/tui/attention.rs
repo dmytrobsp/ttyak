@@ -97,14 +97,17 @@ pub fn decide(ws: &Workspace, workspace: usize, channel: &str, m: &Message) -> D
     Decision::ForYou(Note { key, title, body, target: Target::message(channel, m), vip })
 }
 
-/// Whether message `m` gets through a pause, as in Slack: "Always allow notifications from VIPs" is on, the plan is
-/// paid, the sender (or a bot message's `bot_profile.user_id`) is a VIP, and it is a DM or group DM (`is_dm`) or
-/// mentions a person, a user group or a channel (`@here`, `@channel` and `@everyone` don't count; the mention needn't
-/// be of you). Only the pause: the level, mutes and the other rules still decide first.
+/// Whether message `m` gets through a pause, as in Slack's client: "Always allow notifications from VIPs" is on, the
+/// plan is paid, and either it is a bot message whose `bot_profile.user_id` is a VIP, or its sender is a VIP and it is a
+/// DM or group DM (`is_dm`) or mentions a person, a user group or a channel (`@here`, `@channel` and `@everyone` don't
+/// count; the mention needn't be of you). Only the pause: the level, mutes and the other rules still decide first.
 pub fn vip_passes(ws: &Workspace, m: &Message, is_dm: bool) -> bool {
-    let bot = m.bot_profile.as_ref().and_then(|b| b["user_id"].as_str());
-    let vip = m.user.as_deref().into_iter().chain(bot).any(|u| ws.vip.contains(u));
-    ws.paid && ws.vip_override && vip && (is_dm || has_mention(m))
+    if !ws.paid || !ws.vip_override {
+        return false;
+    }
+    let vip = |u: Option<&str>| u.is_some_and(|u| ws.vip.contains(u));
+    let bot = m.subtype.as_deref() == Some("bot_message") && vip(m.bot_profile.as_ref().and_then(|b| b["user_id"].as_str()));
+    bot || (vip(m.user.as_deref()) && (is_dm || has_mention(m)))
 }
 
 /// Whether `m` mentions a person, a user group or a channel, in its blocks or its text (not `@here` and the like).
@@ -405,6 +408,8 @@ mod tests {
     fn vip_mention_gets_through() {
         let mut w = vip_ws();
         assert!(bubbles(&w, "C1", &msg("U2", "hey <@UME>"), &PAUSED));
+        // At the default level a mention of someone else is not for you: nothing to let through.
+        assert!(!bubbles(&w, "C1", &msg("U2", "ask <@U3>"), &PAUSED));
         // At "all new messages", any mention lifts the pause, not only one of you.
         w.notify.channels.insert("C1".into(), "everything".into());
         for text in ["ask <@U3>", "ping <!subteam^S1|@devs>", "see <#C9|random>"] {
@@ -464,6 +469,12 @@ mod tests {
         };
         assert!(bubbles(&w, "D9", &bot("UBOT"), &PAUSED));
         assert!(!bubbles(&w, "D9", &bot("UOTHER"), &PAUSED), "a bot that is no VIP");
+        // As Slack's client: a VIP bot's message passes without a DM or a mention.
+        w.notify.channels.insert("C1".into(), "everything".into());
+        assert!(bubbles(&w, "C1", &bot("UBOT"), &PAUSED), "a plain bot message in a channel");
+        // Only a `bot_message` counts its `bot_profile`.
+        let other = Message { subtype: None, ..bot("UBOT") };
+        assert!(!bubbles(&w, "D9", &other, &PAUSED), "not a bot message");
     }
 
     #[test]
