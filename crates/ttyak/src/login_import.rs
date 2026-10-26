@@ -533,6 +533,7 @@ impl Copy {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700).create(&dir)?;
         #[cfg(not(unix))]
         std::fs::create_dir_all(&dir)?;
+        owner_only(&dir, true);
         let name = db.file_name().ok_or_else(|| anyhow!("no file name"))?;
         let copy = Copy { dir: dir.clone(), db: dir.join(name) };
         copy_private(db, &copy.db).with_context(|| format!("copying {}", db.display()))?;
@@ -551,7 +552,15 @@ fn copy_private(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::copy(from, to)?;
     #[cfg(unix)]
     std::fs::set_permissions(to, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    owner_only(to, false);
     Ok(())
+}
+
+/// [`session::owner_only`], a failure logged (a file system without ACLs still gets the copy).
+fn owner_only(path: &Path, dir: bool) {
+    if let Err(e) = session::owner_only(path, dir) {
+        tracing::debug!("owner-only {}: {e}", path.display());
+    }
 }
 
 impl Drop for Copy {

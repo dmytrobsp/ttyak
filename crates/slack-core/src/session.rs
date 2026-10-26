@@ -176,6 +176,12 @@ impl Profile {
 /// it (`.<name>.<pid>.<n>.tmp`), so writers at once (two profiles' ttyaks) never mix their files; removed again when
 /// the write fails.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_private_with(path, bytes, owner_only)
+}
+
+/// [`write_private`] making the empty temporary file owner-only with `protect` (a failure is logged and the write goes
+/// on: losing a sign-in would be worse).
+fn write_private_with(path: &Path, bytes: &[u8], protect: fn(&Path, bool) -> std::io::Result<()>) -> Result<()> {
     static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let name = path.file_name().map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
     let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -189,6 +195,10 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
             };
             #[cfg(not(unix))]
             let mut f = std::fs::File::create(&tmp)?;
+            // Before the bytes are in it; the rename keeps the ACL.
+            if let Err(e) = protect(&tmp, false) {
+                tracing::debug!("owner-only {}: {e}", tmp.display());
+            }
             std::io::Write::write_all(&mut f, bytes)?;
         }
         std::fs::rename(&tmp, path)
@@ -197,6 +207,145 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     Ok(written?)
+}
+
+/// Make `path` (a folder when `dir`) the user's alone. Windows: a protected DACL granting full access to the user,
+/// SYSTEM and Administrators only, passed on to what a folder holds. Elsewhere nothing: files are made with their mode.
+#[cfg(windows)]
+pub fn owner_only(path: &Path, dir: bool) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW};
+    use windows_sys::Win32::Security::{ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION};
+    let sddl = windows::wide(std::ffi::OsStr::new(&owner_only_sddl(&user_sid()?, dir)));
+    let name = windows::wide(path.as_os_str());
+    let mut sd = std::ptr::null_mut();
+    // SAFETY: the strings end with a NUL; `sd` is freed with LocalFree once its DACL is set.
+    unsafe {
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let (mut present, mut defaulted, mut dacl) = (0, 0, std::ptr::null_mut::<ACL>());
+        let set = if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted) == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            match SetNamedSecurityInfoW(name.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, std::ptr::null_mut(), std::ptr::null_mut(), dacl, std::ptr::null()) {
+                0 => Ok(()),
+                e => Err(std::io::Error::from_raw_os_error(e as i32)),
+            }
+        };
+        LocalFree(sd);
+        set
+    }
+}
+
+/// Make `path` (a folder when `dir`) the user's alone: nothing to do here, files are made with their mode.
+#[cfg(not(windows))]
+pub fn owner_only(_path: &Path, _dir: bool) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// The SDDL of [`owner_only`]'s DACL: protected, full access for `user_sid`, SYSTEM and Administrators (as
+/// Win32-OpenSSH's private keys), inherited by files and folders inside when `dir`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn owner_only_sddl(user_sid: &str, dir: bool) -> String {
+    let inherit = if dir { "OICI" } else { "" };
+    format!("D:P(A;{inherit};FA;;;{user_sid})(A;{inherit};FA;;;SY)(A;{inherit};FA;;;BA)")
+}
+
+/// The SID of the user this process runs as (its token's user, not its default owner: for an elevated admin that may
+/// be Administrators), as a string.
+#[cfg(windows)]
+pub fn user_sid() -> std::io::Result<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token = std::ptr::null_mut();
+    // SAFETY: the token is closed below; the buffer is u64s, aligned for TOKEN_USER, of the size asked for.
+    unsafe {
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut len = 0;
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+        let got = GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+        let e = std::io::Error::last_os_error();
+        CloseHandle(token);
+        if got == 0 {
+            return Err(e);
+        }
+        windows::sid_string((*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid)
+    }
+}
+
+/// The type of an ACE that allows (`ACCESS_ALLOWED_ACE_TYPE`).
+#[cfg(windows)]
+pub const ACCESS_ALLOWED: u8 = 0;
+
+/// What `path`'s DACL says, for the tests of [`owner_only`]: whether it is protected (inherits nothing), and each
+/// ACE's type, flags and SID.
+#[cfg(windows)]
+pub fn dacl_of(path: &Path) -> std::io::Result<(bool, Vec<(u8, u8, String)>)> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl, SE_DACL_PROTECTED};
+    let name = windows::wide(path.as_os_str());
+    let (mut dacl, mut sd) = (std::ptr::null_mut::<ACL>(), std::ptr::null_mut());
+    // SAFETY: `dacl` points into `sd`, which is freed with LocalFree after the last read.
+    unsafe {
+        match GetNamedSecurityInfoW(name.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, std::ptr::null_mut(), std::ptr::null_mut(), &mut dacl, std::ptr::null_mut(), &mut sd) {
+            0 => {}
+            e => return Err(std::io::Error::from_raw_os_error(e as i32)),
+        }
+        let read = (|| {
+            let (mut control, mut revision) = (0, 0);
+            if GetSecurityDescriptorControl(sd, &mut control, &mut revision) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut aces = Vec::new();
+            for i in 0..dacl.as_ref().map_or(0, |d| d.AceCount) {
+                let mut ace = std::ptr::null_mut();
+                if GetAce(dacl, i.into(), &mut ace) == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let ace = ace.cast::<ACCESS_ALLOWED_ACE>();
+                let sid = windows::sid_string(std::ptr::addr_of_mut!((*ace).SidStart).cast())?;
+                aces.push(((*ace).Header.AceType, (*ace).Header.AceFlags, sid));
+            }
+            Ok((control & SE_DACL_PROTECTED != 0, aces))
+        })();
+        LocalFree(sd);
+        read
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    /// `s` as a NUL-ended UTF-16 string.
+    pub fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        s.encode_wide().chain([0]).collect()
+    }
+
+    /// `sid` as a string (`S-1-5-…`).
+    ///
+    /// # Safety
+    /// `sid` points to a valid SID.
+    pub unsafe fn sid_string(sid: windows_sys::Win32::Security::PSID) -> std::io::Result<String> {
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+        let mut s = std::ptr::null_mut();
+        // SAFETY: the caller's SID; the string Windows gives is NUL-ended and freed with LocalFree.
+        unsafe {
+            if ConvertSidToStringSidW(sid, &mut s) == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let len = (0..).take_while(|&i| *s.add(i) != 0).count();
+            let out = String::from_utf16_lossy(std::slice::from_raw_parts(s, len));
+            LocalFree(s.cast());
+            Ok(out)
+        }
+    }
 }
 
 /// Extract the web-client token embedded in a server-rendered workspace page.
@@ -549,6 +698,50 @@ mod tests {
         for other in [None, Some(""), Some("http://acme2.slack.com/"), Some("https://evil.example.com/"), Some("https://app.slack.com/client"), Some("https://acme2/"), Some("acme2.slack.com")] {
             assert_eq!(url(other), "https://acme.slack.com/", "{other:?}");
         }
+    }
+
+    #[test]
+    fn owner_only_sddl_names_the_user_system_and_admins() {
+        let sid = "S-1-5-21-1-2-3-1001";
+        assert_eq!(owner_only_sddl(sid, false), "D:P(A;;FA;;;S-1-5-21-1-2-3-1001)(A;;FA;;;SY)(A;;FA;;;BA)");
+        assert_eq!(owner_only_sddl(sid, true), "D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    }
+
+    /// A file system without ACLs (FAT, some network shares) does not cost the write: the file is still written whole.
+    /// The ACL goes on the empty temporary file, before the secret is in it.
+    #[test]
+    fn write_private_survives_an_acl_failure() {
+        let dir = std::env::temp_dir().join(format!("ttyak-session-acl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.json");
+        write_private_with(&path, b"{\"secret\":1}", |p, dir| {
+            assert!(!dir && p.file_name().unwrap().to_string_lossy().ends_with(".tmp"), "{p:?}");
+            assert_eq!(std::fs::read(p)?.len(), 0, "still empty");
+            Err(std::io::ErrorKind::Unsupported.into())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"secret\":1}");
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["session.json"], "no temporary file left");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_private_is_owner_only_on_windows() {
+        let dir = std::env::temp_dir().join(format!("ttyak-session-dacl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.json");
+        let user = user_sid().unwrap();
+        // Written new, then again over the old one.
+        for _ in 0..2 {
+            write_private(&path, b"{}").unwrap();
+            let (protected, aces) = dacl_of(&path).unwrap();
+            assert!(protected, "inherits nothing");
+            assert_eq!(aces.len(), 3, "{aces:?}");
+            assert_eq!(aces[0], (ACCESS_ALLOWED, 0, user.clone()), "{aces:?}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Two writers at once (two profiles' ttyaks writing `updates.json`) never mix their files: each write goes through

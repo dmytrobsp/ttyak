@@ -61,7 +61,8 @@ impl Status {
     }
 }
 
-/// Where profile `profile`'s file is: `$XDG_RUNTIME_DIR/ttyak/<profile>.json`, else `<cache>/<profile>/status.json`.
+/// Where profile `profile`'s file is: `$XDG_RUNTIME_DIR/ttyak/<profile>.json`, else `<cache>/<profile>/status.json`
+/// (always on Windows, where an MSYS or Cygwin shell may set `XDG_RUNTIME_DIR` to a folder others share).
 pub fn path(profile: &str) -> PathBuf {
     let cache = slack_core::session::project_dirs().map_or_else(|| std::env::temp_dir().join("ttyak"), |d| d.cache_dir().to_path_buf());
     path_in(std::env::var_os("XDG_RUNTIME_DIR").as_deref(), &cache, profile)
@@ -69,7 +70,7 @@ pub fn path(profile: &str) -> PathBuf {
 
 /// [`path`] with the runtime folder and the cache folder given.
 fn path_in(runtime: Option<&std::ffi::OsStr>, cache: &Path, profile: &str) -> PathBuf {
-    match runtime.filter(|r| !r.is_empty()) {
+    match runtime.filter(|r| !r.is_empty() && cfg!(not(windows))) {
         Some(r) => Path::new(r).join("ttyak").join(format!("{profile}.json")),
         None => cache.join(profile).join("status.json"),
     }
@@ -80,7 +81,7 @@ pub fn write(profile: &str, s: &Status) -> io::Result<()> {
     write_to(&path(profile), s)
 }
 
-/// Writes `s` as a temporary file (0600) renamed over `file`, so a reader never sees half of it.
+/// Writes `s` as a temporary file (owner-only) renamed over `file`, so a reader never sees half of it.
 fn write_to(file: &Path, s: &Status) -> io::Result<()> {
     use std::io::Write;
     let dir = file.parent().unwrap_or(Path::new("."));
@@ -91,6 +92,7 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         }
+        owner_only(dir, true);
     }
     let temp = file.with_extension(format!("tmp{}", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
@@ -101,6 +103,7 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
         options.mode(0o600);
     }
     let mut f = options.open(&temp)?;
+    owner_only(&temp, false);
     let done = f.write_all(serde_json::to_string(s)?.as_bytes()).and_then(|()| f.flush());
     drop(f);
     match done.and_then(|()| std::fs::rename(&temp, file)) {
@@ -109,6 +112,13 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
             let _ = std::fs::remove_file(&temp);
             Err(e)
         }
+    }
+}
+
+/// [`slack_core::session::owner_only`], a failure logged (a file system without ACLs still gets the file).
+fn owner_only(path: &Path, dir: bool) {
+    if let Err(e) = slack_core::session::owner_only(path, dir) {
+        tracing::debug!("owner-only {}: {e}", path.display());
     }
 }
 
@@ -361,6 +371,7 @@ mod tests {
         assert_eq!(serde_json::from_value::<Status>(v).unwrap(), s);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn path_follows_the_runtime_dir() {
         let cache = Path::new("/cache");
@@ -409,6 +420,36 @@ mod tests {
         assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn status_file_is_owner_only_on_windows() {
+        use slack_core::session::{ACCESS_ALLOWED, dacl_of, user_sid};
+        let dir = scratch("dacl");
+        let file = dir.join("ttyak").join("p.json");
+        let user = user_sid().unwrap();
+        // Written new, then again over the old one.
+        for _ in 0..2 {
+            write_to(&file, &status("read", vec![])).unwrap();
+            // The folder it made passes its ACEs on (object and container inherit); the file keeps its own.
+            for (p, inherit) in [(file.as_path(), 0), (file.parent().unwrap(), 3)] {
+                let (protected, aces) = dacl_of(p).unwrap();
+                assert!(protected, "{p:?} inherits nothing");
+                assert_eq!(aces.len(), 3, "{p:?}: {aces:?}");
+                assert_eq!(aces[0], (ACCESS_ALLOWED, inherit, user.clone()), "{p:?}: {aces:?}");
+            }
+        }
+        assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_status_path_ignores_xdg_runtime_dir() {
+        // An MSYS or Cygwin shell may set it to a folder others share.
+        let cache = Path::new(r"C:\cache");
+        assert_eq!(path_in(Some(r"C:\msys64\tmp".as_ref()), cache, "b"), cache.join("b").join("status.json"));
     }
 
     #[test]

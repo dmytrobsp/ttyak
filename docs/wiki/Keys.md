@@ -177,9 +177,9 @@ back when you return, until you send it. The sidebar marks such conversations wi
 
 Drafts also survive quitting, switching workspace and crashes: they are saved two seconds after you stop typing, per
 workspace account, in `drafts/<team>-<user>.json` under the local data folder (Linux `~/.local/share/ttyak`, or under
-`$XDG_DATA_HOME`; macOS `~/Library/Application Support/ttyak`; Windows `%LOCALAPPDATA%\ttyak\data`). On Linux and
-macOS only you can read the file. It goes once no draft is left. Attachments stay with the running ttyak: a draft of
-only attachments is not saved.
+`$XDG_DATA_HOME`; macOS `~/Library/Application Support/ttyak`; Windows `%LOCALAPPDATA%\ttyak\data`). Only you can
+read the file (from 0.12.2 on, on Windows too). It goes once no draft is left. Attachments stay with the running
+ttyak: a draft of only attachments is not saved.
 
 ## Typing (INSERT)
 

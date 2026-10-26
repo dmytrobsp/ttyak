@@ -12,10 +12,10 @@ Each profile's sessions are saved in `session.json` in the profile's folder:
 | macOS | `~/Library/Application Support/ttyak/<profile>/` |
 | Windows | `%APPDATA%\ttyak\config\<profile>\` |
 
-The file holds each workspace's token and `d` cookie; on Linux and macOS only you can read it. With each session it
-keeps where the session came from (which browser profile, the address an email code went to, or a cookie — names
-only, nothing secret): `auth status` shows it, and signing in again starts there. One profile may hold two accounts of
-the same workspace.
+The file holds each workspace's token and `d` cookie; only you can read it (from 0.12.2 on, on Windows too). With each
+session it keeps where the session came from (which browser profile, the address an email code went to, or a cookie —
+names only, nothing secret): `auth status` shows it, and signing in again starts there. One profile may hold two
+accounts of the same workspace.
 
 ## Checking and forgetting sign-ins
 

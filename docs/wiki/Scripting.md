@@ -39,9 +39,9 @@ one by one) and `huddles --shape` (only the shape of Slack's answers).
 ## Status for bars and scripts
 
 `ttyak --profile NAME ctl status` prints what the running ttyak of that profile says, from a small file it keeps up to
-date (`$XDG_RUNTIME_DIR/ttyak/NAME.json`; without `XDG_RUNTIME_DIR`, as on macOS and Windows, `status.json` in the
-profile's cache folder). On Linux and macOS only you can read it. It needs no Slack session and is cheap to poll every
-second.
+date (`$XDG_RUNTIME_DIR/ttyak/NAME.json`; without `XDG_RUNTIME_DIR`, as on macOS, and always on Windows,
+`status.json` in the profile's cache folder). Only you can read it (from 0.12.2 on, on Windows too). It needs no Slack
+session and is cheap to poll every second.
 
 The line looks like `◆ acme: 2 for you · paused until 14:00`; the mark is `○` all read, `●` unread, `◆` for you, the
 same as the tab title. A huddle you are in and an update waiting are added (`· in a huddle (#channel)`,
