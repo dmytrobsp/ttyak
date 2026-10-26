@@ -221,8 +221,8 @@ reason names, and choose the language again. More: [Translations](Translations#m
   Notification Center without a banner, unless "Allow notifications when mirroring or sharing the display" is on.
 - Windows: toasts come as Windows PowerShell's; when its notifications are turned off, F6 and `ttyak ctl check` say
   `Windows PowerShell's notifications are turned off (Settings → System → Notifications)`.
-- Windows: not supported: a full-screen ttyak in Windows Terminal older than 1.14 holds its own notifications back
-  (sent without sound or the bell, as for a busy Windows); update Windows Terminal.
+- Windows: not supported: a full-screen ttyak in Windows Terminal older than 1.14 counts as busy, so its toasts go out
+  without sound or the bell; update Windows Terminal.
 
 F6 → Notifications → **Send a test notification** sends one through the same route. More:
 [Desktop notifications](Notifications-and-attention#desktop-notifications),
@@ -283,7 +283,8 @@ its taskbar button flashes.
 shows notifications itself brings its window forward there), in a detached tmux session, over `ssh -X`, or with a window
 manager that refuses focus requests; terminals without remote control (foot, Ghostty, Alacritty, kitty without
 `listen_on`) come forward on the tab last used. On Windows a click in the notification center does nothing (only the
-toast on screen works), Windows may only flash the taskbar button, and Windows Terminal's tab is found by its title. On
+toast on screen works), Windows may only flash the taskbar button, and Windows Terminal's tab is found by its title;
+Windows Terminal older than 1.14 is not supported (neither its window nor its tab comes forward: update it). On
 macOS a "Don't Allow" to the automation question leaves the tab as it is. A click after 30 minutes, or after ttyak
 ended, opens nothing.
 

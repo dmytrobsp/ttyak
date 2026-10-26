@@ -180,11 +180,12 @@ fn main() -> Result<()> {
 /// a Windows toast call, must not hold the exit).
 const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// [`run`] on `runtime`, which then gets [`EXIT_WAIT`] for its blocking work to end.
+/// [`run`] on `runtime`, which then gets [`EXIT_WAIT`] for its blocking work to end (after a panic too, which then
+/// goes on).
 fn run_to_the_end(runtime: tokio::runtime::Runtime) -> Result<()> {
-    let result = runtime.block_on(run());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.block_on(run())));
     runtime.shutdown_timeout(EXIT_WAIT);
-    result
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 async fn run() -> Result<()> {

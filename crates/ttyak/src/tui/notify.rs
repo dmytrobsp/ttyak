@@ -159,6 +159,20 @@ struct CachedState {
     reading: bool,
 }
 
+/// A read of a [`Cached`] value under way: when it ends, a panicking one too (its value then: not known), what it found
+/// is kept and the next read may start.
+struct CachedRead {
+    state: Arc<Mutex<CachedState>>,
+    value: Option<i32>,
+}
+
+impl Drop for CachedRead {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        (state.value, state.reading) = (Some(self.value), false);
+    }
+}
+
 #[cfg_attr(not(any(windows, test)), allow(dead_code))]
 impl Cached {
     fn new(every: std::time::Duration) -> Cached {
@@ -171,11 +185,11 @@ impl Cached {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if !state.reading && needs_refresh(now, state.started, self.every) {
             (state.reading, state.started) = (true, Some(now));
-            let shared = self.state.clone();
+            let done = CachedRead { state: self.state.clone(), value: None };
+            // (The whole `done` moves to the thread, not just its field: it must not drop here, under the lock.)
             let reader = std::thread::Builder::new().name("notification setting".into()).spawn(move || {
-                let value = read();
-                let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
-                (state.value, state.reading) = (Some(value), false);
+                let mut done = done;
+                done.value = read();
             });
             if let Err(e) = reader {
                 tracing::debug!("notification setting not read: {e}");
@@ -2722,6 +2736,47 @@ mod tests {
         }
         assert_eq!(cache.get(now, read()), Some(Some(3)));
         assert_eq!(reads.load(Ordering::Relaxed), 1, "one read at a time, none again within the period");
+    }
+
+    /// Once a read is back and the period has passed, the value is read again.
+    #[test]
+    fn a_cached_value_is_read_again_once_the_period_passed() {
+        let cache = Cached::new(SETTING_REFRESH);
+        let reads = Arc::new(std::sync::atomic::AtomicI32::new(0));
+        let read = || {
+            let reads = reads.clone();
+            move || Some(reads.fetch_add(1, Ordering::Relaxed) + 1)
+        };
+        let back = |at: std::time::Instant, want: Option<i32>| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while cache.get(at, read()) != Some(want) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(cache.get(at, read()), Some(want));
+        };
+        let now = std::time::Instant::now();
+        back(now, Some(1));
+        back(now + SETTING_REFRESH, Some(2));
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    /// A read that panics counts as one that found nothing, and doesn't stop the next read.
+    #[test]
+    fn a_panicking_read_counts_as_unreadable() {
+        let cache = Cached::new(SETTING_REFRESH);
+        let now = std::time::Instant::now();
+        assert_eq!(cache.get(now, || panic!("a read that fails")), None);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cache.get(now, || Some(9)).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(cache.get(now, || Some(9)), Some(None), "not read again within the period");
+        let later = now + SETTING_REFRESH;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cache.get(later, || Some(9)) != Some(Some(9)) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(cache.get(later, || Some(9)), Some(Some(9)), "the next read starts");
     }
 
     #[tokio::test]
