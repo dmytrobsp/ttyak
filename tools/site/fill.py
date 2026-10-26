@@ -114,7 +114,7 @@ def render_install(release):
         'release.</p>\n'
         '    <p class="verify">The macOS builds are signed and notarized by Apple. Every download has its line in '
         'SHA256SUMS and a GitHub attestation: '
-        f'<a href="https://github.com/{REPO}#verify">how to check</a>.</p>\n'
+        f'<a href="https://github.com/{REPO}/wiki/Verifying-downloads">how to check</a>.</p>\n'
         '    <p class="lede">Or the zip by hand: unzip it, put <code>ttyak</code> on your PATH.</p>')
 
 

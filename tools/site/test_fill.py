@@ -330,7 +330,8 @@ class InstallTests(unittest.TestCase):
         self.assertIn("notarized", h)
         self.assertIn("SHA256SUMS", h)
         self.assertIn("attestation", h)
-        self.assertIn('href="https://github.com/dmytrobsp/ttyak#verify"', h)
+        self.assertIn('href="https://github.com/dmytrobsp/ttyak/wiki/Verifying-downloads"', h)
+        self.assertNotIn("ttyak#verify", h)
 
     def test_from_0_11_the_owner_shows_only_in_allowed_names(self):
         # check_private joins a line's text across tags: a name must not run into the next item's words

@@ -286,15 +286,15 @@
       <li>Fonts: an emoji font (Noto Color Emoji; macOS and Windows have theirs) and a symbol font for <code>● ○ ◆ ★ ⏎ ↪ ⬆ ✕</code> and the box characters (DejaVu Sans or Noto Sans Symbols); CJK fonts are optional. Debian and Ubuntu: <code>fonts-noto-color-emoji fonts-dejavu-core fonts-noto-cjk</code>. Fedora: <code>google-noto-color-emoji-fonts dejavu-sans-fonts google-noto-sans-cjk-fonts</code>. Arch: <code>noto-fonts-emoji ttf-dejavu noto-fonts-cjk</code>. Emoji drawn as boxes: F6 → Messages &amp; media → “Show emoji as :names:”.</li>
       <li>Linux: a notification server (swaync, mako, dunst, GNOME or KDE) for the bubbles, <code>xdg-open</code> for links, a Wayland compositor with data-control (or X11) for the clipboard, GStreamer for screen sharing on Wayland.</li>
       <li>macOS: notifications appear as the terminal app’s, so allow that app’s notifications in System Settings → Notifications; while the screen is shared or mirrored macOS keeps them in the Notification Center without a banner unless “Allow notifications when mirroring or sharing the display” is on. Terminal.app has 24-bit colour from macOS 26 (seen on macOS 26.5); before that use the <code>terminal</code> theme.</li>
-      <li>Windows: Windows Terminal is recommended; the classic console (conhost) is expected to show emoji as boxes and no pictures (not tried yet). Toasts appear under PowerShell’s name.</li>
-      <li>Not sure what your terminal offers? <code>ttyak ctl check</code> reports it and prints a line of each kind of glyph for you to judge. <a href="https://github.com/dmytrobsp/ttyak#requirements">The full list</a>.</li>
+      <li>Windows: Windows Terminal is recommended; the classic console (conhost) draws emoji in monochrome and no pictures, only half blocks. Toasts appear under PowerShell’s name.</li>
+      <li>Not sure what your terminal offers? <code>ttyak ctl check</code> reports it and prints a line of each kind of glyph for you to judge. <a href="https://github.com/dmytrobsp/ttyak/wiki/Requirements">The full list</a>.</li>
     </ul>
   </section>
 
   <footer id="footer">
     <div class="stamp" style="--r:-9deg"><span>WORKS ON<br>MY MACHINE™</span> <b>CERTIFIED</b></div>
     <div class="foot-words">
-      <p>ttyak is MIT or Apache-2.0, your pick. Code, issues and the manual (the README) live on <a href="https://github.com/dmytrobsp/ttyak">GitHub</a>.</p>
+      <p>ttyak is MIT or Apache-2.0, your pick. Code, issues and the manual (<a href="https://github.com/dmytrobsp/ttyak/wiki">the wiki</a>) live on <a href="https://github.com/dmytrobsp/ttyak">GitHub</a>.</p>
       <p>ttyak is not affiliated with Slack Technologies or Salesforce; Slack is their trademark.</p>
       <p>Thanks to <a href="https://getslk.sh/">slk</a> for the inspiration.</p>
       <p class="credit">Swan Lake photo: “Swan Lake ballet” by <a href="https://commons.wikimedia.org/wiki/File:Swanlake010.jpg">Paata Vardanashvili</a>, <a href="https://creativecommons.org/licenses/by/2.0/">CC BY 2.0</a> (cropped, greyscale).</p>
