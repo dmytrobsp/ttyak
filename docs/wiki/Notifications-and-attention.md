@@ -100,23 +100,24 @@ played its sound, swaync held the notification back).
 
 ttyak follows Slack's rule. Being a VIP never makes a message notify that otherwise wouldn't: the conversation's level,
 a mute and the other rules above still decide first. The one difference: with Slack's **Always allow notifications from
-VIPs** on (Slack's Preferences → VIP; off by default; kept on Slack), a message that would notify but is held back only
-by the pause or the schedule gets through when
+VIPs** on (in F6 → Notifications, under VIPs, or Slack's Preferences → VIP; off by default; kept on Slack), a message
+that would notify but is held back only by the pause or the schedule gets through when
 
 - its sender is one of your VIPs, and it is a direct message or group DM, or it mentions someone, a user group or a
   channel (the mention needn't be of you; `@here`, `@channel` and `@everyone` don't count), or
 - it is a message from an app that is one of your VIPs (by its bot user), even without a DM or a mention.
 
-It needs a paid Slack plan, as in Slack. It holds for the other workspaces of the profile too, and follows the setting
-when it changes elsewhere. A VIP starting a huddle still stays quiet during a pause, and the system's do-not-disturb
-(above) holds VIPs back like everyone else.
+It needs a paid Slack plan, as in Slack: on a free plan the F6 row says so and can't be changed. It holds for the other
+workspaces of the profile too, and follows the setting when it changes elsewhere. A VIP starting a huddle still stays
+quiet during a pause, and the system's do-not-disturb (above) holds VIPs back like everyone else.
 
 ## Settings in F6
 
 F6 → Notifications is the one place for all of this, in this order:
 
 - what notifies you (kept on Slack): This conversation notifies about, Channels notify about (default), Keywords, VIPs
-  (the list; you add or remove one on their profile card)
+  (the list; you add or remove one on their profile card), Always allow notifications from VIPs (Enter turns it on or
+  off: [VIPs during a pause](#vips-during-a-pause))
 - how you are told: Desktop notifications, Sound, Notification sound volume, Bell when not focused, Mark in the tab
   title
 - quiet hours: Pause notifications, Notification schedule, Follow the system's do-not-disturb

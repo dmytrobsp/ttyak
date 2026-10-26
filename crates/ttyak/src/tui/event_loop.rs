@@ -3524,7 +3524,21 @@ impl App {
                 self.ws.notify.keywords = words.split(',').filter(|w| !w.is_empty()).map(String::from).collect();
                 self.save_notification_pref("global_keywords", words, None, false);
             }
+            SlackChange::VipOverride(on) => self.set_vip_override(on),
         }
+    }
+
+    /// Turn "Always allow notifications from VIPs" on or off (optimistic, then `users.prefs.set
+    /// priority_dnd_override`); refused, it goes back and the status line says why.
+    fn set_vip_override(&mut self, on: bool) {
+        self.ws.vip_override = on;
+        let (client, tx) = (self.client.clone(), self.net.clone());
+        tokio::spawn(async move {
+            if let Err(e) = client.set_pref("priority_dnd_override", &on.to_string()).await {
+                let _ = tx.send(Net::Prefs(serde_json::json!({ "priority_dnd_override": !on })));
+                let _ = tx.send(Net::Error(format!("{}: {e}", super::i18n::tr(super::prefs::VIP_OVERRIDE_FAILED))));
+            }
+        });
     }
 
     /// F6 → Notifications → Send a test notification: a note like one for you through the real route, with its sound as
@@ -9100,6 +9114,50 @@ mod tests {
         select(&mut app, Field::UpdateVersion);
         app.change_preference();
         assert_eq!(app.status, "this is ttyak's version: nothing to change here");
+    }
+
+    /// F6 open on Notifications with "Always allow notifications from VIPs" selected.
+    fn select_vip_override(app: &mut super::App) {
+        use super::super::prefs::{CATEGORIES, Field, Prefs};
+        let mut p = Prefs::default();
+        p.category = CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap();
+        p.selected = p.fields(&app.keys).iter().position(|f| *f == Field::VipOverride).unwrap();
+        app.prefs = Some(p);
+    }
+
+    #[tokio::test]
+    async fn always_allow_vips_is_kept_on_slack() {
+        let (url, mut asked) = fake_slack(&[]).await;
+        let (mut app, _net) = test_app_at(&url);
+        select_vip_override(&mut app);
+        // A free plan: nothing is sent.
+        app.change_preference();
+        assert!(!app.ws.vip_override);
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(300), asked.recv()).await.is_err(), "not sent");
+        app.ws.paid = true;
+        for on in [true, false] {
+            app.change_preference();
+            assert_eq!(app.ws.vip_override, on, "at once");
+            let req = asked_for(&mut asked, "users.prefs.set").await;
+            assert!(req.contains("name=priority_dnd_override") && req.contains(&format!("value={on}")), "{req}");
+        }
+    }
+
+    #[tokio::test]
+    async fn always_allow_vips_goes_back_when_slack_refuses() {
+        let (url, _asked) = fake_slack(&[("users.prefs.set", r#"{"ok":false,"error":"not_allowed"}"#)]).await;
+        let (mut app, mut net) = test_app_at(&url);
+        app.ws.paid = true;
+        select_vip_override(&mut app);
+        app.change_preference();
+        assert!(app.ws.vip_override, "at once");
+        let mut errored = false;
+        while !errored || app.ws.vip_override {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(10), net.recv()).await.expect("an answer").unwrap();
+            errored |= matches!(n, super::Net::Error(_));
+            super::handle_net(&mut app, n);
+        }
+        assert!(app.status.starts_with(super::super::prefs::VIP_OVERRIDE_FAILED), "{}", app.status);
     }
 
     #[tokio::test]

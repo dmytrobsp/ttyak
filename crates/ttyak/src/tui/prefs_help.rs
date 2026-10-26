@@ -311,7 +311,13 @@ fn build(field: Field, _ws: &Workspace, keys: &Keymap, tr: &dyn Fn(&'static str)
             b.change("type them separated by commas, Enter again saves");
         }
         Field::Vips => {
-            b.text("The people you marked as VIPs, whose messages Slack notifies you about. Kept on Slack. You add or remove one on their profile card.");
+            b.text("The people and apps you marked as VIPs. Kept on Slack. You add or remove one on their profile card.").blank();
+            b.text("Being a VIP never makes a message notify that otherwise wouldn't. With Always allow notifications from VIPs on (the next row), some of their messages still notify you while notifications are paused.");
+        }
+        Field::VipOverride => {
+            b.text("While notifications are paused (a pause or the schedule), a VIP's message still notifies you if it is a DM or group DM or mentions a person, a user group or a channel (@here, @channel and @everyone don't count), and a VIP app's message always does. It never makes a message notify that otherwise wouldn't: the conversation's level and mutes still apply.").blank();
+            b.text("Kept on Slack; it needs a paid plan.").blank();
+            b.change("turn it on or off");
         }
         // Audio & video
         Field::Input => {
@@ -771,6 +777,19 @@ mod tests {
         assert!(key_lines(&help(Field::SystemDnd, &Workspace::default(), &keys())).is_empty(), "shown only");
         let bell = help(Field::Bell, &Workspace::default(), &keys());
         assert!(matches!(&bell.lines[0], HelpLine::Text(t) if t.contains("focus_on_activate") && t.contains("Off by default")), "{bell:?}");
+    }
+
+    #[test]
+    fn the_vip_rows_say_slacks_rule() {
+        let all = |f: Field| help(f, &Workspace::default(), &keys()).lines.iter().filter_map(|l| if let HelpLine::Text(t) = l { Some(t.clone()) } else { None }).collect::<Vec<_>>().join(" ");
+        let vips = all(Field::Vips);
+        assert!(!vips.contains("whose messages Slack notifies you about"), "{vips}");
+        assert!(vips.contains("never makes a message notify") && vips.contains("Always allow notifications from VIPs"), "{vips}");
+        let rule = all(Field::VipOverride);
+        for part in ["paused", "DM or group DM", "mentions a person, a user group or a channel", "@here, @channel and @everyone don't count", "never makes a message notify", "a VIP app's message always does", "Kept on Slack", "paid plan"] {
+            assert!(rule.contains(part), "{part}: {rule}");
+        }
+        assert_eq!(key_lines(&help(Field::VipOverride, &Workspace::default(), &keys())).len(), 1, "Enter turns it on or off");
     }
 
     #[test]

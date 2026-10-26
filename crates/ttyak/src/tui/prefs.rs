@@ -79,6 +79,8 @@ pub enum Field {
     Keywords,
     /// Slack: your VIPs (changed on a profile card).
     Vips,
+    /// Slack: VIPs' DMs and mentions get through a pause (`priority_dnd_override`; a paid plan only).
+    VipOverride,
     /// Slack: your status (a text field: `:emoji: text`).
     Status,
     /// Slack: appear away.
@@ -156,6 +158,11 @@ const PAUSES: &[u64] = &[30, 60, 120, 480];
 /// The schedule's kinds, in the order Enter goes through them (from off: every day).
 const KINDS: [ScheduleDays; 4] = [ScheduleDays::Off, ScheduleDays::EveryDay, ScheduleDays::Weekdays, ScheduleDays::Custom];
 
+/// Shown on (and when changing) a Slack setting the workspace's free plan doesn't have.
+pub const NEEDS_PAID_PLAN: &str = "needs a paid plan";
+/// The status line when Slack refuses "Always allow notifications from VIPs" (the error follows).
+pub const VIP_OVERRIDE_FAILED: &str = "saving Always allow notifications from VIPs failed";
+
 /// Shown for a schedule (or a day) with a value ttyak doesn't know; it is never written.
 const UNKNOWN_SCHEDULE: &str = "unknown to ttyak — change it in Slack";
 
@@ -165,7 +172,7 @@ pub const CATEGORIES: &[(&str, &[Field])] = &[
     ("Messages & media", &[Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir]),
     ("Language & region", &[Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language]),
     // What notifies you (on Slack) · how you are told · quiet · on this machine (shown only, and the test).
-    ("Notifications", &[Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::Desktop, Field::Sound, Field::SoundVolume, Field::Bell, Field::TitleMark, Field::Notifications, Field::Schedule, Field::FollowSystemDnd, Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification]),
+    ("Notifications", &[Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::VipOverride, Field::Desktop, Field::Sound, Field::SoundVolume, Field::Bell, Field::TitleMark, Field::Notifications, Field::Schedule, Field::FollowSystemDnd, Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification]),
     ("Audio & video", &[Field::Input, Field::Output, Field::HuddleVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera]),
     ("Huddles", &[Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs]),
     // The Update row only while a newer version is known (see `Prefs::fields`).
@@ -250,6 +257,7 @@ impl Field {
             Field::ChannelDefault => "Channels notify about (default)",
             Field::Keywords => "Keywords",
             Field::Vips => "VIPs (also on a profile card)",
+            Field::VipOverride => "Always allow notifications from VIPs",
             Field::Status => "Status",
             Field::Away => "Appear away",
             Field::Notifications => "Notifications",
@@ -394,6 +402,8 @@ impl Field {
                 Some(DayHours::Unknown(v)) => format!("{v:?}: {UNKNOWN_SCHEDULE}"),
                 None => String::new(),
             },
+            Field::VipOverride if !ws.paid => super::i18n::tr(NEEDS_PAID_PLAN).into_owned(),
+            Field::VipOverride => yes(ws.vip_override),
             Field::Vips if ws.vip.is_empty() => "none".into(),
             Field::Vips => {
                 let mut names: Vec<String> = ws.vip.iter().map(|u| ws.user_name(u)).collect();
@@ -559,7 +569,7 @@ impl Field {
                 super::sound::play(sounds[i], Settings::device(huddle::devices::OUTPUT_ENV, &s.audio.output), s.notifications.sound_volume);
             }
             // Slack-side: see `Prefs::change`.
-            Field::ConversationLevel | Field::ChannelDefault | Field::Keywords | Field::Vips | Field::Status | Field::Away | Field::Notifications | Field::Schedule | Field::ScheduleHours | Field::ScheduleDay(_) | Field::Leader | Field::InsertLeader | Field::GroupHeader(_) | Field::Binding(_) => {}
+            Field::ConversationLevel | Field::ChannelDefault | Field::Keywords | Field::Vips | Field::VipOverride | Field::Status | Field::Away | Field::Notifications | Field::Schedule | Field::ScheduleHours | Field::ScheduleDay(_) | Field::Leader | Field::InsertLeader | Field::GroupHeader(_) | Field::Binding(_) => {}
             Field::Input => s.audio.input = next(&s.audio.input, &devices.0),
             Field::Output => s.audio.output = next(&s.audio.output, &devices.1),
             Field::NoiseSuppression => s.audio.noise_suppression ^= true,
@@ -794,6 +804,8 @@ pub enum SlackChange {
     Command(String),
     /// Change the notification schedule.
     Schedule(Vec<slack_core::dnd::ScheduleEdit>),
+    /// Turn "Always allow notifications from VIPs" on or off.
+    VipOverride(bool),
 }
 
 /// A conversation's own level cycles through the three and back to "default" (no override).
@@ -900,12 +912,12 @@ fn recording_label(keys: &Keymap, seq: &[Key]) -> String {
 pub fn translatable() -> Vec<String> {
     let all = [
         Field::Theme, Field::WorkspaceTheme, Field::Compact, Field::HideInactive, Field::InlineImages, Field::Avatars, Field::LargeAvatars, Field::PreviewRefresh, Field::StatusRefresh, Field::ThreadRead, Field::Graphics, Field::EmojiAsNames, Field::CustomEmojiPictures, Field::SaveDir, Field::Clock24, Field::DateFormat, Field::TimeZone, Field::Language, Field::Desktop, Field::Sound, Field::Bell, Field::TitleMark, Field::FollowSystemDnd, Field::ShownBy, Field::ClickResult, Field::SystemDnd, Field::TestNotification,
-        Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::Status, Field::Away, Field::Notifications, Field::Schedule, Field::ScheduleHours, Field::Input, Field::Output,
+        Field::ConversationLevel, Field::ChannelDefault, Field::Keywords, Field::Vips, Field::VipOverride, Field::Status, Field::Away, Field::Notifications, Field::Schedule, Field::ScheduleHours, Field::Input, Field::Output,
         Field::HuddleVolume, Field::SoundVolume, Field::MicGain, Field::SpeakingThreshold, Field::NoiseSuppression, Field::EchoCancellation, Field::Camera, Field::JoinSound, Field::SomeoneJoined, Field::SomeoneLeft, Field::RingSound, Field::RingTimeout, Field::AutoDecline, Field::AloneSound, Field::AloneSecs,
         Field::UpdateVersion, Field::UpdateCheck, Field::UpdateEvery, Field::UpdateCheckTimeout, Field::UpdateTimeout, Field::UpdateCheckNow, Field::UpdateCommand, Field::UpdateOpen,
     ];
     let all = [&all[..], &(0..7).map(Field::ScheduleDay).collect::<Vec<_>>()].concat();
-    CATEGORIES.iter().map(|c| c.0).chain(["Keys", LEADER_LABEL, INSERT_LEADER_LABEL, RECORD_START, RECORD_DONE, "filter", "to filter", "to change", "Enter keep · Esc clear"]).chain(UPDATE_WORDS.iter().copied()).chain(MACHINE_WORDS.iter().copied()).chain(all.iter().chain(KEYS_SETTINGS).map(|f| f.fixed_label())).chain(super::prefs_help::strings()).map(String::from).collect()
+    CATEGORIES.iter().map(|c| c.0).chain(["Keys", LEADER_LABEL, INSERT_LEADER_LABEL, RECORD_START, RECORD_DONE, "filter", "to filter", "to change", "Enter keep · Esc clear"]).chain(UPDATE_WORDS.iter().copied()).chain(MACHINE_WORDS.iter().copied()).chain([NEEDS_PAID_PLAN, VIP_OVERRIDE_FAILED]).chain(all.iter().chain(KEYS_SETTINGS).map(|f| f.fixed_label())).chain(super::prefs_help::strings()).map(String::from).collect()
 }
 
 #[derive(Debug, Default)]
@@ -1380,6 +1392,11 @@ impl Prefs {
             }
             Field::ChannelDefault => Some(SlackChange::ChannelDefault(next_level(&ws.notify.global))),
             Field::Vips => None,
+            Field::VipOverride if !ws.paid => {
+                self.saved = Some(Err(super::i18n::tr(NEEDS_PAID_PLAN).into_owned()));
+                None
+            }
+            Field::VipOverride => Some(SlackChange::VipOverride(!ws.vip_override)),
             Field::Status => match self.editing.take() {
                 Some(text) if text.trim().is_empty() => Some(SlackChange::Command("/status clear".into())),
                 Some(text) => Some(SlackChange::Command(format!("/status {}", text.trim()))),
@@ -1430,7 +1447,7 @@ impl Prefs {
 
     /// Whether the selected field is kept on Slack or in keys.toml (nothing to save in settings.toml).
     pub fn on_slack(&self, keys: &Keymap) -> bool {
-        matches!(self.selected_field(keys), Some(Field::Leader | Field::InsertLeader | Field::GroupHeader(_) | Field::Binding(_) | Field::ConversationLevel | Field::ChannelDefault | Field::Keywords | Field::Vips | Field::Status | Field::Away | Field::Notifications | Field::Schedule | Field::ScheduleHours | Field::ScheduleDay(_)))
+        matches!(self.selected_field(keys), Some(Field::Leader | Field::InsertLeader | Field::GroupHeader(_) | Field::Binding(_) | Field::ConversationLevel | Field::ChannelDefault | Field::Keywords | Field::Vips | Field::VipOverride | Field::Status | Field::Away | Field::Notifications | Field::Schedule | Field::ScheduleHours | Field::ScheduleDay(_)))
     }
 
     pub fn draw(&mut self, f: &mut Frame, area: Rect, ws: &Workspace, current: Option<&str>, keys: &Keymap) {
@@ -1846,7 +1863,7 @@ mod tests {
     fn notifications_is_the_one_place() {
         use Field::*;
         let fields = |name: &str| CATEGORIES.iter().find(|c| c.0 == name).unwrap().1;
-        assert_eq!(fields("Notifications"), [ConversationLevel, ChannelDefault, Keywords, Vips, Desktop, Sound, SoundVolume, Bell, TitleMark, Notifications, Schedule, FollowSystemDnd, ShownBy, ClickResult, SystemDnd, TestNotification]);
+        assert_eq!(fields("Notifications"), [ConversationLevel, ChannelDefault, Keywords, Vips, VipOverride, Desktop, Sound, SoundVolume, Bell, TitleMark, Notifications, Schedule, FollowSystemDnd, ShownBy, ClickResult, SystemDnd, TestNotification]);
         assert!(!fields("Audio & video").contains(&SoundVolume), "moved");
         assert!(fields("Availability").contains(&Notifications) && fields("Availability").contains(&Schedule), "still in Availability");
         for f in [ShownBy, ClickResult, SystemDnd, TestNotification] {
@@ -1856,6 +1873,33 @@ mod tests {
         let mut s = Settings::default();
         assert!(SoundVolume.adjust(&mut s, false, false) && s.notifications.sound_volume < 100);
         assert_eq!(SoundVolume.value(&Workspace { settings: s.clone(), ..Default::default() }, None, &Keymap::default()), format!("{}%", s.notifications.sound_volume));
+    }
+
+    #[test]
+    fn vips_can_get_through_a_pause_on_a_paid_plan() {
+        let keys = Keymap::default();
+        let notifications = CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap();
+        let fields = CATEGORIES[notifications].1;
+        let vips = fields.iter().position(|f| *f == Field::Vips).unwrap();
+        assert_eq!(fields[vips + 1], Field::VipOverride, "under the VIPs");
+        assert_eq!(Field::VipOverride.label(), "Always allow notifications from VIPs");
+        for word in ["Always allow notifications from VIPs", NEEDS_PAID_PLAN, VIP_OVERRIDE_FAILED] {
+            assert!(translatable().iter().any(|t| t == word), "{word} is translatable");
+        }
+        let mut ws = Workspace { paid: true, ..Default::default() };
+        let mut p = Prefs { category: notifications, selected: vips + 1, ..Default::default() };
+        assert!(p.on_slack(&keys), "kept on Slack");
+        assert_eq!(Field::VipOverride.value(&ws, None, &keys), "off");
+        assert_eq!(p.change(&mut ws, None, &keys), Some(SlackChange::VipOverride(true)));
+        ws.vip_override = true;
+        assert_eq!(Field::VipOverride.value(&ws, None, &keys), "on");
+        assert_eq!(p.change(&mut ws, None, &keys), Some(SlackChange::VipOverride(false)));
+        // A free plan: said on the row, and Enter changes nothing.
+        let mut ws = Workspace::default();
+        assert_eq!(Field::VipOverride.value(&ws, None, &keys), NEEDS_PAID_PLAN);
+        assert_eq!(p.change(&mut ws, None, &keys), None);
+        assert_eq!(p.saved, Some(Err(NEEDS_PAID_PLAN.into())));
+        assert!(!ws.vip_override);
     }
 
     #[test]
