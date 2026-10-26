@@ -219,6 +219,19 @@ async fn watch(index: usize, session: WorkspaceSession, label: String, shown: Ar
     }
 }
 
+/// Take the huddles going on that Slack listed when asked at `since` (`result`) into workspace `index`'s `ws`: the start
+/// bubbles of those it ended are withdrawn (they ended while its connection was down).
+fn take_live_huddles(ws: &mut super::state::Workspace, notifier: &Notifier, index: usize, since: u64, result: Result<Vec<slack_core::types::LiveHuddle>, String>) {
+    match result {
+        Ok(live) => {
+            let over = ws.set_live_huddles(live, since);
+            super::notify::huddles_over(notifier, index, &over, None);
+        }
+        // The huddles kept from the live events stay.
+        Err(e) => tracing::debug!("the huddles going on in workspace {}: {e}", index + 1),
+    }
+}
+
 /// Boot workspace `index` into its own state and notify from its RTM events until it becomes
 /// the shown one or is signed out (then the connection and the state are dropped).
 async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &AtomicUsize, clicks: &tokio::sync::mpsc::UnboundedSender<Click>, signed_out: &SignedOut, notifier: &Notifier) -> anyhow::Result<()> {
@@ -232,9 +245,21 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
     ws.apply_boot(&boot?);
     let mut rtm = slack_core::rtm::spawn(client.clone());
     let mut check = tokio::time::interval(SHOWN_CHECK);
+    // The huddles going on, asked for beside the watcher once connected (again after each reconnect) and when one starts.
+    let (lists_tx, mut lists) = tokio::sync::mpsc::unbounded_channel();
+    let ask = |since: u64| {
+        let (client, tx) = (client.clone(), lists_tx.clone());
+        drop(tokio::spawn(async move {
+            let _ = tx.send((since, client.huddles_live().await.map_err(|e| e.to_string())));
+        }));
+    };
     loop {
         let ev = tokio::select! {
             ev = rtm.events.recv() => ev.ok_or_else(|| anyhow::anyhow!("RTM stopped"))?,
+            Some((since, result)) = lists.recv() => {
+                take_live_huddles(&mut ws, notifier, index, since, result);
+                continue;
+            }
             _ = check.tick() => {
                 if shown.load(Ordering::Relaxed) == index || noticed(signed_out, index, client) {
                     return Ok(());
@@ -248,6 +273,10 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
                 noticed(signed_out, index, client);
                 return Ok(());
             }
+            slack_core::rtm::RtmEvent::Connected(_) => {
+                ask(ws.huddle_seq);
+                continue;
+            }
             _ => continue,
         };
         let fx = super::live::apply(&mut ws, &v, None, true);
@@ -258,6 +287,9 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
             notifier.read(&Key { workspace: index, channel: channel.clone() }, thread.as_deref(), up_to);
         }
         super::notify::huddles_over(notifier, index, &fx.huddles_ended, fx.invite_cancelled.as_deref());
+        if fx.refetch_live_huddles {
+            ask(ws.huddle_seq);
+        }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         if ws.dnd.stale(now) {
             match client.call_raw("dnd.info", &[]).await {
@@ -293,6 +325,25 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A huddle that ended while a hidden workspace's connection was down: the list asked for after the reconnect
+    /// takes its start's bubble (#15).
+    #[tokio::test]
+    async fn a_live_list_without_a_huddle_takes_its_start_bubble() {
+        let (n, server) = Notifier::fake();
+        let mut ws = super::super::state::Workspace::default();
+        ws.huddles.insert("D1".into(), super::super::state::Huddle { room: "R1".into(), participants: vec!["U2".into()], thread: None, start: 0 });
+        let target = super::super::notify::Target { channel: "D1".into(), ts: None, thread_ts: None };
+        n.show(super::super::attention::Note { key: Key { workspace: 1, channel: "D1".into() }, title: "Bob started a huddle".into(), body: "b".into(), target }, None, Box::new(|_| {}));
+        let since = ws.huddle_seq;
+        take_live_huddles(&mut ws, &n, 1, since, Err("no answer".into()));
+        n.settled().await;
+        assert_eq!(server.calls().len(), 1, "a failed list changes nothing");
+        take_live_huddles(&mut ws, &n, 1, since, Ok(Vec::new()));
+        n.settled().await;
+        assert!(ws.huddles.is_empty());
+        assert_eq!(server.calls().pop(), Some(super::super::notify::fake::Call::Close(1)));
+    }
 
     #[test]
     fn logos_only_of_their_own() {

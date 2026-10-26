@@ -1127,8 +1127,6 @@ struct Coming {
     on_click: Option<OnClick>,
     /// A withdrawal that takes it came meanwhile.
     withdrawn: bool,
-    /// The bubble (by generation) closed before it went out, to make room for it (macOS).
-    closed_first: Option<u64>,
 }
 
 /// How notifications reach the user on this machine, for F6's "On this machine", in the current language.
@@ -1487,7 +1485,8 @@ pub const TEST_BELL_AFTER: std::time::Duration = std::time::Duration::from_secs(
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
 async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::UnboundedReceiver<Cmd>, back: mpsc::WeakUnboundedSender<Cmd>) {
     let mut live: HashMap<Key, Live> = HashMap::new();
-    // The bubbles the server may still answer for, by their generation; the newest bubble that went up for each key.
+    // The bubbles the server may still answer for, by their generation; while one is, the newest bubble that went up
+    // for its key since.
     let mut coming: HashMap<u64, Coming> = HashMap::new();
     let mut newest: HashMap<Key, u64> = HashMap::new();
     let mut generation = 0;
@@ -1532,7 +1531,7 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                         tracing::warn!("replacing a notification: the notification server did not answer");
                     }
                 }
-                let closed_first = closed_first.map(|o| o.generation);
+                let closed_first = closed_first.is_some();
                 let shown = match &terminal {
                     Some(t) => Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble)),
                     None => {
@@ -1544,7 +1543,13 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                                 tracing::warn!("notification: the notification server did not answer in time (kept if it comes later)");
                                 *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = None;
                                 generation += 1;
-                                coming.insert(generation, Coming { key, at, on_click, withdrawn: false, closed_first });
+                                // (One closed to make room for it is gone: nothing closes it again.)
+                                if let Some(old) = key.as_ref().filter(|_| closed_first).and_then(|k| live.remove(k)) {
+                                    if let Some(w) = old.waiter {
+                                        w.abort();
+                                    }
+                                }
+                                coming.insert(generation, Coming { key, at, on_click, withdrawn: false });
                                 drop(tokio::spawn(follow(task, back.clone(), generation)));
                                 continue;
                             }
@@ -1568,14 +1573,20 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 // that came in just now is lost with it.)
                 generation += 1;
                 let on = if terminal.is_some() { ClickedOn::Terminal } else { ClickedOn::System };
-                if let Some(key) = &key {
+                if let Some(key) = key.as_ref().filter(|k| still_coming(&coming, k)) {
                     newest.insert(key.clone(), generation);
                 }
                 track(&mut live, &back, key, at, generation, shown, on, on_click);
             }
             Cmd::Late { generation: late, shown } => {
-                let (Some(Coming { key, at, on_click, withdrawn, closed_first }), Some(shown)) = (coming.remove(&late), shown) else { continue };
-                if key.as_ref().and_then(|k| newest.get(k)).is_some_and(|n| *n > late) {
+                let Some(Coming { key, at, on_click, withdrawn }) = coming.remove(&late) else { continue };
+                let superseded = key.as_ref().and_then(|k| newest.get(k)).is_some_and(|n| *n > late);
+                let more = key.as_ref().is_some_and(|k| still_coming(&coming, k));
+                if let Some(k) = key.as_ref().filter(|_| !more) {
+                    newest.remove(k);
+                }
+                let Some(shown) = shown else { continue };
+                if superseded {
                     // (One that took the older bubble's place shows the newer one now: closing it would close that.)
                     let newer = key.as_ref().and_then(|k| live.get(k)).filter(|l| l.generation > late);
                     if !newer.is_some_and(|newer| same_place(shown.as_ref(), newer.shown.as_ref())) {
@@ -1587,13 +1598,12 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                     tracing::debug!("a late notification: read meanwhile, closed");
                 } else {
                     tracing::debug!("a late notification: kept");
-                    if let Some(key) = &key {
+                    if let Some(key) = key.as_ref().filter(|_| more) {
                         newest.insert(key.clone(), late);
                     }
-                    // An older one that came late itself is not the one it replaced: it goes (unless closed for it
-                    // already).
+                    // An older one that came late itself is not the one it replaced: it goes.
                     let older = track(&mut live, &back, key, at, late, shown.clone(), ClickedOn::System, on_click);
-                    if let Some(older) = older.filter(|o| !same_place(shown.as_ref(), o.shown.as_ref()) && closed_first != Some(o.generation)) {
+                    if let Some(older) = older.filter(|o| !same_place(shown.as_ref(), o.shown.as_ref())) {
                         close(older.shown.as_ref(), "closing an older notification").await;
                     }
                 }
@@ -1666,6 +1676,11 @@ fn track(live: &mut HashMap<Key, Live>, back: &mpsc::WeakUnboundedSender<Cmd>, k
         live.insert(key, Live { shown, at, generation, waiter });
     }
     older
+}
+
+/// Whether a bubble for `key` is still on its way.
+fn still_coming(coming: &HashMap<u64, Coming>, key: &Key) -> bool {
+    coming.values().any(|c| c.key.as_ref() == Some(key))
 }
 
 /// Whether bubbles `a` and `b` of one conversation take one place on screen (the server put one in the other's, by its
@@ -2956,6 +2971,21 @@ mod tests {
         n.withdraw(&Key { workspace: 0, channel: "D1".into() });
         n.settled().await;
         assert_eq!(server.calls().pop(), Some(fake::Call::Close(2)), "the late one is the conversation's");
+    }
+
+    /// macOS: the bubble closed to make room for a late one is not closed again when its conversation is read before
+    /// the late one comes (the read closes that one when it does).
+    #[tokio::test]
+    async fn a_bubble_closed_for_a_late_one_is_not_closed_again() {
+        let (n, server) = Notifier::fake();
+        server.set_closes_to_replace(true);
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.settled().await;
+        server.set_slow(SERVER_WAIT * 2);
+        n.show(note("D1", "2.0", None, "two"), None, Box::new(|_| {}));
+        n.withdraw(&Key { workspace: 0, channel: "D1".into() });
+        n.all_came().await;
+        assert_eq!(server.calls(), [shown(None, "one"), fake::Call::Close(1), shown(Some(1), "two"), fake::Call::Close(2)]);
     }
 
     /// A huddle's start goes once the huddle is over (#15); a message's bubble stays.
