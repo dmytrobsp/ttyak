@@ -142,15 +142,16 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 |---|---|
 | Rust, all crates | `cargo test` |
 | Windows compiles | `cargo build --target x86_64-pc-windows-gnu`, `cargo test --no-run --target x86_64-pc-windows-gnu` |
-| Tool tests (as CI runs them) | the `Tool tests` line of `.github/workflows/ci.yml`: `python3 -m unittest tools/test_check_name.py …` |
+| Tool tests (as CI runs them) | exactly the `Tool tests` step of `.github/workflows/ci.yml`, spelled out in [setup.md](setup.md#2-test-tools) |
 | Packaging | `python3 -m unittest discover -s packaging -p 'test_*.py'` |
 | Site | `python3 -m unittest discover -s tools/site -p 'test_*.py'` and `node --test "tools/site/*.test.mjs"` |
 | Names, links | `sh tools/check-name.sh .`, `python3 tools/wiki/check_links.py` |
 | Clean checkout per distro | `tools/container-build.sh debian\|ubuntu\|fedora\|arch` (podman) |
 | Message-pane cost | `cargo test --release --target-dir <scratch> -p ttyak build_lines_cost -- --ignored --nocapture` |
 
-A new tool test is added to CI's `Tool tests` line in the same commit. Test counts quoted in docs come from one crate's
-`test result` line (`cargo test -p ttyak 2>&1 | grep 'test result'`), not a workspace-wide grep.
+A new tool test is added to CI's `Tool tests` step in the same commit (and to its copy in setup.md). Pages that stay
+current (setup, PROGRESS) quote no test counts: they rot. A ledger or release record that quotes one takes it from one
+crate's `test result` line (`cargo test -p ttyak 2>&1 | grep 'test result'`), not a workspace-wide grep.
 
 ## Verification and honesty
 

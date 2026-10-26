@@ -18,7 +18,7 @@ Web client bundles: `ttyak ctl get https://app.slack.com/client/<TEAM> client.ht
 `__cf` map in it → `https://a.slack-edge.com/bv1-13/gantry-v2-async-<name>.<hash>.min.js`; entry: `client-boot.<hash>.min.js`
 (see the end of client.html). The CDN serves gzip: decompress before searching. Details: `../docs/protocol/huddles.md`.
 
-- `cdp.mjs PORT cookie|goto|eval|click|shot ARG` — drive a test Chrome over the DevTools protocol (Node 24, no
+- `cdp.mjs PORT cookie|goto|eval|click|shot ARG` — drive a test Chrome over the DevTools protocol (node 22 or newer, no
   packages). Real Slack web client as B with a fake camera/mic (never real devices):
   `flatpak run com.google.Chrome --user-data-dir=$HOME/.var/app/com.google.Chrome/ttyak-fakecam
   --remote-debugging-port=9333 --use-fake-device-for-media-stream --use-fake-ui-for-media-stream --no-first-run about:blank`,

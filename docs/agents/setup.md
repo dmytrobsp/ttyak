@@ -37,8 +37,8 @@ cargo test --no-run --target x86_64-pc-windows-gnu
 Disk: `target/` grows to tens of GB, the Windows cross-build directory alone past 10 GB.
 
 *Checked here*: rustup 1.29.1, rustc 1.98.1 stable; targets include `x86_64-pc-windows-gnu`; MinGW gcc 13 (`mingw-w64`
-and its x86_64 packages installed); `cargo build` and the Windows `cargo build` succeeded; `cargo test` passed (1024
-tests in `ttyak`, plus the other crates). The package list for a fresh Debian, Ubuntu, Fedora and Arch is checked by
+and its x86_64 packages installed); `cargo build` and the Windows `cargo build` succeeded; `cargo test` passed (the whole
+suite). The package list for a fresh Debian, Ubuntu, Fedora and Arch is checked by
 `tools/container-build.sh` (below); a fresh install of rustup plus MinGW on a new desktop is NOT tried.
 
 ## 2. Test tools
@@ -46,10 +46,22 @@ tests in `ttyak`, plus the other crates). The package list for a fresh Debian, U
 | Tool | What for | Check |
 |---|---|---|
 | Python 3 (3.12 here; standard library only) | the tool, packaging and site tests ([Tests](workflow.md#tests)) | `python3 --version` |
-| node 22 or newer (no packages) | the site's tests (`node --test "tools/site/*.test.mjs"`; Pages uses 22), `tools/cdp.mjs` (written for 24) | `node --version` |
+| node 22 or newer (no packages) | the site's tests (`node --test "tools/site/*.test.mjs"`; Pages uses 22), `tools/cdp.mjs` (it needs node's built-in `fetch` and `WebSocket`, both there from 22) | `node --version` |
 | podman | `tools/container-build.sh`, and container steps inside some tests (below) | `podman --version`, `podman images` |
 | dash, bash; fish, wget, shasum | `tools/install/test_install_sh.py` runs `site/install.sh` under dash and bash (each one present); fish, wget and shasum each enable a particular test (the fish PATH line, the wget download, the shasum check) | `command -v dash bash fish wget shasum` |
 | `ssh` to a Windows machine | `tools/install/test_install_ps1.py` (not in CI; skipped when the machine can't be reached) | see [A Windows machine](#a-windows-machine) |
+
+**The tool tests** are exactly the `Tool tests` step of `.github/workflows/ci.yml`; at the time of writing:
+
+```sh
+python3 -m unittest tools/test_check_name.py tools/test_move_to_ttyak.py tools/install/test_install_sh.py \
+  tools/signing/test_apple_csr.py tools/publish/test_aur_key.py tools/wiki/test_check_links.py \
+  tools/wiki/test_publish.py tools/wiki/test_readme.py tools/docs/test_split_history.py \
+  tools/vm/test_vm_scripts.py
+```
+
+When the two differ, `ci.yml` is right. The packaging tests run apart:
+`python3 -m unittest discover -s packaging -p 'test_*.py'`; the site's as in [Tests](workflow.md#tests).
 
 The container images the tests use (pulled on first use; `podman pull <image>` ahead of time saves waiting):
 
@@ -66,8 +78,8 @@ For live checks on this machine the helpers in [live-testing.md](live-testing.md
 with remote control, PipeWire (`pw-record`, `pactl`), `wl-clipboard`, D-Bus tools (`dbus-monitor`, `gdbus`) and
 ffmpeg. Another desktop needs other recipes for hidden windows and input; none is written yet.
 
-*Checked here*: Python 3.12.3, node v24.22.0, podman 4.9.3. CI's `Tool tests` line (169 tests), the packaging tests
-(38, the `makepkg` one in podman) and the site's tests (206 Python, 49 node) passed; the PowerShell image was pulled
+*Checked here*: Python 3.12.3, node v24.22.0, podman 4.9.3. CI's `Tool tests` step, the packaging tests (the
+`makepkg` one in podman) and the site's tests (Python and node) passed; the PowerShell image was pulled
 and ran the `tools/vm` parse check. `test_install_ps1.py` was not run for this page (it uses the Windows machine).
 `container-build.sh` was not re-run for this page.
 
