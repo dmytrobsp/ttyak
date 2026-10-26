@@ -5,8 +5,8 @@ smooth as in Slack's own apps. Here is why:
 
 - Slack's own sign-in ends by handing the session to the Slack app through an "open in Slack" link (a `slack://`
   link). ttyak is not that app and cannot take such links.
-- Slack has no sign-in for apps like ttyak. ttyak talks to Slack the way the web client in your browser does, with a
-  browser session: an `xoxc-…` token plus the `d` cookie.
+- ttyak doesn't use Slack's sign-in for apps (that would need an app installed in each workspace). It talks to Slack
+  the way the web client in your browser does, with a browser session: an `xoxc-…` token plus the `d` cookie.
 
 So ttyak gets a browser session in one of three ways:
 
@@ -47,7 +47,8 @@ unless you name another with `--profile NAME`: see [Profiles and sessions](Profi
    enter the code on the phone.
 3. Type the code into ttyak's `Code: ___-___` prompt (a dash or a space you type doesn't matter). ttyak confirms it
    with Slack itself and lists the workspaces of that address. A wrong or expired code asks again (the phone can ask
-   for a new one); after too many tries Slack makes you wait.
+   for a new one). After too many tries Slack makes you wait: ttyak says so (`Slack says too many tries — wait a
+   while, then ask for a new code`) and leaves the code way.
 4. Mark the workspaces to sign in to (when only one can be used, it is marked already) and press Enter.
 
 Workspaces that require SSO or two-factor are shown dim, `needs your browser (SSO)` or `needs your browser
@@ -78,7 +79,7 @@ browser through a remote desktop (such as RDP) while ttyak runs in the SSH sessi
 ## Paste a cookie
 
 ttyak asks for the value of the `d` cookie for `slack.com`, from a browser where you are signed in (its developer
-tools → Application → Cookies). What you paste is not shown, only how many characters; a leading `d=` is dropped.
+tools → Application → Cookies; Firefox: Storage → Cookies). What you paste is not shown, only how many characters; a leading `d=` is dropped.
 Slack then lists the workspaces that cookie is signed in to: mark them and press Enter. A cookie that is signed in
 nowhere is asked for again.
 
@@ -114,7 +115,7 @@ you are signed in to Slack with, without the guide.
 Without a terminal ttyak asks nothing:
 
 - `ttyak auth login --workspace acme.slack.com` reads the value of the `d` cookie for `slack.com` from standard input
-  (sign in in any browser, then devtools → Application → Cookies). `TTYAK_COOKIE_D` or `--cookie VALUE` give it
+  (sign in in any browser, then devtools → Application → Cookies; Firefox: Storage → Cookies). `TTYAK_COOKIE_D` or `--cookie VALUE` give it
   directly (`--cookie` ends up in your shell history: prefer the variable or standard input). Either way ttyak fetches
   the token itself and checks it with `auth.test`.
 - `--from-browser` works without a terminal too: it takes the profile used most recently.
