@@ -182,15 +182,21 @@ impl Cached {
     /// What the last read found (None: none is back yet), at once; `read` starts on a thread of its own at `now` when a
     /// read is due and none is under way.
     fn get(&self, now: std::time::Instant, read: impl FnOnce() -> Option<i32> + Send + 'static) -> Option<Option<i32>> {
+        self.get_spawning(now, read, |reader| std::thread::Builder::new().name("notification setting".into()).spawn(reader).map(drop))
+    }
+
+    /// As [`Cached::get`], the read's thread started by `spawn` (tests: one that fails).
+    fn get_spawning(&self, now: std::time::Instant, read: impl FnOnce() -> Option<i32> + Send + 'static, spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<()>) -> Option<Option<i32>> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if !state.reading && needs_refresh(now, state.started, self.every) {
             (state.reading, state.started) = (true, Some(now));
-            let done = CachedRead { state: self.state.clone(), value: None };
-            // (The whole `done` moves to the thread, not just its field: it must not drop here, under the lock.)
-            let reader = std::thread::Builder::new().name("notification setting".into()).spawn(move || {
-                let mut done = done;
+            // (The guard is made on the reader's thread: a reader that never runs is dropped here, under the lock, and
+            // must not lock again.)
+            let shared = self.state.clone();
+            let reader = spawn(Box::new(move || {
+                let mut done = CachedRead { state: shared, value: None };
                 done.value = read();
-            });
+            }));
             if let Err(e) = reader {
                 tracing::debug!("notification setting not read: {e}");
                 state.reading = false;
@@ -2758,6 +2764,30 @@ mod tests {
         back(now, Some(1));
         back(now + SETTING_REFRESH, Some(2));
         assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    /// A read whose thread can't be started leaves nothing under way and never blocks the asker: the next due ask reads
+    /// (not every ask: tried again after the period, as a read that ran).
+    #[test]
+    fn a_read_that_never_started_blocks_nothing() {
+        let cache = Arc::new(Cached::new(SETTING_REFRESH));
+        let now = std::time::Instant::now();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let asker = cache.clone();
+        std::thread::spawn(move || {
+            let failed = |reader: Box<dyn FnOnce() + Send>| {
+                drop(reader);
+                Err(io::Error::other("no threads left"))
+            };
+            let _ = tx.send(asker.get_spawning(now, || Some(5), failed));
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(None), "answered at once");
+        let later = now + SETTING_REFRESH;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cache.get(later, || Some(5)).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(cache.get(later, || Some(5)), Some(Some(5)), "the next due ask reads");
     }
 
     /// A read that panics counts as one that found nothing, and doesn't stop the next read.
