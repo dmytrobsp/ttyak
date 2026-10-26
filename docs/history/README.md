@@ -1,9 +1,16 @@
 # History
 
 The status table of the old root `PROGRESS.md` and its bug log, kept as they were. Only the line breaks changed: each
-row is now a section, wrapped at about 120 columns. `python3 tools/docs/split_history.py PROGRESS.md docs/history
---check` compares the whitespace-normalised text of this archive with the old rows and bug log, and fails on any
-difference. (That check needs the old `PROGRESS.md`; it is in git history, before the rewrite.)
+row is now a section, wrapped at about 120 columns. Private names were replaced (see below).
+
+    python3 tools/docs/split_history.py PROGRESS.md docs/history --check --redact <map>
+
+compares the whitespace-normalised text of this archive with the old rows and bug log (after the same replacement) and
+fails on any difference. The old `PROGRESS.md` is in git history, before the rewrite.
+
+The archive was redacted with the maintainer's private map, which is not in the repository, so the check can only be
+re-run where that map exists. The map's `__keep__` list names the public addresses that are left alone
+(`github.com/<owner>/ttyak`, `<owner>.github.io`, the winget id).
 
 | File | Rows | Era |
 |---|---|---|
