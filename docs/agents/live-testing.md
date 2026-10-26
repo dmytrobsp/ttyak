@@ -18,6 +18,8 @@ this machine has.
    (`--profile <A> ctl api dnd.info`; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
 5. Decide what the check must show and cap its waits at about 10 minutes. Only run experiments whose answer changes
    what gets built; report interim status rather than sit in a long wait.
+6. Use absolute paths in every command (an agent shell's working directory resets between commands), and keep the
+   fake home, recordings and captures in the scratch folder — a reboot wipes it, so record results elsewhere.
 
 ## The test workspace and profiles
 
@@ -75,7 +77,8 @@ HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/config" XDG_DATA_HOME="$FAKE/data" XDG_CACHE
   printed) into a temporary profile with a name of its own.
 - The log is `<cache>/ttyak/<profile>/ttyak.log`; `TTYAK_LOG=ttyak=debug` for detail (exactly that, not `debug`).
 - Debug builds read test variables: `TTYAK_FAIL=<method>,…` (those Web API calls fail), `TTYAK_DAYS_LATER=N`,
-  `TTYAK_HUDDLE_DROP=N`, `TTYAK_NOTIFY_ROUTE=system` (see [CONTRIBUTING.md](../../CONTRIBUTING.md)).
+  `TTYAK_HUDDLE_DROP=N` (see [CONTRIBUTING.md](../../CONTRIBUTING.md)); any build reads `TTYAK_NOTIFY_ROUTE=system`
+  (notifications through the system's notifier, see the wiki's [Settings](../wiki/Settings.md)).
 - If a test really must touch a real folder (a draft, `settings.toml`), back the file up first and restore it; never
   remove a folder, and never open the maintainer's own drafts. Quit ttyak with Ctrl+Q before closing its window, or a
   cleared composer leaves a stale draft.
@@ -151,7 +154,7 @@ window alive when testing what happens after quit.
   share, a second attendee `<id>#content`); A receives with `--record-video DIR` (PNG frames) or the TUI's F8 view.
   Measure CPU on an optimised build in a scratch target dir.
 - **Camera**: only a virtual one (v4l2loopback) that the maintainer sets up, fed by `ffmpeg testsrc2`, opened by
-  explicit name.
+  explicit name. One feeder at a time: a second fails with `VIDIOC_G_FMT`.
 - **Screen sharing** captures the real screen: only with the maintainer at the picker, told just before, choosing a
   single harmless window; recordings deleted right after. If they are not at the picker, cancel it
   (`hyprctl dispatch closewindow class:hyprland-share-picker`); never choose for them.

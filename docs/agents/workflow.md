@@ -92,6 +92,13 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 
 - **Small verified steps**: one focused change, verified, committed; then the next. Run autonomously through an agreed
   plan or queue; check in only at a genuine fork. Broad multi-feature steps get stopped and lose more.
+- **A refused action** (a permission prompt, a safety check stopping a step): stop, check `git status` for partial
+  writes, explain what was refused and why it was needed, and give the maintainer the exact command to run or allow.
+  Never reword, split or retry it to get around the refusal; the maintainer's go-ahead does not override a safety
+  check either.
+- **The shell's working directory resets** between commands in agent shells: use absolute paths in every command.
+  The scratch folder (often under `/tmp`) is wiped by a reboot: keep nothing there that is needed later — what must
+  survive goes into the ledger or a commit.
 - **Test first**: write the failing test, run it and show the RED, then make it pass. Tool scripts (`tools/`) too.
 - **The whole `cargo test`** before every Rust commit; never commit on red (a scripted chain checks
   `cargo test 2>&1 | grep -q FAILED && exit 1` first). Windows must compile:
@@ -154,11 +161,14 @@ A new tool test is added to CI's `Tool tests` line in the same commit. Test coun
   deleting things on GitHub and repository settings need the maintainer's word.
 - **CI**: `.github/workflows/ci.yml` ignores `**.md`, `docs/**`, `site/**`, `tools/site/**` and the issue templates, so
   docs-only pushes run nothing — keep it so, and give any new workflow that runs on push the same `paths-ignore`
-  (unless it reads docs). Any push touching `crates/`, `tools/` (outside `tools/site/`), `packaging/` or the workflows
-  runs CI: **watch it after every such push, before the next step** — one waiter per run
+  (unless it reads docs). Any push touching a path outside that list runs CI — `crates/`, `tools/` (outside
+  `tools/site/`), `packaging/`, `vendor/`, the workflows, but also `Cargo.toml`, `Cargo.lock`, `.gitignore`, the
+  licences: **watch it after every such push, before the next step** — one waiter per run
   (`gh run watch <id> --exit-status`, with the run id checked non-empty and a time cap). A push touching `site/**`,
-  `tools/site/**` or the paths in `pages.yml` deploys the site: watch the Pages run. Every job and network step gets a
-  `timeout-minutes`.
+  `tools/site/**` or the paths in `pages.yml` deploys the site: watch the Pages run.
+- **Timeouts**: every new or changed job, and every network step in it, gets a `timeout-minutes` (a hung apt step
+  once sat for 80 minutes under the 6-hour default). `ci.yml`, `release.yml` and `install-check.yml` have them;
+  `pages.yml` does not yet.
 - **A history rewrite** (only with the maintainer's word): a backup branch and bundle first; rewrite only the range
   needed; remap commit hashes quoted in docs (pair old and new commits by position and subject) and check each is an
   ancestor of `master`; push with `--force-with-lease=master:<old sha>`; drop `.git/refs/original`.

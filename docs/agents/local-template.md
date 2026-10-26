@@ -1,8 +1,9 @@
 # AGENTS.local.md — template
 
-Copy this file to `AGENTS.local.md` at the repository root and fill it in. That file is git-ignored: it holds what is
-specific to one machine and one maintainer, and it is never committed, quoted in a tracked file, or pasted into an
-issue. Agents read it after [AGENTS.md](../../AGENTS.md); without it they do no live work.
+Copy the block below to `AGENTS.local.md` at the repository root, `chmod 600 AGENTS.local.md`, and fill it in. That
+file is git-ignored: it holds what is specific to one machine and one maintainer, and it is never committed, quoted in
+a tracked file, or pasted into an issue. Agents read it after [AGENTS.md](../../AGENTS.md); without it they do no
+live work.
 
 Each section says what it is for, then gives example values (made up). Replace them; delete a section's lines that
 don't apply and say so ("no Mac on this machine"). How to set things up is in `docs/agents/setup.md`.
@@ -27,8 +28,8 @@ What it is for: knowing which workspace and which accounts the tests act on, and
 
 - Workspace: `example-testbed` (team id `T0000000000`), on Slack's free plan (reports `team.plan = "std"`).
 - A: display name `tester-a`, user id `U0000000001`. B: `tester-b`, `U0000000002`.
-- Standing state that affects tests: A has a notification schedule (quiet 17:00–09:00 on weekdays); restore it after
-  any DND change.
+- Standing state that affects tests: B has a do-not-disturb snooze every night 23:00–07:00; restore it after any DND
+  change.
 - Channels the tests use: `#tests`, `#huddles`; the DM between A and B.
 - Permissions the maintainer gave: "DND may be changed on A and B and restored"; "posts need not be deleted".
 

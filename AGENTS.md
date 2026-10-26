@@ -73,7 +73,10 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
 - **Git identity**: every clone and every new repository (wiki, tap, bucket, scratch) commits with this repository's
   own identity, set repo-locally — never a machine's global one (it may be someone's work identity).
 - **Public wording** in commits, issues, docs, release notes: no test-account names, emails or Slack ids, no
-  workspace names, no host names or addresses, no one's work identity, nothing from the private lists.
+  workspace names, no host names or addresses, no one's work identity, no one's real or legal name (the maintainer
+  appears only as their GitHub handle), nothing from the private lists.
+- **A refused action** (a permission prompt, a safety check): stop, check `git status` for partial writes, explain,
+  and give the maintainer the exact command. Never reword or retry it to get around the refusal.
 - **Security findings** never go into a public file, issue or commit message: open a **GitHub private security
   advisory** (the repository's Security tab → Advisories → New draft security advisory) and tell the maintainer.
   Commits that fix one say "hardening", without describing an exploit.
