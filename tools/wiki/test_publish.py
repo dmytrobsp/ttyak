@@ -46,12 +46,12 @@ class Publish(unittest.TestCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", msg)
 
-    def run_publish(self, *args, extra_env=None):
+    def run_publish(self, *args, extra_env=None, cwd=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_AUTHOR", "GIT_COMMITTER"))}
         env.update({"TTYAK_WIKI_URL": str(self.bare), "TTYAK_SITE_FORBIDDEN": str(self.forbidden),
                     "TMPDIR": str(self.tmp), "GIT_CONFIG_GLOBAL": str(self.global_cfg), "GIT_CONFIG_NOSYSTEM": "1",
                     "HOME": str(self.tmp), **(extra_env or {})})
-        return subprocess.run(["bash", str(SCRIPT), *args], cwd=self.repo, capture_output=True, text=True, env=env)
+        return subprocess.run(["bash", str(SCRIPT), *args], cwd=cwd or self.repo, capture_output=True, text=True, env=env)
 
     def wiki_log(self):
         r = subprocess.run(["git", "--git-dir", str(self.bare), "log", "--format=%s"], capture_output=True, text=True)
@@ -163,6 +163,79 @@ class Publish(unittest.TestCase):
         got = subprocess.run(["git", "config", "--local", "--get-regexp", "^credential\\."], cwd=wd,
                              capture_output=True, text=True)
         self.assertEqual(got.stdout, "")
+
+    def assert_repo_untouched(self, head, r):
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr)
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+        self.assertEqual((self.repo / "docs" / "wiki" / "Home.md").read_text(), "# Home\nuncommitted\n")
+        self.assertEqual(self.wiki_log(), "")
+
+    def test_refuses_wiki_dir_dot(self):
+        # `--wiki-dir .` from the repo must not mirror into the repo itself, even when its origin is the wiki URL
+        git(self.repo, "remote", "add", "origin", str(self.bare))
+        head = git(self.repo, "rev-parse", "HEAD")
+        self.write("Home", "# Home\nuncommitted\n")
+        r = self.run_publish("--wiki-dir", ".", "--push")
+        self.assert_repo_untouched(head, r)
+
+    def test_refuses_wiki_dir_inside_repo(self):
+        head = git(self.repo, "rev-parse", "HEAD")
+        self.write("Home", "# Home\nuncommitted\n")
+        r = self.run_publish("--wiki-dir", str(self.repo / "sub"))
+        self.assert_repo_untouched(head, r)
+        self.assertFalse((self.repo / "sub").exists())
+
+    def test_relative_wiki_dir_is_from_the_callers_folder(self):
+        # from docs/, `../clone` is repo/clone (inside the repo: refused), not a folder beside the repo
+        head = git(self.repo, "rev-parse", "HEAD")
+        self.write("Home", "# Home\nuncommitted\n")
+        r = self.run_publish("--wiki-dir", "../clone", cwd=self.repo / "docs")
+        self.assert_repo_untouched(head, r)
+        self.assertFalse((self.tmp / "clone").exists())
+        self.assertFalse((self.repo / "clone").exists())
+
+    def test_refuses_wiki_dir_holding_the_repo(self):
+        head = git(self.repo, "rev-parse", "HEAD")
+        self.write("Home", "# Home\nuncommitted\n")
+        r = self.run_publish("--wiki-dir", str(self.tmp))
+        self.assert_repo_untouched(head, r)
+
+    def test_refuses_reused_clone_with_another_origin(self):
+        other_bare = self.tmp / "other.git"
+        other = self.tmp / "other"
+        git(self.tmp, "init", "-q", "--bare", str(other_bare))
+        git(self.tmp, "clone", "-q", str(other_bare), str(other))
+        (other / "keep.txt").write_text("keep\n", encoding="utf-8")
+        git(other, "add", "-A")
+        git(other, "commit", "-q", "-m", "other")
+        git(other, "push", "-q", "origin", "HEAD:master")
+        head = git(other, "rev-parse", "HEAD")
+        r = self.run_publish("--wiki-dir", str(other), "--push")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr)
+        self.assertIn("origin", r.stderr)
+        self.assertEqual(git(other, "rev-parse", "HEAD"), head)
+        self.assertEqual((other / "keep.txt").read_text(), "keep\n")
+        self.assertEqual(self.wiki_log(), "")
+        r = subprocess.run(["git", "--git-dir", str(other_bare), "log", "--format=%s", "master"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout, "other\n")
+
+    def test_reused_clone_publishes_and_pushes_to_the_wiki(self):
+        wd = self.tmp / "clone"
+        r = self.run_publish("--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.run_publish("--ref", "master", "--wiki-dir", str(wd), "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("new", self.wiki_file("Home.md"))
+        self.assertTrue(self.wiki_log().startswith("wiki: docs/wiki at master ("), self.wiki_log())
+
+    def test_default_clone_is_said_to_be_deleted(self):
+        r = self.run_publish()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("deleted on exit", r.stdout)
+        self.assertIn("--wiki-dir", r.stdout)
 
     def test_refuses_without_identity(self):
         git(self.repo, "config", "--unset", "user.name")

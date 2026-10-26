@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Publish docs/wiki/ at a ref to the GitHub wiki repo: export, check links and privacy, mirror, commit, push on --push.
 # usage: publish.sh [--ref REF] [--push] [--wiki-dir DIR]     (REF defaults to the latest v* tag; first publish: --ref master)
+# --wiki-dir DIR keeps the wiki clone (relative to where you run it; outside the repo). A folder that is already a git
+# clone is reused only when its origin is the wiki remote; local edits there make its `git pull --ff-only` fail.
+# Without --wiki-dir the clone is a temp folder, deleted on exit.
 # The wiki commit is made with the main repo's own user.name/user.email (never the global identity); the wiki remote
 # is derived from the repo's origin URL (keeps the user@ part the credential helper matches).
 # Environment: TTYAK_WIKI_URL overrides the wiki remote (tests use a local bare repo).
@@ -29,7 +32,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-repo="$(git rev-parse --show-toplevel)"
+repo="$(cd "$(git rev-parse --show-toplevel)" && pwd -P)"
+# --wiki-dir is the caller's path: make it absolute (symlinks resolved) before leaving the caller's folder, and keep it
+# apart from the repo, so the mirror's delete-every-tracked-file never runs on the repo itself.
+if [ -n "$wiki_dir" ]; then
+  wiki_dir="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$wiki_dir")"
+  case "$wiki_dir/" in "${repo%/}/"*) echo "refusing: --wiki-dir $wiki_dir is the repo or inside it" >&2; exit 1 ;; esac
+  case "$repo/" in "${wiki_dir%/}/"*) echo "refusing: --wiki-dir $wiki_dir holds the repo" >&2; exit 1 ;; esac
+fi
 cd "$repo"
 if [ -z "$ref" ]; then
   ref="$(git describe --tags --abbrev=0 --match 'v*')" || { echo "no v* tag found; use --ref" >&2; exit 1; }
@@ -90,8 +100,12 @@ copy_credentials() {
   done < <(git -C "$repo" config --local -z --get-regexp '^credential\.' || true)
 }
 if [ -d "$wiki_dir/.git" ]; then
+  have="$(git -C "$wiki_dir" remote get-url origin 2>/dev/null || true)"
+  if [ "$have" != "$url" ]; then
+    echo "refusing: --wiki-dir $wiki_dir is a git clone whose origin is '$have', not the wiki remote $url" >&2; exit 1
+  fi
   copy_credentials
-  if [ -n "$(git -C "$wiki_dir" ls-remote origin)" ]; then git -C "$wiki_dir" pull -q --ff-only; fi
+  if [ -n "$(git -C "$wiki_dir" ls-remote "$url")" ]; then git -C "$wiki_dir" pull -q --ff-only; fi
 else
   git clone -q "$url" "$wiki_dir"
   copy_credentials
@@ -111,8 +125,12 @@ git -C "$wiki_dir" -c "user.name=$id_name" -c "user.email=$id_email" commit -q -
 git -C "$wiki_dir" show --stat HEAD
 git -C "$wiki_dir" show HEAD
 if [ "$push" = 1 ]; then
-  git -C "$wiki_dir" push -q origin HEAD
+  git -C "$wiki_dir" push -q "$url" HEAD
   echo "pushed"
 else
-  echo "not pushed (use --push); the clone is $wiki_dir"
+  if [ "$wiki_dir" = "$work/wiki" ]; then
+    echo "not pushed (use --push); the clone $wiki_dir is a temp folder, deleted on exit (--wiki-dir DIR keeps one)"
+  else
+    echo "not pushed (use --push); the clone is $wiki_dir"
+  fi
 fi
