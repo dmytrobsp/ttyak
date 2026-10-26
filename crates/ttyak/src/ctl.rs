@@ -110,7 +110,7 @@ pub enum Ctl {
         #[arg(long)]
         camera: Option<String>,
         /// Share your screen: in a Wayland session the desktop asks what to share (nothing is
-        /// captured before you choose); elsewhere the whole screen.
+        /// captured before you choose); elsewhere the main screen.
         #[arg(long)]
         share_screen: bool,
     },

@@ -197,11 +197,9 @@ pub const WORDS: &[&str] = &["volume", "mic gain", "threshold", "noise suppressi
 
 /// The audio settings in a line, shortened when `width` is too narrow for the long form.
 pub fn audio_summary(a: &super::settings::Audio, width: usize) -> String {
-    let long_on = |b: bool| if b { tr("on") } else { tr("off") };
-    let long_threshold = a.speaking_threshold_db.map_or_else(|| tr("off").into_owned(), |d| format!("{d} dB"));
-    let threshold = a.speaking_threshold_db.map_or("off".to_string(), |d| format!("{d} dB"));
-    let on = |b: bool| if b { "on" } else { "off" };
-    let long = format!(" {} {}% · {} {}% · {} {long_threshold} · {} {} · {} {} · {}", tr("volume"), a.huddle_volume, tr("mic gain"), a.mic_gain, tr("threshold"), tr("noise suppression"), long_on(a.noise_suppression), tr("echo cancellation"), long_on(a.echo_cancellation), tr("F6 → Audio & video"));
+    let on = |b: bool| if b { tr("on") } else { tr("off") };
+    let threshold = a.speaking_threshold_db.map_or_else(|| tr("off").into_owned(), |d| format!("{d} dB"));
+    let long = format!(" {} {}% · {} {}% · {} {threshold} · {} {} · {} {} · {}", tr("volume"), a.huddle_volume, tr("mic gain"), a.mic_gain, tr("threshold"), tr("noise suppression"), on(a.noise_suppression), tr("echo cancellation"), on(a.echo_cancellation), tr("F6 → Audio & video"));
     if long.chars().count() <= width {
         long
     } else {

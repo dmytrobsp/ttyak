@@ -231,7 +231,7 @@ pub const OWN: &[(&str, &str, &str)] = &[
     ("/status", "[:emoji:] [text] [for 30m|2h|1d|today] | clear", "set or clear your status"),
     ("/away", "", "appear away"),
     ("/active", "", "appear active"),
-    ("/dnd", "[30m|off|schedule …]", "pause notifications, or resume them"),
+    ("/dnd", "[30m|2h|1d|off|schedule …]", "pause notifications, or resume them"),
     ("/workspace", "[name]", "list this profile's workspaces, or switch"),
     ("/prefs", "", "preferences (also F6)"),
 ];
@@ -279,7 +279,7 @@ pub fn parse(text: &str, mrkdwn: &str) -> Option<Result<Command, String>> {
         "/dnd" if rest.split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case("schedule")) => parse_schedule(&rest["schedule".len()..]),
         "/dnd" => match minutes(rest) {
             Some(m) => Ok(Command::Dnd(DndAction::Pause(m))),
-            None => Err("usage: /dnd (pause 30 min, or resume) · /dnd 30m|2h|1d · /dnd off".into()),
+            None => Err("usage: /dnd (pause 30 min, or resume) · /dnd 30m|2h|1d · /dnd off · /dnd schedule …".into()),
         },
         "/section" => match rest.split_once(char::is_whitespace).unwrap_or((rest, "")) {
             ("rename", name) if !name.trim().is_empty() => Ok(Command::SectionRename(name.trim().to_string())),

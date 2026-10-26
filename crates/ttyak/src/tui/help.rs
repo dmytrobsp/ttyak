@@ -21,7 +21,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/star · /section rename|delete", "star this conversation · rename / delete its section"),
     ("/status [:emoji:] [text] [for 30m|2h|1d|today]", "set your status · /status clear"),
     ("/away · /active", "appear away / active"),
-    ("/dnd [30m|off|schedule …]", "pause notifications (alone: 30 min, or resume)"),
+    ("/dnd [30m|2h|1d|off|schedule …]", "pause notifications (alone: 30 min, or resume)"),
     ("/workspace [name]", "list the profile's workspaces or switch"),
     ("/prefs", "preferences (also F6)"),
     ("/remind, /giphy, … any other", "run by Slack (its answer only you see); a leading space sends it as text"),
@@ -128,6 +128,10 @@ mod tests {
                 assert_eq!(*help_what, *what, "the same words for /dm");
             }
         }
+        let dnd = COMMANDS.iter().find(|(c, _)| c.starts_with("/dnd")).unwrap().0;
+        assert_eq!(dnd, "/dnd [30m|2h|1d|off|schedule …]");
+        let err = super::super::commands::parse("/dnd x", "/dnd x").unwrap().unwrap_err();
+        assert!(err.contains("30m|2h|1d") && err.contains("off") && err.contains("schedule …"), "{err}");
         let dm = COMMANDS.iter().find(|(c, _)| c.starts_with("/dm")).unwrap().1;
         let max = super::super::commands::MAX_GROUP.to_string();
         assert!(dm.contains(&format!("up to {max} other people")), "{dm}");
@@ -137,7 +141,7 @@ mod tests {
     #[test]
     fn share_screen_says_when_the_desktop_asks() {
         let a = ACTIONS.iter().find(|a| a.name == "share_screen").unwrap();
-        assert!(a.description.contains("Wayland") && a.description.contains("elsewhere the whole screen"), "{}", a.description);
+        assert!(a.description.contains("Wayland") && a.description.contains("elsewhere the main screen"), "{}", a.description);
     }
 
     #[test]
