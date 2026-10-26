@@ -19,10 +19,14 @@ folder come from `AGENTS.local.md`; nothing here names them.
   user running it; `-Wait` blocks until the program exits (at most `-TimeoutSec`, default 120).
 - `shot.ps1 -Out <png>` captures the whole desktop (DPI-aware). It works only inside the desktop session: run it
   through `insession.ps1 -Wait`, or use `capture.ps1`.
-- `capture.ps1 -Name <png>`: `shot.ps1` through `insession.ps1`, into `shots\` next to the scripts.
+- `capture.ps1 -Name <png> [-User <name>]`: `shot.ps1` through `insession.ps1`, into `shots\` next to the scripts.
 - `wakeshot.ps1 -Out <png>`: `shot.ps1` after waking the display (an idle machine turns it off and captures freeze on
   its last frame); run it through `insession.ps1 -Wait`.
-- `drive.ps1 <keys.ps1 arguments>`: `keys.ps1` in the desktop session, waiting for it (at most 180 s); prints its log.
+- `drive.ps1 [-User <name>] <keys.ps1 arguments>`: `keys.ps1` in the desktop session, waiting for it (at most 180 s);
+  prints its log.
+- **Whose desktop**: `insession.ps1`, `capture.ps1` and `drive.ps1` run in the session of `-User`, by default the user
+  the ssh session runs as. That assumes the ssh user is the one signed in at the console (the test user with automatic
+  sign-in); otherwise pass `-User <the signed-in user>`, or nothing shows.
 - `keys.ps1 -Exe <program> [-Open <file> | -ArgLine "<args>"] [-Keys "<s1>;<s2>;..."] [-WaitSec n] [-Shot <png>]
   [-Leave]` starts the program, brings it to the front, runs the steps 1.5 s apart, optionally captures, then stops it
   (unless `-Leave`). Logs go to `keys.log`, captures and lists to `shots\`. A step is SendKeys text or one of:

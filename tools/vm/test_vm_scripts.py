@@ -95,6 +95,14 @@ class VmScripts(unittest.TestCase):
             self.skipTest(why)
         self.assertEqual(errors, "")
 
+    def test_wrappers_forward_the_user(self):
+        # capture.ps1 and drive.ps1 take an optional -User and hand it to insession.ps1 (default: who runs them)
+        for name in ("capture.ps1", "drive.ps1"):
+            with self.subTest(name):
+                text = open(os.path.join(HERE, name), encoding="ascii").read()
+                self.assertRegex(text, r"(?m)^param\(.*\[string\]\$User = \$env:USERNAME")
+                self.assertRegex(text, r"insession\.ps1'\) -Exe .* -User \$User")
+
     def test_ci_without_powershell_fails(self):
         # a runner image without pwsh must not turn the parse check off unnoticed
         self.assertEqual(without_powershell({"CI": "true"}), "fail")
