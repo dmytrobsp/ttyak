@@ -25,4 +25,5 @@ most status-line messages and the command line's own help stay in English.
 
 ## If it doesn't work
 
-- [Troubleshooting](Troubleshooting)
+- [A locale file is not used](Troubleshooting#a-locale-file-is-not-used)
+- everything else: [Troubleshooting](Troubleshooting)

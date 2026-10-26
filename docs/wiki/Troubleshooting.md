@@ -14,7 +14,7 @@ not listed ttyak yet: its first version is waiting for review.
 
 ## Windows: SmartScreen warns about ttyak.exe
 
-**What you see:** SmartScreen warns the first time you run `ttyak.exe`.
+**What you see:** SmartScreen may warn the first time you run `ttyak.exe`.
 
 **Why:** `ttyak.exe` is not code-signed yet (the macOS builds are signed and notarized).
 
@@ -87,8 +87,9 @@ locked keyring.) More: [From the browser you already use](Signing-in#from-the-br
 
 **What you see:** at start ttyak asks what to do about a signed-out workspace (sign in again, remove it, launch
 anyway). While ttyak runs the status line says `Acme: signed out — ttyak auth login, then restart ttyak` and the rail
-shows the workspace dim with `⊘`. Without a terminal ttyak prints a warning, or stops with `every workspace of this
-profile is signed out — ttyak auth login`.
+shows the workspace dim with `⊘`. Without a terminal ttyak prints
+`warning: Acme (as you): signed out — ttyak auth login` for each signed-out one and starts the others, or, when none
+can start, stops with `every workspace of profile <name> is signed out — ttyak auth login`.
 
 **Why:** Slack ended the session.
 
@@ -187,6 +188,17 @@ workspace.
 writes the whole `settings.toml` again: comments in it are not kept). More:
 [Rebinding keys](Rebinding-keys#when-a-binding-does-not-work), [Settings](Settings#settingstoml).
 
+## A locale file is not used
+
+**What you see:** the interface stays in English after you chose a language in F6 → Language & region → Language, and
+F6 names the file with the reason.
+
+**Why:** the file `locales/<code>.toml` next to `settings.toml` is missing or does not parse. `en` (or empty) is the
+built-in English, and an empty right-hand side in the file stays English too.
+
+**What to do:** save the file under that name (`ttyak ctl locale-template` prints one to start from), fix what the
+reason names, and choose the language again. More: [Translations](Translations#making-one).
+
 ## No desktop notifications
 
 **What you see:** messages arrive, but no desktop notification.
@@ -205,8 +217,8 @@ writes the whole `settings.toml` again: comments in it are not kept). More:
   swaync, mako, dunst, or GNOME's or KDE's own.
 - macOS: notifications come as the terminal app's and show only where that app's notifications are allowed (System
   Settings → Notifications). macOS 26 refuses them for kitty (in kitty ttyak uses kitty's own; not tried on a Mac) and
-  for Finder, used when the terminal's app isn't known. While the screen is shared they go to the Notification Center
-  without a banner.
+  for Finder, used when the terminal's app isn't known. While the screen is shared or mirrored they go to the
+  Notification Center without a banner, unless "Allow notifications when mirroring or sharing the display" is on.
 - Windows: toasts come as Windows PowerShell's; when its notifications are turned off, F6 and `ttyak ctl check` say
   `Windows PowerShell's notifications are turned off (Settings → System → Notifications)`.
 
@@ -265,12 +277,13 @@ More: [The bell](Notifications-and-attention#the-bell), [The tab title](Notifica
 **What you see:** a click opens the message in ttyak, but its window stays behind, or comes forward on another tab, or
 its taskbar button flashes.
 
-**Why:** bringing a window forward is up to the desktop. It can't be done on GNOME under Wayland, in a detached tmux
-session, over `ssh -X`, or with a window manager that refuses focus requests; terminals without remote control (foot,
-Ghostty, Alacritty, kitty without `listen_on`) come forward on the tab last used. On Windows a click in the
-notification center does nothing (only the toast on screen works), Windows may only flash the taskbar button, and
-Windows Terminal's tab is found by its title. On macOS a "Don't Allow" to the automation question leaves the tab as it
-is. A click after 30 minutes, or after ttyak ended, opens nothing.
+**Why:** bringing a window forward is up to the desktop. It can't be done on GNOME under Wayland (only a terminal that
+shows notifications itself brings its window forward there), in a detached tmux session, over `ssh -X`, or with a window
+manager that refuses focus requests; terminals without remote control (foot, Ghostty, Alacritty, kitty without
+`listen_on`) come forward on the tab last used. On Windows a click in the notification center does nothing (only the
+toast on screen works), Windows may only flash the taskbar button, and Windows Terminal's tab is found by its title. On
+macOS a "Don't Allow" to the automation question leaves the tab as it is. A click after 30 minutes, or after ttyak
+ended, opens nothing.
 
 **What to do:** F6 → Notifications → A click, and `ttyak ctl check`, name the route found here, or say "the window
 can't be raised on this desktop". In kitty turn on remote control (`allow_remote_control` and `listen_on`). Keep Mark
