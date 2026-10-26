@@ -3,3 +3,7 @@
 __pycache__/
 # Written by tools/site/fill.py --fetch-release from the latest release (deployed, never committed).
 /site/latest.json
+# The machine's own agent notes (made from docs/agents/local-template.md; private, never committed).
+/AGENTS.local.md
+# Plan scratch (briefs, review packages, reports); a plan's ledger is committed in docs/superpowers/ledgers/.
+/.superpowers/
