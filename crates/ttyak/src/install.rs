@@ -440,11 +440,11 @@ mod tests {
         assert_eq!((Method::Script.uninstall_command(), Method::Rpm.uninstall_command()), (None, Some("sudo dnf remove ttyak")));
         // The full name: it works whether or not Homebrew trusts the tap.
         assert_eq!(Method::Homebrew.update_command(), Some("brew upgrade dmytrobsp/ttyak/ttyak"));
-        // The README says the same.
-        let readme = include_str!("../../../README.md");
+        // The wiki's Install page says the same.
+        let page = include_str!("../../../docs/wiki/Install.md");
         for m in Method::ALL {
             for command in [m.update_command(), m.uninstall_command()].into_iter().flatten() {
-                assert!(readme.contains(&format!("`{command}`")), "{m:?}: {command}");
+                assert!(page.contains(&format!("`{command}`")), "{m:?}: {command}");
             }
         }
     }

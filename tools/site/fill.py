@@ -18,6 +18,8 @@ import zipfile
 from pathlib import Path
 
 REPO = "dmytrobsp/ttyak"
+# The wiki page whose download table (under "## Install") gives the "Runs on" and "Needs" cells, from the repo's root.
+INSTALL_PAGE = Path("docs/wiki/Install.md")
 ORDER = ["x86_64-linux", "aarch64-linux", "aarch64-macos", "x86_64-macos", "x86_64-windows"]
 NAMES = {"x86_64-linux": "Linux", "aarch64-linux": "Linux (arm64)", "aarch64-macos": "macOS · Apple Silicon",
          "x86_64-macos": "macOS · Intel", "x86_64-windows": "Windows"}
@@ -137,6 +139,8 @@ def _plain(s):
 
 
 def readme_needs(text):
+    """{platform: (runs on, needs)} from the download table under "## Install" (the wiki's Install page; once the
+    README's)."""
     out, inside = {}, False
     for line in text.splitlines():
         if line.startswith("## "):
@@ -360,8 +364,8 @@ def fill_page(site, release=None, numbers=None, needs=None):
     if release is None:
         release = json.loads((site / "data/release.json").read_text())
     if needs is None:
-        readme = site.resolve().parent / "README.md"
-        needs = readme_needs(readme.read_text()) if readme.exists() else {}
+        install = site.resolve().parent / INSTALL_PAGE
+        needs = readme_needs(install.read_text()) if install.exists() else {}
     page = site / "index.html"
     html = page.read_text()
     html = fill(html, "download-button", render_download_button(release))
@@ -377,7 +381,7 @@ def fill_page(site, release=None, numbers=None, needs=None):
     page.write_text(html)
 
 
-def main(argv, urlopen=urllib.request.urlopen, stderr=sys.stderr, readme=None):
+def main(argv, urlopen=urllib.request.urlopen, stderr=sys.stderr, install_page=None):
     args = [a for a in argv if not a.startswith("--")]
     site = Path(args[0])
     release = None
@@ -398,7 +402,7 @@ def main(argv, urlopen=urllib.request.urlopen, stderr=sys.stderr, readme=None):
                 return 1
             print(f"release fetch failed: {e}; keeping site/data/release.json", file=stderr)
             release = None
-    needs = readme_needs(Path(readme).read_text()) if readme else None
+    needs = readme_needs(Path(install_page).read_text()) if install_page else None
     fill_page(site, release, needs=needs)
     return 0
 

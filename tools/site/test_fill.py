@@ -81,7 +81,7 @@ class FillTests(unittest.TestCase):
         self.assertIn("SHA256SUMS", h)
 
     def test_readme_needs(self):
-        text = (ROOT / "README.md").read_text()
+        text = (ROOT / "docs/wiki/Install.md").read_text()
         n = F.readme_needs(text)
         self.assertEqual(set(n), {"x86_64-linux", "aarch64-linux", "aarch64-macos", "x86_64-macos", "x86_64-windows"})
         runs, needs = n["x86_64-linux"]
@@ -158,6 +158,23 @@ class FillTests(unittest.TestCase):
             F.fill_page(site)
             self.assertEqual((site / "index.html").read_text(), out)
 
+    def test_fill_page_reads_the_table_from_the_wiki_install_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            site = root / "site"
+            (site / "data").mkdir(parents=True)
+            (site / "index.html").write_text("<!-- fill:download-button -->x<!-- /fill:download-button --><!-- fill:downloads --><!-- /fill:downloads -->" + MORE)
+            (site / "data/release.json").write_text(json.dumps(RELEASE))
+            row = "## Install\n\n| Download | Runs on | Needs |\n|---|---|---|\n| `x86_64-linux.zip` | %s | %s |\n\n## Update\n"
+            (root / "README.md").write_text(row % ("readme runs", "readme needs"))
+            (root / "docs/wiki").mkdir(parents=True)
+            (root / "docs/wiki/Install.md").write_text(row % ("wiki runs", "wiki needs"))
+            F.fill_page(site)
+            out = (site / "index.html").read_text()
+            self.assertIn("wiki runs", out)
+            self.assertIn("wiki needs", out)
+            self.assertNotIn("readme", out)
+
     def _capture_site(self, d, names):
         site = Path(d)
         (site / "data").mkdir()
@@ -216,7 +233,7 @@ class FillTests(unittest.TestCase):
             def boom(req, timeout=None):
                 raise urllib.error.URLError("offline")
             err = io.StringIO()
-            code = F.main([str(site), "--fetch-release"], urlopen=boom, stderr=err, readme=ROOT / "README.md")
+            code = F.main([str(site), "--fetch-release"], urlopen=boom, stderr=err, install_page=ROOT / "docs/wiki/Install.md")
             self.assertEqual(code, 0)
             self.assertIn("release fetch failed:", err.getvalue())
             self.assertIn("keeping site/data/release.json", err.getvalue())
@@ -233,7 +250,7 @@ class FillTests(unittest.TestCase):
             def boom(req, timeout=None):
                 raise urllib.error.URLError("offline")
             err = io.StringIO()
-            code = F.main([str(site), "--fetch-release", "--strict"], urlopen=boom, stderr=err, readme=ROOT / "README.md")
+            code = F.main([str(site), "--fetch-release", "--strict"], urlopen=boom, stderr=err, install_page=ROOT / "docs/wiki/Install.md")
             self.assertNotEqual(code, 0)
             self.assertIn("release fetch failed:", err.getvalue())
             self.assertEqual((site / "index.html").read_text(), page)
@@ -442,7 +459,7 @@ class LatestJsonTests(unittest.TestCase):
             (site / "latest.json").write_bytes(latest)
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}):
-            code = F.main([str(site), "--fetch-release", *flags], urlopen=opener, stderr=err, readme=ROOT / "README.md")
+            code = F.main([str(site), "--fetch-release", *flags], urlopen=opener, stderr=err, install_page=ROOT / "docs/wiki/Install.md")
         return code, site, err.getvalue()
 
     def test_latest_json_copied_from_release(self):

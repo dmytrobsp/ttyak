@@ -8,7 +8,7 @@ name: Pages
 on:
   push:
     branches: [master]
-    paths: ["site/**", "tools/site/**", "README.md", ".github/workflows/pages.yml"]
+    paths: ["site/**", "tools/site/**", "docs/wiki/Install.md", ".github/workflows/pages.yml"]
   workflow_run:
     workflows: [Release]
     types: [completed]
