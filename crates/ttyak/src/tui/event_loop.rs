@@ -6787,6 +6787,7 @@ fn handle_rtm(app: &mut App, ev: slack_core::rtm::RtmEvent) {
                 Some(super::live::ActivityPush::Invalidated) if app.view == View::Activity => app.open_activity(Some(app.activity.tab)),
                 _ => {}
             }
+            super::notify::huddles_over(&app.notifier, app.workspace, &fx.huddles_ended, fx.invite_cancelled.as_deref());
             // (As the official client does: an ended huddle the view shows may now be among the recent ones.)
             if app.view == View::Huddles && app.huddles.concerns(&fx.huddles_ended) {
                 let generation = app.huddles.refresh();

@@ -1054,6 +1054,8 @@ enum Cmd {
     Withdraw { key: Key, how: Withdrawal },
     /// The waiter of `key`'s bubble `generation` ended; `gone`: it was clicked or closed.
     Ended { key: Key, generation: u64, gone: bool },
+    /// The server answered for bubble `generation` after the worker went on (None: it failed or never came).
+    Late { generation: u64, shown: Option<Arc<dyn Shown>> },
     #[cfg(test)]
     Settled(tokio::sync::oneshot::Sender<()>),
     /// Whether `key` has a bubble on screen.
@@ -1068,6 +1070,8 @@ enum Withdrawal {
     Read(Place),
     /// When this read covers the message it shows.
     Polled(Place),
+    /// When it shows a huddle's start (the huddle is over).
+    HuddleOver,
 }
 
 impl Withdrawal {
@@ -1078,6 +1082,7 @@ impl Withdrawal {
             (Withdrawal::Read(read) | Withdrawal::Polled(read), Some(at)) => at.read_by(read),
             (Withdrawal::Read(read), None) => read.thread.is_none(),
             (Withdrawal::Polled(_), None) => false,
+            (Withdrawal::HuddleOver, at) => at.is_none(),
         }
     }
 }
@@ -1110,6 +1115,15 @@ struct Live {
     generation: u64,
     /// Its click waiter, while it waits.
     waiter: Option<tokio::task::AbortHandle>,
+}
+
+/// A bubble the server did not answer for in time: it may still come ([`Cmd::Late`]).
+struct Coming {
+    key: Option<Key>,
+    at: Option<Place>,
+    on_click: Option<OnClick>,
+    /// A withdrawal that takes it came meanwhile.
+    withdrawn: bool,
 }
 
 /// How notifications reach the user on this machine, for F6's "On this machine", in the current language.
@@ -1184,6 +1198,12 @@ impl Notifier {
     /// (nobody read anything just now).
     pub fn polled_read(&self, key: &Key, up_to: &str) {
         self.send(Cmd::Withdraw { key: key.clone(), how: Withdrawal::Polled(Place { thread: None, ts: up_to.to_string() }) });
+    }
+
+    /// The huddle in `key`'s conversation ended, or its invitation is over (answered elsewhere): its start's bubble is
+    /// withdrawn (one showing a message stays).
+    pub fn huddle_over(&self, key: &Key) {
+        self.send(Cmd::Withdraw { key: key.clone(), how: Withdrawal::HuddleOver });
     }
 
     /// Show a bubble without any sound, ttyak's or the desktop's, that nothing replaces (the update notice: quiet hours
@@ -1462,6 +1482,8 @@ pub const TEST_BELL_AFTER: std::time::Duration = std::time::Duration::from_secs(
 /// The worker: shows, replaces and closes bubbles in the order asked, on `backend`.
 async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::UnboundedReceiver<Cmd>, back: mpsc::WeakUnboundedSender<Cmd>) {
     let mut live: HashMap<Key, Live> = HashMap::new();
+    // The bubbles the server may still answer for, by their generation.
+    let mut coming: HashMap<u64, Coming> = HashMap::new();
     let mut generation = 0;
     while let Some(cmd) = queue.recv().await {
         match cmd {
@@ -1504,19 +1526,28 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                     }
                 }
                 let shown = match &terminal {
-                    Some(t) => Ok(Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble))),
-                    None => tokio::time::timeout(SERVER_WAIT, backend.show(bubble)).await,
+                    Some(t) => Ok(t.show(key.as_ref().map(osc99::id).unwrap_or_else(|| format!("ttyak-{}", generation + 1)), &bubble)),
+                    None => {
+                        let mut task = tokio::spawn(backend.show(bubble));
+                        match tokio::time::timeout(SERVER_WAIT, &mut task).await {
+                            Ok(done) => done.unwrap_or_else(|e| Err(e.into())),
+                            // It may still come: then it is kept as any other (`Cmd::Late`), without ttyak's sound.
+                            Err(_) => {
+                                tracing::warn!("notification: the notification server did not answer in time (kept if it comes later)");
+                                *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                                generation += 1;
+                                coming.insert(generation, Coming { key, at, on_click, withdrawn: false });
+                                drop(tokio::spawn(follow(task, back.clone(), generation)));
+                                continue;
+                            }
+                        }
+                    }
                 };
                 let shown = match shown {
-                    Ok(Ok(shown)) => shown,
+                    Ok(shown) => shown,
                     // The bubble it would replace stays as it was (still withdrawn and clicked as before).
-                    Ok(Err(e)) => {
+                    Err(e) => {
                         tracing::warn!("notification failed: {e}");
-                        *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = None;
-                        continue;
-                    }
-                    Err(_) => {
-                        tracing::warn!("notification failed: the notification server did not answer");
                         *shared.environment.lock().unwrap_or_else(|e| e.into_inner()) = None;
                         continue;
                     }
@@ -1527,15 +1558,29 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 }
                 // The replaced bubble's waiter ends: the server keeps its id for the new one. (A click on the old one
                 // that came in just now is lost with it.)
-                if let Some(w) = key.as_ref().and_then(|k| live.remove(k)).and_then(|o| o.waiter) {
-                    w.abort();
-                }
                 generation += 1;
-                let ended = key.clone().map(|k| (back.clone(), k, generation));
                 let on = if terminal.is_some() { ClickedOn::Terminal } else { ClickedOn::System };
-                let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), on, f, ended)).abort_handle());
-                if let Some(key) = key {
-                    live.insert(key, Live { shown, at, generation, waiter });
+                track(&mut live, &back, key, at, generation, shown, on, on_click);
+            }
+            Cmd::Late { generation: late, shown } => {
+                let (Some(Coming { key, at, on_click, withdrawn }), Some(shown)) = (coming.remove(&late), shown) else { continue };
+                let newer = key.as_ref().and_then(|k| live.get(k)).filter(|l| l.generation > late);
+                if let Some(newer) = newer {
+                    // (One that took the older bubble's place shows the newer one now: closing it would close that.)
+                    if !same_place(shown.as_ref(), newer.shown.as_ref()) {
+                        close(shown.as_ref(), "closing a late notification").await;
+                    }
+                    tracing::debug!("a late notification: a newer one is up");
+                } else if withdrawn {
+                    close(shown.as_ref(), "closing a late notification").await;
+                    tracing::debug!("a late notification: read meanwhile, closed");
+                } else {
+                    tracing::debug!("a late notification: kept");
+                    // An older one that came late itself is not the one it replaced: it goes.
+                    let older = track(&mut live, &back, key, at, late, shown.clone(), ClickedOn::System, on_click);
+                    if let Some(older) = older.filter(|o| !same_place(shown.as_ref(), o.shown.as_ref())) {
+                        close(older.shown.as_ref(), "closing an older notification").await;
+                    }
                 }
             }
             Cmd::Bell { dnd, epoch } => {
@@ -1560,6 +1605,9 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
                 }
             }
             Cmd::Withdraw { key, how } => {
+                for c in coming.values_mut().filter(|c| c.key.as_ref() == Some(&key) && how.takes(c.at.as_ref())) {
+                    c.withdrawn = true;
+                }
                 let covered = live.get(&key).is_some_and(|l| how.takes(l.at.as_ref()));
                 if let Some(l) = covered.then(|| live.remove(&key)).flatten() {
                     if let Some(w) = l.waiter {
@@ -1584,6 +1632,64 @@ async fn serve(backend: Arc<dyn Backend>, shared: Arc<Shared>, mut queue: mpsc::
             #[cfg(test)]
             Cmd::Live(key, answer) => drop(answer.send(live.contains_key(&key))),
         }
+    }
+}
+
+/// Keep `shown` as generation `generation` of `key`'s bubble (None: one nothing replaces or withdraws), showing the
+/// message `at`, and wait for its click (`on`'s bubble); hands back the bubble it took the place of, its waiter ended.
+#[allow(clippy::too_many_arguments)]
+fn track(live: &mut HashMap<Key, Live>, back: &mpsc::WeakUnboundedSender<Cmd>, key: Option<Key>, at: Option<Place>, generation: u64, shown: Arc<dyn Shown>, on: ClickedOn, on_click: Option<OnClick>) -> Option<Live> {
+    let older = key.as_ref().and_then(|k| live.remove(k));
+    if let Some(w) = older.as_ref().and_then(|o| o.waiter.as_ref()) {
+        w.abort();
+    }
+    let ended = key.clone().map(|k| (back.clone(), k, generation));
+    let waiter = on_click.map(|f| tokio::spawn(wait(shown.clone(), on, f, ended)).abort_handle());
+    if let Some(key) = key {
+        live.insert(key, Live { shown, at, generation, waiter });
+    }
+    older
+}
+
+/// Whether bubbles `a` and `b` take one place on screen (the server put one in the other's, by its id; Windows by
+/// their tag): closing one closes both.
+fn same_place(a: &dyn Shown, b: &dyn Shown) -> bool {
+    !a.closed_to_replace() && a.id() == b.id()
+}
+
+/// Take `shown` off the screen (at most [`SERVER_WAIT`]); `what` for the log.
+async fn close(shown: &dyn Shown, what: &str) {
+    if tokio::time::timeout(SERVER_WAIT, shown.close()).await.is_err() {
+        tracing::warn!("{what}: the notification server did not answer");
+    }
+}
+
+/// How long the answer for a bubble is still waited for once the worker went on without it (an internal wait: one
+/// that comes later than that is not kept).
+const LATE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wait (at most [`LATE_WAIT`]) for the server's answer for bubble `generation`, which came after the worker went on,
+/// and hand it to the worker.
+async fn follow(task: tokio::task::JoinHandle<anyhow::Result<Arc<dyn Shown>>>, back: mpsc::WeakUnboundedSender<Cmd>, generation: u64) {
+    let abort = task.abort_handle();
+    let shown = match tokio::time::timeout(LATE_WAIT, task).await {
+        Ok(Ok(Ok(shown))) => Some(shown),
+        Ok(Ok(Err(e))) => {
+            tracing::debug!("a late notification failed: {e}");
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::debug!("a late notification failed: {e}");
+            None
+        }
+        Err(_) => {
+            abort.abort();
+            tracing::debug!("a late notification never came");
+            None
+        }
+    };
+    if let Some(back) = back.upgrade() {
+        let _ = back.send(Cmd::Late { generation, shown });
     }
 }
 
@@ -1678,6 +1784,14 @@ pub fn interrupt(notifier: &Notifier, note: Note, out: &Outputs, settings: &supe
     }
 }
 
+/// In workspace `workspace` the huddles of the conversations `ended` ended and the invitation in `cancelled` is over:
+/// their starts' bubbles are withdrawn.
+pub fn huddles_over(notifier: &Notifier, workspace: usize, ended: &[String], cancelled: Option<&str>) {
+    for channel in ended.iter().map(String::as_str).chain(cancelled) {
+        notifier.huddle_over(&Key { workspace, channel: channel.to_string() });
+    }
+}
+
 /// The terminal's bell: terminals turn it into an urgency hint, tmux flags the window.
 pub fn bell(out: &mut impl Write) -> io::Result<()> {
     out.write_all(b"\x07")?;
@@ -1706,6 +1820,8 @@ pub mod fake {
         last_id: AtomicU32,
         down: AtomicBool,
         hung: AtomicBool,
+        /// How long the server takes to answer a bubble (it is on screen at once).
+        slow: Mutex<std::time::Duration>,
         /// The system never answers about do-not-disturb.
         dnd_hung: AtomicBool,
         environment: Mutex<Environment>,
@@ -1733,6 +1849,7 @@ pub mod fake {
                 last_id: AtomicU32::default(),
                 down: AtomicBool::default(),
                 hung: AtomicBool::default(),
+                slow: Mutex::default(),
                 dnd_hung: AtomicBool::default(),
                 environment: Mutex::new(Environment { server: system_dnd::Server::Other("fake".into()), capabilities: Vec::new() }),
                 suppressed: Mutex::new(Some(false)),
@@ -1808,6 +1925,11 @@ pub mod fake {
             self.hung.store(hung, Ordering::Relaxed);
         }
 
+        /// From now on the server answers a bubble after `slow` (as one that put it on screen at once).
+        pub fn set_slow(&self, slow: std::time::Duration) {
+            *self.slow.lock().unwrap() = slow;
+        }
+
         /// From now on a read of Windows' notification setting takes `slow`.
         pub fn set_setting_slow(&self, slow: std::time::Duration) {
             *self.setting_slow.lock().unwrap() = slow;
@@ -1855,6 +1977,10 @@ pub mod fake {
                 }
                 let in_place = b.replaces.filter(|_| !server.closes_to_replace.load(Ordering::Relaxed));
                 let id = in_place.unwrap_or_else(|| server.last_id.fetch_add(1, Ordering::Relaxed) + 1);
+                let slow = *server.slow.lock().unwrap();
+                if !slow.is_zero() {
+                    tokio::time::sleep(slow).await;
+                }
                 // (As Windows' toasts: the notification setting as last read, for the log line.)
                 let _ = server.cached_setting();
                 Ok(Arc::new(OnScreen { id, server }) as Arc<dyn Shown>)
@@ -2671,6 +2797,102 @@ mod tests {
         n.show(note("D2", "2.0", None, "next"), None, Box::new(|_| {}));
         tokio::time::timeout(std::time::Duration::from_secs(3), n.settled()).await.unwrap();
         assert_eq!(server.calls(), [shown(None, "stuck"), shown(None, "next")]);
+    }
+
+    /// Once `key`'s bubble is known (at most 5 s).
+    async fn comes(n: &Notifier, key: &Key) -> bool {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if n.live(key).await {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// A server that answers after ttyak stopped waiting (#15): the bubble is kept all the same, and read, withdrawn.
+    #[tokio::test]
+    async fn a_late_bubble_is_tracked_and_withdrawn() {
+        let (n, server) = Notifier::fake();
+        server.set_slow(SERVER_WAIT * 2);
+        let key = Key { workspace: 0, channel: "D1".into() };
+        let started = std::time::Instant::now();
+        n.show(note("D1", "1.0", None, "late"), None, Box::new(|_| {}));
+        n.settled().await;
+        assert!(started.elapsed() < SERVER_WAIT * 2, "the worker went on: {:?}", started.elapsed());
+        assert!(comes(&n, &key).await, "tracked once it came");
+        n.read(&key, None, "1.0");
+        n.settled().await;
+        assert_eq!(server.calls(), [shown(None, "late"), fake::Call::Close(1)]);
+    }
+
+    #[tokio::test]
+    async fn a_late_bubble_superseded_is_closed() {
+        let (n, server) = Notifier::fake();
+        let (clicked, on_click) = recorder();
+        server.set_slow(SERVER_WAIT * 2);
+        let key = Key { workspace: 0, channel: "D1".into() };
+        n.show(note("D1", "1.0", None, "one"), None, on_click("one"));
+        n.settled().await;
+        server.set_slow(std::time::Duration::ZERO);
+        n.show(note("D1", "2.0", None, "two"), None, on_click("two"));
+        n.settled_after(|| server.calls().contains(&fake::Call::Close(1))).await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(None, "two"), fake::Call::Close(1)], "the late one closed when it came");
+        // The newer one is still the conversation's.
+        server.click(2);
+        n.settled_after(|| !clicked.lock().unwrap().is_empty()).await;
+        assert_eq!(*clicked.lock().unwrap(), ["two"]);
+        n.show(note("D1", "3.0", None, "three"), None, on_click("three"));
+        n.withdraw(&key);
+        n.settled().await;
+        assert_eq!(server.calls()[3..], [shown(None, "three"), fake::Call::Close(3)]);
+    }
+
+    #[tokio::test]
+    async fn a_late_bubble_read_meanwhile_is_closed() {
+        let (n, server) = Notifier::fake();
+        server.set_slow(SERVER_WAIT * 4);
+        let (d1, d2) = (Key { workspace: 0, channel: "D1".into() }, Key { workspace: 0, channel: "D2".into() });
+        n.show(note("D1", "5.0", None, "read meanwhile"), None, Box::new(|_| {}));
+        n.show(note("D2", "6.0", None, "its thread read"), None, Box::new(|_| {}));
+        // Both still on their way: D1 read, in D2 only a thread.
+        n.read(&d1, None, "5.0");
+        n.read(&d2, Some("1.0"), "9.0");
+        assert!(comes(&n, &d2).await, "a read that doesn't cover it leaves it");
+        n.settled_after(|| server.calls().contains(&fake::Call::Close(1))).await;
+        assert!(!n.live(&d1).await);
+        assert_eq!(server.calls()[2..], [fake::Call::Close(1)], "{:?}", server.calls());
+    }
+
+    /// A huddle's start goes once the huddle is over (#15); a message's bubble stays.
+    #[tokio::test]
+    async fn a_huddle_bubble_goes_when_the_huddle_ends() {
+        let (n, server) = Notifier::fake();
+        let (d1, d2) = (Key { workspace: 0, channel: "D1".into() }, Key { workspace: 0, channel: "D2".into() });
+        let huddle = Note { key: d1.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
+        n.show(huddle, None, Box::new(|_| {}));
+        n.show(note("D2", "1.0", None, "a message"), None, Box::new(|_| {}));
+        n.huddle_over(&d2);
+        n.huddle_over(&d1);
+        n.settled().await;
+        assert_eq!(server.calls()[2..], [fake::Call::Close(1)], "{:?}", server.calls());
+        assert!(!n.live(&d1).await && n.live(&d2).await);
+    }
+
+    #[tokio::test]
+    async fn a_huddle_bubble_goes_when_the_invitation_is_cancelled() {
+        let (n, server) = Notifier::fake();
+        let key = Key { workspace: 1, channel: "D1".into() };
+        let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
+        n.show(huddle, None, Box::new(|_| {}));
+        huddles_over(&n, 0, &[], Some("D1"));
+        huddles_over(&n, 1, &["C9".to_string()], None);
+        n.settled().await;
+        assert_eq!(server.calls().len(), 1, "another workspace, another conversation: {:?}", server.calls());
+        huddles_over(&n, 1, &[], Some("D1"));
+        n.settled().await;
+        assert_eq!(server.calls().pop(), Some(fake::Call::Close(1)));
     }
 
     /// A read of Windows' notification setting that takes long (#17) neither holds a show back nor leaves its bubble

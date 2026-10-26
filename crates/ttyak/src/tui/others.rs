@@ -257,6 +257,7 @@ async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &Atomic
         if let Some((channel, thread, up_to)) = &fx.read {
             notifier.read(&Key { workspace: index, channel: channel.clone() }, thread.as_deref(), up_to);
         }
+        super::notify::huddles_over(notifier, index, &fx.huddles_ended, fx.invite_cancelled.as_deref());
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         if ws.dnd.stale(now) {
             match client.call_raw("dnd.info", &[]).await {

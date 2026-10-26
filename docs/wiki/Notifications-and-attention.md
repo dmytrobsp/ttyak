@@ -33,7 +33,9 @@ A conversation shows one desktop notification at a time: a newer message there (
 instead of stacking. It is taken away once what it shows is read — in ttyak, in another client, or, for the other
 workspaces of the profile, by their next 30-second check — where the notification server allows it (Linux desktops,
 macOS and Windows). A thread reply's notification stays until that thread is read (reading the conversation does not
-take it away).
+take it away). A huddle's notification goes once the huddle ends or its invitation is withdrawn (answered in another
+client, say), or once the conversation is read in ttyak or another client. One the notification server shows late,
+after ttyak stopped waiting for it (5 seconds), is replaced and taken away all the same.
 
 Notifications from the other workspaces of the profile still arrive, titled with the workspace; clicking one switches
 there ([Profiles and sessions](Profiles-and-sessions#several-workspaces-in-one-profile)). A new version of ttyak is told
