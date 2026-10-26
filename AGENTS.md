@@ -80,6 +80,7 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
 - **Security findings** never go into a public file, issue or commit message: open a **GitHub private security
   advisory** (the repository's Security tab → Advisories → New draft security advisory) and tell the maintainer.
   Commits that fix one say "hardening", without describing an exploit.
+  Outsiders report through [SECURITY.md](SECURITY.md) (GitHub's private vulnerability reporting).
 - **The maintainer's word** is needed for: tags and releases, force-pushes and history rewrites, deleting anything
   on GitHub, repository settings, publishing the wiki (`--push`), posts outside the test workspace, anything that
   costs money or speaks for them. Routine pushes of `master` need no asking.

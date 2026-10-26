@@ -1,5 +1,8 @@
 # Contributing to ttyak
 
+Security problems are reported privately, never in a public issue: see [SECURITY.md](SECURITY.md). Coding
+agents start at [AGENTS.md](AGENTS.md).
+
 ## Building and testing
 
 Install the packages for your system from the wiki's
