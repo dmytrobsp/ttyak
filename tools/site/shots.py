@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from ansi2html import CH, CW, KITTY, convert, render_svg  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
+FONTS = ROOT / "site/fonts"
+RENAME = Path.home() / ".config/ttyak-site/rename.json"
 SHOTS = {
     "main": dict(cols=136, rows=34, title="ttyak", blur=True),
     # the tiles show the first letters of the real names: not built without its fixes
@@ -76,7 +78,7 @@ def frame_size(cols, rows):
 
 
 def _font(weight):
-    data = (ROOT / f"site/fonts/space-mono-{weight}.woff2").read_bytes()
+    data = (FONTS / f"space-mono-{weight}.woff2").read_bytes()
     return (f"@font-face{{font-family:'Space Mono';font-weight:{weight};"
             f"src:url(data:font/woff2;base64,{base64.b64encode(data).decode()}) format('woff2')}}")
 
@@ -90,7 +92,12 @@ def page(svg, cols, rows, title, blurs=(), pictures=()):
                    for kind, p in pictures)
     over += "".join(f'<div class="blur" style="left:{px(c0 * CW)}px;top:{px(r * CH)}px;width:{px((c1 - c0) * CW)}px;'
                     f'height:{px(CH)}px"></div>' for r, c0, c1 in blurs)
-    fonts = _font(400) + _font(700) if (ROOT / "site/fonts/space-mono-400.woff2").is_file() else ""
+    if all((FONTS / f"space-mono-{w}.woff2").is_file() for w in (400, 700)):
+        fonts = _font(400) + _font(700)
+    else:
+        fonts = ""
+        print(f"warning: Space Mono not found in {FONTS}: the picture falls back to another monospace font",
+              file=sys.stderr)
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{fonts}
 html,body{{margin:0;background:transparent}}
 .win{{width:{w - 2}px;height:{h - 2}px;border:1px solid #45475a;border-radius:10px;overflow:hidden;background:{KITTY["bg"]}}}
@@ -107,14 +114,20 @@ font:12px 'Space Mono',monospace;color:#7f849c;white-space:pre}}
 
 
 def build_page(ansi, cfg, rename=None, fixes=None, blur=()):
-    """One capture's page. `fixes`: {(row, col): text} put into single cells after renaming."""
+    """One capture's page. `fixes`: {(row, col): letter} put into single cells after renaming; each must replace one
+    letter (a tile's initial) with one letter, so a fix that lands elsewhere (the layout moved) is refused."""
     if cfg.get("needs_fixes") and not fixes:
         raise ValueError("this capture needs its cell fixes (--fixes) and has none")
     _, screen = convert(ansi, rename, cfg["cols"], cfg["rows"])
     for (r, c), ch in (fixes or {}).items():
         if not (0 <= r < screen.rows and 0 <= c < screen.cols) or not screen.cells[r][c][0].strip():
             raise ValueError(f"a fix at {r},{c} has no character to replace (the layout moved?)")
-        screen.cells[r][c][0] = ch
+        cell = screen.cells[r][c]
+        if not (len(cell[0]) == 1 and cell[0].isalpha() and cell[2] == 1):
+            raise ValueError(f"a fix at {r},{c} does not land on a single letter (the layout moved?)")
+        if not (isinstance(ch, str) and len(ch) == 1 and ch.isalpha()):
+            raise ValueError(f"a fix at {r},{c} must put a single letter")
+        cell[0] = ch
     kinds = cfg.get("pictures", ())
     if len(screen.pictures) != len(kinds):
         raise ValueError(f"{len(screen.pictures)} pictures on the screen, {len(kinds)} expected")
@@ -154,25 +167,37 @@ def shoot(page_html, png, size, scratch=None, chrome=None):
         shutil.rmtree(work, ignore_errors=True)
 
 
-def main(argv):
+def main(argv, shoot=shoot, rename_file=None):
+    """Draws every shot; a capture missing from RAW_DIR is named ("skipped …") and makes the exit code 1."""
     args, blur, fixes_path, scratch = [], [], None, None
-    it = iter(argv)
-    for a in it:
-        if a == "--blur":
-            blur.append(next(it))
-        elif a == "--fixes":
-            fixes_path = Path(next(it))
-        elif a == "--scratch":
-            scratch = next(it)
-        else:
-            args.append(a)
+    usage = "usage: " + __doc__.strip().splitlines()[2].strip()
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--blur", "--fixes", "--scratch"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                print(f"{usage}\n{a} needs a value", file=sys.stderr)
+                return 2
+            v = argv[i + 1]
+            if a == "--blur":
+                blur.append(v)
+            elif a == "--fixes":
+                fixes_path = Path(v)
+            else:
+                scratch = v
+            i += 2
+            continue
+        args.append(a)
+        i += 1
     if len(args) != 2 or not blur:
-        print(__doc__.strip().splitlines()[2].strip(), file=sys.stderr)
+        print(usage, file=sys.stderr)
         return 2
     raw, out = Path(args[0]), Path(args[1])
-    rename = json.loads((Path.home() / ".config/ttyak-site/rename.json").read_text())
+    out.mkdir(parents=True, exist_ok=True)
+    rename = json.loads(Path(rename_file or RENAME).read_text())
     fixes = json.loads(fixes_path.read_text()) if fixes_path else {}
     chrome = os.environ.get("CHROME")
+    skipped = []
     for name, cfg in SHOTS.items():
         if "fragment" in cfg:
             svg = svg_of_fragment((ROOT / cfg["fragment"]).read_text(encoding="utf-8"))
@@ -180,12 +205,14 @@ def main(argv):
         else:
             src = raw / f"{name}.ansi"
             if not src.is_file():
+                print(f"skipped {name}: no {src}", file=sys.stderr)
+                skipped.append(name)
                 continue
             f = {tuple(map(int, k.split(","))): v for k, v in fixes.get(name, {}).items()}
             html_page = build_page(src.read_text(encoding="utf-8"), cfg, rename, f, blur)
         shoot(html_page, out / f"{name}.png", frame_size(cfg["cols"], cfg["rows"]), scratch, chrome)
         print(f"{name}: written")
-    return 0
+    return 1 if skipped else 0
 
 
 if __name__ == "__main__":

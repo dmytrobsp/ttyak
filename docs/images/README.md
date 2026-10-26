@@ -29,5 +29,7 @@ conversation.
 - **Checks.** `python3 tools/site/check_private.py docs/images`; the drawn text was checked against the private list
   of real names, handles, emails, ids and the workspace's name (no match, and no 5-character piece of one other
   than generic words such as "channel" and "slack.com"); and every picture was looked at.
+- **After each rebuild**, look at every picture again, and at a 2× crop of each blur (the workspace name must stay
+  unreadable). `shots.py` names a capture it could not find ("skipped …") and then exits 1.
 
 Font: [Space Mono](https://fonts.google.com/specimen/Space+Mono) (SIL Open Font License, `site/fonts/OFL-space-mono.txt`).
