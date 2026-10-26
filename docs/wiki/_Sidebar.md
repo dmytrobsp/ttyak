@@ -16,6 +16,7 @@
 - [Images and video](Images-and-video)
 - [Notifications and attention](Notifications-and-attention)
 - [Huddles](Huddles)
+- [Not supported yet](Not-supported-yet)
 
 **Configuring**
 

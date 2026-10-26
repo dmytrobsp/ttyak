@@ -22,6 +22,7 @@ notifications and huddles. It is not an official Slack app. This wiki is its man
 - [Notifications and attention](Notifications-and-attention) — the tab title, desktop notifications, the bell, sound,
   do-not-disturb, bringing the window forward
 - [Huddles](Huddles) — calls: joining, the call bar, invitations, audio, cameras and screen sharing
+- [Not supported yet](Not-supported-yet) — what Slack does that ttyak doesn't do yet
 
 ## Configuring
 
