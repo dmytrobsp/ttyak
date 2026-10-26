@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 # Publish docs/wiki/ at a ref to the GitHub wiki repo: export, check links and privacy, mirror, commit, push on --push.
 # usage: publish.sh [--ref REF] [--push] [--wiki-dir DIR]     (REF defaults to the latest v* tag; first publish: --ref master)
+# The wiki commit is made with the main repo's own user.name/user.email (never the global identity); the wiki remote
+# is derived from the repo's origin URL (keeps the user@ part the credential helper matches).
 # Environment: TTYAK_WIKI_URL overrides the wiki remote (tests use a local bare repo).
 set -euo pipefail
+
+# The wiki remote that belongs to a main-repo origin URL: ttyak(.git) -> ttyak.wiki.git, scheme and user@ kept.
+wiki_url_from_origin() {
+  case "$1" in
+    *ttyak.wiki.git) printf '%s\n' "$1" ;;
+    *ttyak.git) printf '%s\n' "${1%ttyak.git}ttyak.wiki.git" ;;
+    *ttyak) printf '%s\n' "${1}.wiki.git" ;;
+    *) return 1 ;;
+  esac
+}
+# Sourced by the tests for the helper only.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ref="" push=0 wiki_dir=""
@@ -22,7 +36,19 @@ if [ -z "$ref" ]; then
 fi
 echo "publishing docs/wiki at $ref"
 short="$(git rev-parse --short "$ref^{commit}")"
-url="${TTYAK_WIKI_URL:-https://github.com/dmytrobsp/ttyak.wiki.git}"
+id_name="$(git -C "$repo" config user.name || true)"
+id_email="$(git -C "$repo" config user.email || true)"
+if [ -z "$id_name" ] || [ -z "$id_email" ]; then
+  echo "refusing: the repo has no git identity (set user.name and user.email in $repo)" >&2; exit 1
+fi
+if [ -n "${TTYAK_WIKI_URL:-}" ]; then
+  url="$TTYAK_WIKI_URL"
+else
+  origin="$(git -C "$repo" config remote.origin.url || true)"
+  url="$(wiki_url_from_origin "$origin")" || { echo "refusing: cannot derive the wiki URL from origin '$origin'; set TTYAK_WIKI_URL" >&2; exit 1; }
+fi
+echo "commit identity: $id_name <$id_email>"
+echo "wiki remote: $url"
 
 base="${TMPDIR:-/tmp}"
 work="$(mktemp -d "$base/ttyak-wiki.XXXXXX")"
@@ -67,7 +93,7 @@ if git -C "$wiki_dir" diff --cached --quiet; then
   echo "the wiki already matches docs/wiki at $ref"
   exit 0
 fi
-git -C "$wiki_dir" commit -q -m "wiki: docs/wiki at $ref ($short)"
+git -C "$wiki_dir" -c "user.name=$id_name" -c "user.email=$id_email" commit -q --author="$id_name <$id_email>" -m "wiki: docs/wiki at $ref ($short)"
 git -C "$wiki_dir" show --stat HEAD
 git -C "$wiki_dir" show HEAD
 if [ "$push" = 1 ]; then

@@ -26,6 +26,10 @@ class Publish(unittest.TestCase):
         self.forbidden.write_text("# fake list\nzzz-never-written-qq\n", encoding="utf-8")
         git(self.tmp, "init", "-q", "--bare", str(self.bare))
         git(self.tmp, "init", "-q", "-b", "master", str(self.repo))
+        git(self.repo, "config", "user.name", "Repo Person")
+        git(self.repo, "config", "user.email", "repo@example.invalid")
+        self.global_cfg = self.tmp / "global.gitconfig"
+        self.global_cfg.write_text("[user]\n\tname = Global Person\n\temail = global@example.invalid\n", encoding="utf-8")
         (self.repo / "docs" / "wiki").mkdir(parents=True)
         self.write("Home", "# Home\nold\n")
         self.write("Gone", "# Gone\nwill be deleted\n")
@@ -43,8 +47,10 @@ class Publish(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", msg)
 
     def run_publish(self, *args):
-        env = {**os.environ, **GIT_ENV, "TTYAK_WIKI_URL": str(self.bare), "TTYAK_SITE_FORBIDDEN": str(self.forbidden),
-               "TMPDIR": str(self.tmp)}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_AUTHOR", "GIT_COMMITTER"))}
+        env.update({"TTYAK_WIKI_URL": str(self.bare), "TTYAK_SITE_FORBIDDEN": str(self.forbidden),
+                    "TMPDIR": str(self.tmp), "GIT_CONFIG_GLOBAL": str(self.global_cfg), "GIT_CONFIG_NOSYSTEM": "1",
+                    "HOME": str(self.tmp)})
         return subprocess.run(["bash", str(SCRIPT), *args], cwd=self.repo, capture_output=True, text=True, env=env)
 
     def wiki_log(self):
@@ -103,6 +109,51 @@ class Publish(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.wiki_log(), "")
         self.assertNotIn("zzz-never-written-qq", r.stdout + r.stderr)
+
+    def test_commit_uses_repo_identity(self):
+        r = self.run_publish("--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        fmt = subprocess.run(["git", "--git-dir", str(self.bare), "log", "-1", "--format=%an|%ae|%cn|%ce"],
+                             capture_output=True, text=True).stdout.strip()
+        self.assertEqual(fmt, "Repo Person|repo@example.invalid|Repo Person|repo@example.invalid")
+
+    def test_prints_identity_and_url_before_diff(self):
+        r = self.run_publish()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertIn("Repo Person <repo@example.invalid>", out)
+        self.assertIn(str(self.bare), out)
+        self.assertLess(out.index("repo@example.invalid"), out.index("diff --git"))
+        self.assertLess(out.index(str(self.bare)), out.index("diff --git"))
+
+    def test_refuses_without_identity(self):
+        git(self.repo, "config", "--unset", "user.name")
+        git(self.repo, "config", "--unset", "user.email")
+        self.global_cfg.write_text("", encoding="utf-8")
+        r = self.run_publish("--push")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.wiki_log(), "")
+        self.assertIn("identity", r.stderr)
+
+
+class WikiUrl(unittest.TestCase):
+    def derive(self, origin):
+        r = subprocess.run(["bash", "-c", 'source "$1"; wiki_url_from_origin "$2"', "x", str(SCRIPT), origin],
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout.strip()
+
+    def test_derivations(self):
+        cases = {
+            "https://dmytrobsp@github.com/dmytrobsp/ttyak.git": "https://dmytrobsp@github.com/dmytrobsp/ttyak.wiki.git",
+            "https://github.com/dmytrobsp/ttyak": "https://github.com/dmytrobsp/ttyak.wiki.git",
+            "git@github.com:dmytrobsp/ttyak.git": "git@github.com:dmytrobsp/ttyak.wiki.git",
+            "ssh://git@github.com/dmytrobsp/ttyak.git": "ssh://git@github.com/dmytrobsp/ttyak.wiki.git",
+        }
+        for origin, want in cases.items():
+            self.assertEqual(self.derive(origin), (0, want), origin)
+
+    def test_unrecognised_origin_fails(self):
+        self.assertNotEqual(self.derive("https://example.com/other/repo.git")[0], 0)
 
 
 if __name__ == "__main__":
