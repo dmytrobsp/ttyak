@@ -11843,7 +11843,7 @@ mod tests {
         app.prefs.as_ref().unwrap().machine.lock().unwrap().dnd_on = Some(true);
         app.ws.settings.notifications.follow_system_dnd = true;
         app.send_test_notification();
-        let held = if cfg!(windows) { "sent without sound: Windows' do-not-disturb files it in the notification center" } else { "held back by the system's do-not-disturb" };
+        let held = if cfg!(windows) { "sent without sound: Windows' do-not-disturb is on" } else { "held back by the system's do-not-disturb" };
         assert!(app.status.contains(held), "{}", app.status);
         // Not followed, or not on: sent.
         app.ws.settings.notifications.follow_system_dnd = false;

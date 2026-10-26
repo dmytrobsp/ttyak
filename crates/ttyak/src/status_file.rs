@@ -388,10 +388,13 @@ mod tests {
         s.pid = u32::MAX - 1;
         write_to(&file, &s).unwrap();
         assert!(!read_from(&file, "p").running);
-        // Ours is alive.
-        s.pid = std::process::id();
-        write_to(&file, &s).unwrap();
-        assert_eq!(read_from(&file, "p"), s);
+        // Ours is alive (Unix: by its pid; Windows asks the profile's lock instead, which no test holds).
+        #[cfg(unix)]
+        {
+            s.pid = std::process::id();
+            write_to(&file, &s).unwrap();
+            assert_eq!(read_from(&file, "p"), s);
+        }
         // Missing and unreadable files.
         assert!(!read_from(&dir.join("none.json"), "p").running);
         std::fs::write(&file, "{ not json").unwrap();
