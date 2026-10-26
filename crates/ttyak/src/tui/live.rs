@@ -688,6 +688,12 @@ mod tests {
         assert!(!w.huddles_set_status);
         apply(&mut w, &json!({"name":"huddles_set_status","type":"pref_change","value":"maybe"}), None, true);
         assert!(!w.huddles_set_status, "kept");
+        // "Always allow notifications from VIPs".
+        assert!(!w.vip_override);
+        apply(&mut w, &json!({"name":"priority_dnd_override","type":"pref_change","value":true}), None, true);
+        assert!(w.vip_override);
+        apply(&mut w, &json!({"name":"priority_dnd_override","type":"pref_change","value":"false"}), None, true);
+        assert!(!w.vip_override);
     }
 
     #[test]

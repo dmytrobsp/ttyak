@@ -2611,7 +2611,7 @@ mod tests {
 
     fn note(channel: &str, ts: &str, thread: Option<&str>, text: &str) -> Note {
         let target = Target { channel: channel.into(), ts: Some(ts.into()), thread_ts: thread.map(String::from) };
-        Note { key: Key { workspace: 0, channel: channel.into() }, title: "Bob".into(), body: text.into(), target }
+        Note { key: Key { workspace: 0, channel: channel.into() }, title: "Bob".into(), body: text.into(), target, vip: false }
     }
 
     fn shown(replaces: Option<u32>, body: &str) -> fake::Call {
@@ -2760,7 +2760,7 @@ mod tests {
     async fn reading_the_conversation_takes_a_huddle_start() {
         let (n, server) = Notifier::fake();
         let key = Key { workspace: 0, channel: "D1".into() };
-        let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
+        let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None }, vip: false };
         n.show(huddle, None, Box::new(|_| {}));
         n.read(&key, Some("1.0"), "9.0");
         n.polled_read(&key, "9.0");
@@ -2993,7 +2993,7 @@ mod tests {
     async fn a_huddle_bubble_goes_when_the_huddle_ends() {
         let (n, server) = Notifier::fake();
         let (d1, d2) = (Key { workspace: 0, channel: "D1".into() }, Key { workspace: 0, channel: "D2".into() });
-        let huddle = Note { key: d1.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
+        let huddle = Note { key: d1.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None }, vip: false };
         n.show(huddle, None, Box::new(|_| {}));
         n.show(note("D2", "1.0", None, "a message"), None, Box::new(|_| {}));
         n.huddle_over(&d2);
@@ -3007,7 +3007,7 @@ mod tests {
     async fn a_huddle_bubble_goes_when_the_invitation_is_cancelled() {
         let (n, server) = Notifier::fake();
         let key = Key { workspace: 1, channel: "D1".into() };
-        let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None } };
+        let huddle = Note { key: key.clone(), title: "Bob started a huddle".into(), body: "b".into(), target: Target { channel: "D1".into(), ts: None, thread_ts: None }, vip: false };
         n.show(huddle, None, Box::new(|_| {}));
         huddles_over(&n, 0, &[], Some("D1"));
         huddles_over(&n, 1, &["C9".to_string()], None);

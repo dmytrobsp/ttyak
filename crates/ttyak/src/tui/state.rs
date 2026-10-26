@@ -185,6 +185,10 @@ pub struct Workspace {
     pub notify: NotifyPrefs,
     /// People marked VIP.
     pub vip: std::collections::HashSet<String>,
+    /// Slack's `priority_dnd_override` pref ("Always allow notifications from VIPs"): VIPs get through a pause.
+    pub vip_override: bool,
+    /// The workspace is on a paid plan (boot's `team.plan` is set); VIPs need one.
+    pub paid: bool,
 }
 
 /// A huddle going on in a conversation.
@@ -824,7 +828,7 @@ impl Workspace {
         Dnd { zone: self.account_zone(), ..self.dnd.clone() }.resume(now)
     }
 
-    /// Apply `client.userBoot` (channels, IMs, DND).
+    /// Apply `client.userBoot` (channels, IMs, DND, prefs, whether the plan is paid).
     pub fn apply_boot(&mut self, boot: &Value) {
         for key in ["channels", "ims"] {
             for c in boot[key].as_array().into_iter().flatten() {
@@ -842,6 +846,8 @@ impl Workspace {
         self.dnd.set_info(&boot["dnd"]);
         self.dnd.zone = boot["self"]["tz"].as_str().and_then(|z| z.parse().ok()).or(self.dnd.zone);
         self.starred = boot["starred"].as_array().into_iter().flatten().filter_map(|s| s.as_str()).map(String::from).collect();
+        // (Slack's own test of a paid plan.)
+        self.paid = boot["team"]["plan"].as_str().is_some_and(|p| !p.is_empty());
         self.apply_prefs(&boot["prefs"]);
     }
 
@@ -870,8 +876,8 @@ impl Workspace {
         }
     }
 
-    /// Apply user prefs (boot, or a `pref_change`): notification levels, keywords, mutes, VIPs,
-    /// the notification schedule, whether your huddle state is kept alive.
+    /// Apply user prefs (boot, or a `pref_change`): notification levels, keywords, mutes, VIPs and whether they get
+    /// through a pause, the notification schedule, whether your huddle state is kept alive.
     pub fn apply_prefs(&mut self, prefs: &Value) {
         let all = match &prefs["all_notifications_prefs"] {
             Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
@@ -886,10 +892,13 @@ impl Workspace {
         if let Some(list) = prefs["muted_channels"].as_str() {
             self.muted.extend(list.split(',').filter(|s| !s.is_empty()).map(String::from));
         }
-        // A bool at boot; a `pref_change` may carry it as text.
-        let set_status = &prefs["huddles_set_status"];
-        if let Some(on) = set_status.as_bool().or_else(|| set_status.as_str().and_then(|v| v.parse().ok())) {
+        // Bools at boot; a `pref_change` may carry them as text.
+        let flag = |key: &str| prefs[key].as_bool().or_else(|| prefs[key].as_str().and_then(|v| v.parse().ok()));
+        if let Some(on) = flag("huddles_set_status") {
             self.huddles_set_status = on;
+        }
+        if let Some(on) = flag("priority_dnd_override") {
+            self.vip_override = on;
         }
         if let Some(list) = prefs["vip_users"].as_str() {
             self.vip = list.split(',').filter(|s| !s.is_empty()).map(String::from).collect();

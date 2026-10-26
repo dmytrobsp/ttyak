@@ -52,8 +52,9 @@ window), and tmux flags the window (neither checked here). Some desktops bring t
 workspace on a bell instead — kitty's default `window_alert_on_bell` with Hyprland's `misc:focus_on_activate = 1` does
 (tried) — and kitty may also beep (`enable_audio_bell`).
 
-The bell never rings while notifications are paused, nor in a terminal that does not report focus. It does ring with
-desktop notifications off.
+The bell never rings while notifications are paused (unless a VIP's message gets through: see
+[VIPs during a pause](#vips-during-a-pause)), nor in a terminal that does not report focus. It does ring with desktop
+notifications off.
 
 ## The sound
 
@@ -72,7 +73,8 @@ A file from before 0.12 with `[audio] sound_volume` keeps its value; saving writ
 ## Do-not-disturb
 
 ttyak's own pause and schedule (F6 → Notifications → Pause notifications and Notification schedule, the same settings
-as in Availability; kept on Slack) always hold notifications back: no notification, no sound, no bell.
+as in Availability; kept on Slack) hold notifications back: no notification, no sound, no bell — all but a VIP's
+message when Slack's VIP setting lets it through ([VIPs during a pause](#vips-during-a-pause)).
 
 With F6 → Notifications → Follow the system's do-not-disturb (`follow_system_dnd`, on by default), ttyak also asks the
 system whether notifications are suppressed before an interruption, whoever plays the sound. These can be asked:
@@ -93,6 +95,21 @@ second, notifications go through. On macOS the system can't be asked (see [macOS
 
 Switched off, only ttyak's own pause and schedule hold notifications back (tried with swaync's do-not-disturb on: ttyak
 played its sound, swaync held the notification back).
+
+### VIPs during a pause
+
+ttyak follows Slack's rule. Being a VIP never makes a message notify that otherwise wouldn't: the conversation's level,
+a mute and the other rules above still decide first. The one difference: with Slack's **Always allow notifications from
+VIPs** on (Slack's Preferences → VIP; off by default; kept on Slack), a message that would notify but is held back only
+by the pause or the schedule gets through when
+
+- its sender is one of your VIPs (an app counts by its bot user), and
+- it is a direct message or group DM, or it mentions someone, a user group or a channel (the mention needn't be of
+  you; `@here`, `@channel` and `@everyone` don't count).
+
+It needs a paid Slack plan, as in Slack. It holds for the other workspaces of the profile too, and follows the setting
+when it changes elsewhere. A VIP starting a huddle still stays quiet during a pause, and the system's do-not-disturb
+(above) holds VIPs back like everyone else.
 
 ## Settings in F6
 

@@ -3544,7 +3544,7 @@ impl App {
         }
         let held = n.follow_system_dnd && self.prefs.as_ref().is_some_and(|p| p.machine.lock().unwrap_or_else(|e| e.into_inner()).dnd_on == Some(true));
         let (title, body) = super::prefs::test_words();
-        let note = Note { key: Key::test(), title, body, target: Target::test() };
+        let note = Note { key: Key::test(), title, body, target: Target::test(), vip: false };
         // The pause and the schedule are about Slack's messages: a test is for the route. (The bell is the delayed one below.)
         let gates = Gates { paused: false, system_dnd: false, viewing: false, focus: TermFocus::Unknown };
         let out = super::attention::outputs(&Decision::ForYou(note.clone()), &gates, &Switches::of(n));
@@ -11436,7 +11436,7 @@ mod tests {
         use super::super::attention::{Decision, Note};
         use super::super::notify::Target;
         assert!(super::handle_event(app, crossterm::event::Event::FocusLost));
-        let note = Note { key: app.bubble_key("C1"), title: "Bob in #chanC1".into(), body: "hi".into(), target: Target { channel: "C1".into(), ts: Some(top_ts(n)), thread_ts: None } };
+        let note = Note { key: app.bubble_key("C1"), title: "Bob in #chanC1".into(), body: "hi".into(), target: Target { channel: "C1".into(), ts: Some(top_ts(n)), thread_ts: None }, vip: false };
         let gates = app.gates(false, 0.0);
         app.interrupt(Decision::ForYou(note), &gates);
         app.notifier.settled().await;

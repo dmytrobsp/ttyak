@@ -32,6 +32,8 @@ pub struct Note {
     pub title: String,
     pub body: String,
     pub target: Target,
+    /// It gets through a pause: a VIP's, as Slack's "Always allow notifications from VIPs" lets through ([`vip_passes`]).
+    pub vip: bool,
 }
 
 /// What an incoming event is worth.
@@ -91,7 +93,30 @@ pub fn decide(ws: &Workspace, workspace: usize, channel: &str, m: &Message) -> D
         body = body.chars().take(BODY_MAX).collect::<String>() + "…";
     }
     let key = Key { workspace, channel: channel.to_string() };
-    Decision::ForYou(Note { key, title, body, target: Target::message(channel, m) })
+    let vip = vip_passes(ws, m, conv.is_some_and(|c| c.is_dm()));
+    Decision::ForYou(Note { key, title, body, target: Target::message(channel, m), vip })
+}
+
+/// Whether message `m` gets through a pause, as in Slack: "Always allow notifications from VIPs" is on, the plan is
+/// paid, the sender (or a bot message's `bot_profile.user_id`) is a VIP, and it is a DM or group DM (`is_dm`) or
+/// mentions a person, a user group or a channel (`@here`, `@channel` and `@everyone` don't count; the mention needn't
+/// be of you). Only the pause: the level, mutes and the other rules still decide first.
+pub fn vip_passes(ws: &Workspace, m: &Message, is_dm: bool) -> bool {
+    let bot = m.bot_profile.as_ref().and_then(|b| b["user_id"].as_str());
+    let vip = m.user.as_deref().into_iter().chain(bot).any(|u| ws.vip.contains(u));
+    ws.paid && ws.vip_override && vip && (is_dm || has_mention(m))
+}
+
+/// Whether `m` mentions a person, a user group or a channel, in its blocks or its text (not `@here` and the like).
+fn has_mention(m: &Message) -> bool {
+    use format::{Block, Inline};
+    let mut blocks = format::from_rich_text(&m.blocks).unwrap_or_default().into_iter().chain(format::from_mrkdwn(&m.text));
+    let mention = |i: &Inline| matches!(i, Inline::User { .. } | Inline::Usergroup { .. } | Inline::Channel { .. });
+    blocks.any(|b| match b {
+        Block::Paragraph(i) | Block::Quote(i) => i.iter().any(mention),
+        Block::List { items, .. } => items.iter().flatten().any(mention),
+        Block::Code(_) => false,
+    })
 }
 
 /// What `user` starting a huddle in `channel` is worth: for you in a DM or group DM with us (Slack rings there),
@@ -105,7 +130,8 @@ pub fn decide_huddle(ws: &Workspace, workspace: usize, channel: &str, user: &str
     let title = if conv.is_mpim { format!("{who} started a huddle in {}", ws.conversation_label(conv)) } else { format!("{who} started a huddle") };
     let key = Key { workspace, channel: channel.to_string() };
     let target = Target { channel: channel.to_string(), ts: None, thread_ts: None };
-    Decision::ForYou(Note { key, title, body: format!("Press {join_key} in ttyak to join"), target })
+    // (Slack's VIP rule is for messages: a huddle start stays paused.)
+    Decision::ForYou(Note { key, title, body: format!("Press {join_key} in ttyak to join"), target, vip: false })
 }
 
 /// The badge: what is unread right now, in every signed-in workspace.
@@ -199,10 +225,12 @@ pub struct Outputs {
     pub bell: bool,
 }
 
-/// What decision `d` fires: nothing unless it is for you and no gate holds it back; then the switches pick the
-/// bubble, its sound (no bubble, no sound) and the bell (only while the terminal is known to be unfocused).
+/// What decision `d` fires: nothing unless it is for you and no gate holds it back (a VIP's note gets through the
+/// pause, never the system's DND or viewing); then the switches pick the bubble, its sound (no bubble, no sound) and
+/// the bell (only while the terminal is known to be unfocused).
 pub fn outputs(d: &Decision, g: &Gates, s: &Switches) -> Outputs {
-    if !matches!(d, Decision::ForYou(_)) || g.paused || g.system_dnd || g.viewing {
+    let Decision::ForYou(note) = d else { return Outputs::default() };
+    if (g.paused && !note.vip) || g.system_dnd || g.viewing {
         return Outputs::default();
     }
     Outputs { bubble: s.desktop, sound: s.desktop && s.sound, bell: s.bell && g.focus == TermFocus::Unfocused }
@@ -344,5 +372,131 @@ mod tests {
         for d in [Decision::Unread, Decision::Nothing] {
             assert_eq!(outputs(&d, &OPEN, &ALL_ON), Outputs::default(), "{d:?}");
         }
+    }
+
+    const PAUSED: Gates = Gates { paused: true, ..OPEN };
+
+    /// Bob (U2) is a VIP, "Always allow notifications from VIPs" is on, the plan is paid; Carol (U3) is no VIP.
+    fn vip_ws() -> Workspace {
+        let mut w = ws();
+        w.vip.insert("U2".into());
+        w.vip_override = true;
+        w.paid = true;
+        w.conversations.insert("D3".into(), Conversation { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() });
+        w.conversations.insert("G1".into(), Conversation { id: "G1".into(), is_mpim: true, is_member: true, ..Default::default() });
+        w
+    }
+
+    /// Whether message `m` in `channel` shows a bubble behind gates `g`.
+    fn bubbles(w: &Workspace, channel: &str, m: &Message, g: &Gates) -> bool {
+        outputs(&decide(w, 0, channel, m), g, &ALL_ON).bubble
+    }
+
+    #[test]
+    fn vip_dm_gets_through_the_pause_with_the_override() {
+        let w = vip_ws();
+        assert_eq!(outputs(&decide(&w, 0, "D1", &msg("U2", "hi")), &PAUSED, &ALL_ON), Outputs { bubble: true, sound: true, bell: true });
+        assert!(bubbles(&w, "G1", &msg("U2", "hi all"), &PAUSED), "a group DM too");
+        assert!(!bubbles(&w, "D3", &msg("U3", "hi"), &PAUSED), "no VIP: paused");
+        assert!(vip_passes(&w, &msg("U2", "hi"), true));
+    }
+
+    #[test]
+    fn vip_mention_gets_through() {
+        let mut w = vip_ws();
+        assert!(bubbles(&w, "C1", &msg("U2", "hey <@UME>"), &PAUSED));
+        // At "all new messages", any mention lifts the pause, not only one of you.
+        w.notify.channels.insert("C1".into(), "everything".into());
+        for text in ["ask <@U3>", "ping <!subteam^S1|@devs>", "see <#C9|random>"] {
+            assert!(bubbles(&w, "C1", &msg("U2", text), &PAUSED), "{text}");
+        }
+        let mut rich = msg("U2", "");
+        rich.blocks = vec![serde_json::json!({"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "ask "}, {"type": "user", "user_id": "U3"}]}]})];
+        assert!(bubbles(&w, "C1", &rich, &PAUSED), "a mention in the blocks");
+    }
+
+    #[test]
+    fn vip_plain_channel_message_stays_paused() {
+        let mut w = vip_ws();
+        w.notify.channels.insert("C1".into(), "everything".into());
+        assert!(bubbles(&w, "C1", &msg("U2", "plain chatter"), &OPEN));
+        assert!(!bubbles(&w, "C1", &msg("U2", "plain chatter"), &PAUSED));
+        assert!(!bubbles(&w, "C1", &msg("U2", "`<@U3>` in code"), &PAUSED), "code is no mention");
+    }
+
+    #[test]
+    fn here_and_channel_do_not_count() {
+        let w = vip_ws();
+        for text in ["<!here> lunch", "<!channel> lunch", "<!everyone> lunch"] {
+            assert!(bubbles(&w, "C1", &msg("U2", text), &OPEN), "{text}: for you");
+            assert!(!bubbles(&w, "C1", &msg("U2", text), &PAUSED), "{text}: but no VIP mention");
+        }
+        let mut rich = msg("U2", "<!here>");
+        rich.blocks = vec![serde_json::json!({"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "broadcast", "range": "here"}]}]})];
+        assert!(!bubbles(&w, "C1", &rich, &PAUSED));
+    }
+
+    #[test]
+    fn override_off_holds_vips_back() {
+        let w = Workspace { vip_override: false, ..vip_ws() };
+        assert!(!bubbles(&w, "D1", &msg("U2", "hi"), &PAUSED));
+        assert!(bubbles(&w, "D1", &msg("U2", "hi"), &OPEN));
+    }
+
+    #[test]
+    fn free_plan_holds_vips_back() {
+        let w = Workspace { paid: false, ..vip_ws() };
+        assert!(!bubbles(&w, "D1", &msg("U2", "hi"), &PAUSED));
+    }
+
+    #[test]
+    fn vip_bot_by_its_user_id() {
+        let mut w = vip_ws();
+        w.vip.insert("UBOT".into());
+        w.conversations.insert("D9".into(), Conversation { id: "D9".into(), is_im: true, user: Some("UBOT".into()), ..Default::default() });
+        let bot = |user_id: &str| Message {
+            ts: "10.0".into(),
+            subtype: Some("bot_message".into()),
+            bot_id: Some("B1".into()),
+            text: "deploy done".into(),
+            bot_profile: Some(serde_json::json!({"id": "B1", "name": "deploys", "user_id": user_id})),
+            ..Default::default()
+        };
+        assert!(bubbles(&w, "D9", &bot("UBOT"), &PAUSED));
+        assert!(!bubbles(&w, "D9", &bot("UOTHER"), &PAUSED), "a bot that is no VIP");
+    }
+
+    #[test]
+    fn vip_in_muted_channel_stays_quiet() {
+        let mut w = vip_ws();
+        w.muted.insert("C1".into());
+        assert_eq!(decide(&w, 0, "C1", &msg("U2", "hey <@UME>")), Decision::Nothing, "decide unchanged");
+        assert!(!bubbles(&w, "C1", &msg("U2", "hey <@UME>"), &PAUSED));
+        assert!(!bubbles(&w, "C1", &msg("U2", "hey <@UME>"), &OPEN));
+    }
+
+    #[test]
+    fn vip_at_nothing_level_stays_quiet() {
+        let mut w = vip_ws();
+        w.notify.global = "nothing".into();
+        assert_eq!(decide(&w, 0, "C1", &msg("U2", "hey <@UME>")), Decision::Unread, "decide unchanged");
+        assert!(!bubbles(&w, "C1", &msg("U2", "hey <@UME>"), &PAUSED));
+        assert!(!bubbles(&w, "D1", &msg("U2", "hi"), &PAUSED));
+    }
+
+    #[test]
+    fn system_dnd_still_holds_vips() {
+        let w = vip_ws();
+        let d = decide(&w, 0, "D1", &msg("U2", "hi"));
+        assert!(matches!(&d, Decision::ForYou(n) if n.vip));
+        for g in [Gates { system_dnd: true, ..PAUSED }, Gates { system_dnd: true, ..OPEN }, Gates { viewing: true, ..PAUSED }] {
+            assert_eq!(outputs(&d, &g, &ALL_ON), Outputs::default(), "{g:?}");
+        }
+    }
+
+    #[test]
+    fn huddle_starts_stay_paused_for_vips() {
+        let w = vip_ws();
+        assert!(matches!(decide_huddle(&w, 0, "D1", "U2", false, "F3"), Decision::ForYou(n) if !n.vip));
     }
 }

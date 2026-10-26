@@ -232,17 +232,23 @@ fn take_live_huddles(ws: &mut super::state::Workspace, notifier: &Notifier, inde
     }
 }
 
-/// Boot workspace `index` into its own state and notify from its RTM events until it becomes
-/// the shown one or is signed out (then the connection and the state are dropped).
-async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &AtomicUsize, clicks: &tokio::sync::mpsc::UnboundedSender<Click>, signed_out: &SignedOut, notifier: &Notifier) -> anyhow::Result<()> {
-    use super::state::Workspace;
-    let (boot, users) = tokio::join!(client.user_boot(), client.users_list());
-    let mut ws = Workspace::default();
-    for u in users? {
+/// A hidden workspace's state from its people and `client.userBoot` (conversations, DND, prefs such as the VIPs and
+/// "Always allow notifications from VIPs", the plan).
+fn hidden_workspace(users: Vec<slack_core::types::User>, boot: &serde_json::Value) -> super::state::Workspace {
+    let mut ws = super::state::Workspace::default();
+    for u in users {
         ws.users.insert(u.id.clone(), u);
     }
     ws.users_changed();
-    ws.apply_boot(&boot?);
+    ws.apply_boot(boot);
+    ws
+}
+
+/// Boot workspace `index` into its own state and notify from its RTM events until it becomes
+/// the shown one or is signed out (then the connection and the state are dropped).
+async fn watch_hidden(index: usize, client: &Client, label: &str, shown: &AtomicUsize, clicks: &tokio::sync::mpsc::UnboundedSender<Click>, signed_out: &SignedOut, notifier: &Notifier) -> anyhow::Result<()> {
+    let (boot, users) = tokio::join!(client.user_boot(), client.users_list());
+    let mut ws = hidden_workspace(users?, &boot?);
     let mut rtm = slack_core::rtm::spawn(client.clone());
     let mut check = tokio::time::interval(SHOWN_CHECK);
     // The huddles going on, asked for beside the watcher once connected (again after each reconnect) and when one starts.
@@ -334,7 +340,7 @@ mod tests {
         let mut ws = super::super::state::Workspace::default();
         ws.huddles.insert("D1".into(), super::super::state::Huddle { room: "R1".into(), participants: vec!["U2".into()], thread: None, start: 0 });
         let target = super::super::notify::Target { channel: "D1".into(), ts: None, thread_ts: None };
-        n.show(super::super::attention::Note { key: Key { workspace: 1, channel: "D1".into() }, title: "Bob started a huddle".into(), body: "b".into(), target }, None, Box::new(|_| {}));
+        n.show(super::super::attention::Note { key: Key { workspace: 1, channel: "D1".into() }, title: "Bob started a huddle".into(), body: "b".into(), target, vip: false }, None, Box::new(|_| {}));
         let since = ws.huddle_seq;
         take_live_huddles(&mut ws, &n, 1, since, Err("no answer".into()));
         n.settled().await;
@@ -343,6 +349,25 @@ mod tests {
         n.settled().await;
         assert!(ws.huddles.is_empty());
         assert_eq!(server.calls().pop(), Some(super::super::notify::fake::Call::Close(1)));
+    }
+
+    /// A hidden workspace's VIPs, "Always allow notifications from VIPs" and plan come from `client.userBoot`, so a
+    /// VIP's DM gets through its pause as on the shown one.
+    #[test]
+    fn hidden_vips_come_from_boot() {
+        use crate::tui::attention::{decide, outputs, Gates, Outputs, Switches, TermFocus};
+        let bob = slack_core::types::User { id: "U2".into(), name: "bob".into(), ..Default::default() };
+        // The keys as the test workspace's `client.userBoot` has them (ids replaced).
+        let boot = serde_json::json!({"self": {"id": "UME"}, "team": {"plan": "std"}, "ims": [{"id": "D1", "user": "U2"}],
+            "prefs": {"vip_users": "U2", "priority_dnd_override": true}});
+        let ws = hidden_workspace(vec![bob], &boot);
+        assert!(ws.vip.contains("U2") && ws.vip_override && ws.paid);
+        let m = slack_core::types::Message { ts: "10.0".into(), user: Some("U2".into()), text: "hi".into(), ..Default::default() };
+        let paused = Gates { paused: true, system_dnd: false, viewing: false, focus: TermFocus::Unfocused };
+        let on = Switches { desktop: true, sound: false, bell: false };
+        assert_eq!(outputs(&decide(&ws, 1, "D1", &m), &paused, &on), Outputs { bubble: true, sound: false, bell: false });
+        let free = hidden_workspace(Vec::new(), &serde_json::json!({"team": {"plan": ""}, "prefs": {"vip_users": "U2", "priority_dnd_override": false}}));
+        assert!(!free.vip_override && !free.paid);
     }
 
     #[test]
@@ -386,6 +411,7 @@ mod tests {
             title: "Bob".into(),
             body: "hi".into(),
             target: crate::tui::notify::Target { channel: channel.into(), ts: Some(ts.into()), thread_ts: None },
+            vip: false,
         };
         notifier.show(note("D1", "1792882650.243419"), None, Box::new(|_| {}));
         notifier.show(note("D2", "1792882651.000100"), None, Box::new(|_| {}));
