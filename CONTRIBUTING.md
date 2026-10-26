@@ -57,7 +57,7 @@ account without marking anything read: `TTYAK_FAIL=conversations.mark,subscripti
 - `docs/protocol/` — how the undocumented Slack endpoints ttyak uses were worked out.
 - `tools/` — development and test helpers (see `tools/README.md`).
 
-`DESIGN.md` has the architecture and portability rules; `PROGRESS.md` the development log.
+`docs/DESIGN.md` has the architecture and portability rules; `PROGRESS.md` the development log.
 
 ## The wiki
 

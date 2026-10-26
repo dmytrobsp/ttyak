@@ -12,10 +12,10 @@ A short map of the [repository](https://github.com/dmytrobsp/ttyak), for finding
 | `site/` | the site, ttyak.sh, with the install scripts `install.sh` and `install.ps1` |
 | `docs/protocol/` | how the undocumented Slack endpoints ttyak uses were worked out (sign-in, huddles, notifications, …) |
 | `docs/wiki/` | the sources of this wiki |
-| `docs/RELEASING.md`, `docs/distribution/` | how a release is made, and the accounts it needs |
+| `docs/DESIGN.md`, `docs/RELEASING.md`, `docs/distribution/` | the architecture and portability rules; how a release is made, and the accounts it needs |
 | `.github/workflows/` | CI, the release, the site's deployment, the install check |
 
-At the top: `DESIGN.md` (the architecture and portability rules), `PROGRESS.md` (the development log),
+At the top: `PROGRESS.md` (the development log),
 `CONTRIBUTING.md` (see [Contributing](Contributing)) and the licences: ttyak is MIT or Apache-2.0, at your option;
 `vendor/rtc-turn` is webrtc-rs' code (MIT or Apache-2.0, its licence files are in that folder) and `vendor/crossterm`
 crossterm's (MIT).

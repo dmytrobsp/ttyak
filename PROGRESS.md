@@ -1,6 +1,6 @@
 # ttyak — progress
 
-Canonical status. The plan and architecture are in `DESIGN.md`. The reverse-engineered
+Canonical status. The plan and architecture are in `docs/DESIGN.md`. The reverse-engineered
 protocol notes are in `docs/protocol/`; dev and test helpers in `tools/`. (Until H1 this repository
 lived inside a larger reverse-engineering workspace; references to it were removed then. Until H2
 the project was called slacktui: rows before H2 use that name, its `SLACKTUI_*` variables and its
