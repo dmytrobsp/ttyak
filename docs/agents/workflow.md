@@ -60,6 +60,10 @@ shape, is planned first:
    with files, interfaces, the test to write first and the checks.
 6. **Execute** it (next section).
 
+**Naming** (a project, package or command name): vet every candidate with a full web search before showing it.
+Registries and GitHub alone once missed chat apps of the same name; ordinary chat words are all taken, coined words
+fare better.
+
 **Handoff before big work.** At the start of a large new piece of work the maintainer may ask for a session handoff
 first: write the design, update `docs/PROGRESS.md`, commit and push, and give a self-contained continuation prompt
 (where things are, how to resume, the hard rules, the test setup). Do not start implementing in that session.
@@ -92,6 +96,8 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 
 - **Small verified steps**: one focused change, verified, committed; then the next. Run autonomously through an agreed
   plan or queue; check in only at a genuine fork. Broad multi-feature steps get stopped and lose more.
+- **"Pause at the nearest checkpoint"** means: finish the open step to a commit (tests green, ledger updated), then
+  stop and hand off. Never leave a half-made change in the tree.
 - **A refused action** (a permission prompt, a safety check stopping a step): stop, check `git status` for partial
   writes, explain what was refused and why it was needed, and give the maintainer the exact command to run or allow.
   Never reword, split or retry it to get around the refusal; the maintainer's go-ahead does not override a safety
@@ -111,6 +117,9 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
   `docs/protocol/`.
 - **Validation of outside data** (a feed, a reply) is checked against the live data before pushing: a check that is too
   strict breaks every user at once.
+- **Links meant for a phone** (a sign-in link, a link sent by email) are checked with a phone's user agent too, not
+  only a desktop browser: slack.com's sign-in page sends phone browsers to the app download page. A throwaway headless
+  Chrome with its profile in the scratch folder and `--user-agent=<a phone's>` shows where the link lands.
 - **Product conventions** the maintainer set: every new behaviour (sounds, rings, reminders, …) can be changed in F6
   and switched off; durations are in seconds; user-visible words go through the translation table (`tr`); the
   in-app help (F6, `?`) matches the code.

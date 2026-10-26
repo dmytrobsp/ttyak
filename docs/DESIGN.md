@@ -30,6 +30,21 @@ the reverse-engineered endpoints are documented in `docs/protocol/` (sign-in, se
 - **Paths:** `directories`. Session files are created with owner-only permissions (0600 on unix).
 - **No Linux-only APIs** outside `cfg`-gated code.
 
+## Terminal pictures
+
+With the kitty protocol, ratatui-image draws a picture as Unicode placeholder cells (`crates/ttyak/src/tui/media.rs`
+has the details). What bites:
+
+- A placeholder cell's foreground colour names its picture: never recolour, fade or restyle those cells (a faded
+  backdrop behind a dialog must skip them).
+- Only the first placeholder of each row carries its row and column; the cells after it count from their left
+  neighbour. Anything that cuts across a picture (a popup) blanks the cut-off slices (`clear_popup`).
+- kitty receives a picture once, in front of its first placeholder cell, in the first frame that draws it. Whatever
+  covers that cell in that frame loses the picture for good: `clear_popup` holds the data and `reattach_pictures` puts
+  it back after the frame.
+- Narrow emoji (🖼 🎞 🖥 🎙) are one cell in some terminals and two in others: write them with U+FE0F
+  (`"🖼\u{fe0f}"`) so they take two cells everywhere.
+
 ## Auth
 
 `ttyak auth login` gets the browser's `d` cookie — from a browser profile signed in to Slack, from the browser

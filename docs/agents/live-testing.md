@@ -161,6 +161,10 @@ window alive when testing what happens after quit.
 - **The real Slack web client** (as the other person): a separate Chrome profile with fake devices, driven by
   `tools/cdp.mjs` ([tools/README.md](../../tools/README.md)); check that only fake devices exist before joining. Never
   press its screen-share button (the fake UI flag would pick the real screen). Delete the profile folder after.
+- **Slack's official desktop app** (measuring for the site, comparing behaviour): ask the maintainer before running it.
+  It is a real signed-in client on their machine, with its own sounds, notifications and sessions. When agreed: the
+  account they name, its audio on a silent null sink, and the method in
+  [tools/site/MEASURING.md](../../tools/site/MEASURING.md).
 
 ## Notifications
 
