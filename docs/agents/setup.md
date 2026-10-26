@@ -37,8 +37,8 @@ cargo test --no-run --target x86_64-pc-windows-gnu
 Disk: `target/` grows to tens of GB, the Windows cross-build directory alone past 10 GB.
 
 *Checked here*: rustup 1.29.1, rustc 1.98.1 stable; targets include `x86_64-pc-windows-gnu`; MinGW gcc 13 (`mingw-w64`
-and its x86_64 packages installed); `cargo build` and the Windows `cargo build` succeeded; `cargo test` passed (the whole
-suite). The package list for a fresh Debian, Ubuntu, Fedora and Arch is checked by
+and its x86_64 packages installed); `cargo build` and the Windows `cargo build` succeeded; `cargo test` passed (the
+whole suite). The package list for a fresh Debian, Ubuntu, Fedora and Arch is checked by
 `tools/container-build.sh` (below); a fresh install of rustup plus MinGW on a new desktop is NOT tried.
 
 ## 2. Test tools
@@ -76,7 +76,8 @@ In CI (the variable `CI` set) the podman steps of `packaging/` and `tools/vm/` r
 
 For live checks on this machine the helpers in [live-testing.md](live-testing.md) assume Hyprland (`hyprctl`), kitty
 with remote control, PipeWire (`pw-record`, `pactl`), `wl-clipboard`, D-Bus tools (`dbus-monitor`, `gdbus`) and
-ffmpeg. Another desktop needs other recipes for hidden windows and input; none is written yet.
+ffmpeg. Another desktop: [Other desktops](live-testing.md#other-desktops) (a headless compositor or Xvfb; not
+tried end to end).
 
 *Checked here*: Python 3.12.3, node v24.22.0, podman 4.9.3. CI's `Tool tests` step, the packaging tests (the
 `makepkg` one in podman) and the site's tests (Python and node) passed; the PowerShell image was pulled

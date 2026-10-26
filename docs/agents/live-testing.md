@@ -6,7 +6,7 @@ files, screen, clipboard, microphone or time. Read it before any live check. The
 live work: ask the maintainer.
 
 The helpers assume Linux with Hyprland, kitty and PipeWire, as on the maintainer's machine; `AGENTS.local.md` says what
-this machine has.
+this machine has; on any other desktop see [Other desktops](#other-desktops).
 
 ## Before every live check
 
@@ -129,6 +129,34 @@ xterm -ti vt340 …     # sixel only as a VT340; X resources with -xrm '*res: v'
 
 A bare system: run the binary in a podman Debian container with only `libasound2t64`, sessions mounted read-only,
 the cache folder from the scratch folder.
+
+## Other desktops
+
+The recipes above assume Hyprland, kitty and PipeWire. On any other desktop (GNOME, KDE, sway, an X11 session, macOS)
+the rules are the same; only the means change.
+
+- **Test windows never appear on the maintainer's screen.** Without a hidden workspace, give the test a display of its
+  own:
+  - a headless wlroots compositor — `WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 sway -c <config>` (`cage` the
+    same way) — with a terminal such as foot inside, its socket in the scratch folder, driven with `swaymsg`;
+  - for X11 terminals, Xvfb on a display number of your own (`Xvfb :99 -screen 0 1280x720x24`, then `DISPLAY=:99`),
+    keys and clicks with `xdotool` under that `DISPLAY`;
+  - either one inside a podman container, which keeps it away from the session altogether.
+
+  kitty inside such a display still answers `kitty @ … get-text`, which is how the screen is read. A capture of the
+  virtual display is allowed (it shows only the test); a capture of the real screen never is.
+- **No microphone, camera or screen capture; no sound**: the fake home switches sounds off; without PipeWire there is
+  no stream to record, so a sound check waits for a machine that has one.
+- **Clipboard**: a terminal inside its own display should write that display's clipboard; check that the
+  maintainer's clipboard is unchanged after the test, and save and restore it anyway.
+- **If none of this is possible** (no compositor or Xvfb can be installed, a macOS desktop without a separate user
+  session): do not run the live check. Write what was checked UNIT and NOT, and ask the maintainer.
+
+What was tried: in 0.12.0 (AT10, [history/0.12.md](../history/0.12.md)) a podman Debian container ran a headless sway
+with foot, and Xvfb with openbox and xterm, to check that ttyak raises its window; in the C7 follow-up
+([history/0.1-0.9.md](../history/0.1-0.9.md)) Xvfb `:99` stood in for the screen in an X11 screen share. A whole live
+check against Slack — keys in, screen read back — inside such a display is NOT tried yet; the commands above are a
+starting point, not a recipe.
 
 ## Clipboard
 
