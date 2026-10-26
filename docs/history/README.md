@@ -28,6 +28,11 @@ then the three bullets are the table's other cells:
   - `NOT`: written down as not checked, with the reason.
 - **Commit**: the commit hash or hashes.
 
+The names of the test workspace, its channels and its people were replaced with neutral words ("the test workspace",
+`channel-1`, a made-up first name, `a-handle`). Public addresses such as `github.com/<owner>/ttyak` were left alone.
+The wording is otherwise the original; the tool's `--redact` option did the replacing, from a map kept outside the
+repository.
+
 The first rows of `0.1-0.9.md` have no id and a short heading; they are the area names of the original table. Ten
 rows did not split into four cells (a `|` in the text); they are kept whole, with no bullets. The one line under the
 table (the test counts at 0.12.2) is the last section of `0.12.md`.

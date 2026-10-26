@@ -1,4 +1,5 @@
 """split_history: PROGRESS.md's status rows and bug log become an archive by era, and --check proves no text changed."""
+import json
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,47 @@ class SplitHistory(unittest.TestCase):
         f = self.out / "0.1-0.9.md"
         f.write_text(f.read_text(encoding="utf-8").replace("word word", "word\n  word"), encoding="utf-8")
         self.assertEqual(run(str(self.progress), str(self.out), "--check").returncode, 0)
+
+
+class Redact(unittest.TestCase):
+    """--redact MAP: made-up strings only; the real map lives outside the repo."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        d = Path(self.tmp.name)
+        self.progress = d / "PROGRESS.md"
+        self.progress.write_text(FIXTURE.replace("Sidebar: channels", "Sidebar in Acme-Corp: #zeta-room, Zed and zed-team,")
+                                 .replace("The second bug", "The second bug at github.com/zed/ttyak and zed again")
+                                 .replace("TY0 — runbooks.", "TY0 — runbooks at https://github.com/zed/ttyak/x."),
+                                 encoding="utf-8")
+        self.map = d / "redact.json"
+        self.map.write_text(json.dumps({"acme-corp": "the test workspace", "zeta-room": "channel-1", "zed": "a-handle",
+                                        "zed-team": "a team", "__keep__": [r"github\.com/zed/ttyak"]}),
+                            encoding="utf-8")
+        self.out = d / "history"
+
+    def test_replaces_case_insensitively_longest_first_and_keeps_protected_forms(self):
+        r = run(str(self.progress), str(self.out), "--redact", str(self.map))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = "".join(p.read_text(encoding="utf-8") for p in self.out.iterdir())
+        self.assertIn("Sidebar in the test workspace:", text)
+        self.assertIn("#channel-1, a-handle and a team,", text)
+        self.assertIn("github.com/zed/ttyak/x", text)
+        self.assertIn("github.com/zed/ttyak and a-handle again", text)
+        for gone in ("Acme", "zeta", "Zed"):
+            self.assertNotIn(gone, text)
+
+    def test_check_with_the_map_passes_and_without_it_fails(self):
+        run(str(self.progress), str(self.out), "--redact", str(self.map))
+        self.assertEqual(run(str(self.progress), str(self.out), "--check", "--redact", str(self.map)).returncode, 0)
+        self.assertNotEqual(run(str(self.progress), str(self.out), "--check").returncode, 0)
+
+    def test_check_with_the_map_catches_a_changed_word(self):
+        run(str(self.progress), str(self.out), "--redact", str(self.map))
+        f = self.out / "0.12.md"
+        f.write_text(f.read_text(encoding="utf-8").replace("lighter", "heavier"), encoding="utf-8")
+        self.assertNotEqual(run(str(self.progress), str(self.out), "--check", "--redact", str(self.map)).returncode, 0)
 
 
 if __name__ == "__main__":

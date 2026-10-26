@@ -2,6 +2,7 @@
 """Split PROGRESS.md's `## Status` rows and `## Bug log` into an archive by era.
 
     split_history.py PROGRESS.md docs/history/            write the archive
+    split_history.py ... --redact MAP                     also replace private strings (see below)
     split_history.py PROGRESS.md docs/history/ --check   prove it: the archive's text, whitespace normalised, equals
                                                           the old rows' text and the bug log; exit 1 on any difference
 
@@ -10,7 +11,13 @@ rows `<id> — <title>`), the rest of that cell is the body, and the State / Ver
 Rows that do not split into four cells are kept whole (heading and body, no bullets). Text that sits between rows
 (like the final `Tests:` line) becomes a note section in the era where it stood. Nothing is reworded; only line breaks
 change.
+
+--redact MAP: a JSON file (kept outside the repo, it holds the private strings) mapping a string to its neutral
+replacement. Applied to the old text case-insensitively, longest string first. The reserved key "__keep__" lists
+regular expressions for spans to leave alone (public addresses that contain a replaced string). With --check the old
+rows get the same replacement first, so the check still proves that nothing else changed.
 """
+import json
 import re
 import sys
 import textwrap
@@ -82,8 +89,32 @@ def heading_split(text):
     return text[:end], text[end:].strip()
 
 
-def parse_progress(path):
-    lines = Path(path).read_text(encoding="utf-8").split("\n")
+def load_redact(path):
+    if not path:
+        return lambda text: text
+    m = json.loads(Path(path).read_text(encoding="utf-8"))
+    keep = [re.compile(k, re.I) for k in m.pop("__keep__", [])]
+    pairs = sorted(m.items(), key=lambda kv: -len(kv[0]))
+    rx = [(re.compile(re.escape(k), re.I), v) for k, v in pairs]
+
+    def redact(text):
+        held = []
+
+        def hold(match):
+            held.append(match.group(0))
+            return f"\x01{len(held) - 1}\x02"
+
+        for k in keep:
+            text = k.sub(hold, text)
+        for pat, v in rx:
+            text = pat.sub(lambda _m, v=v: v, text)
+        return re.sub(r"\x01(\d+)\x02", lambda mm: held[int(mm.group(1))], text)
+
+    return redact
+
+
+def parse_progress(path, redact=lambda t: t):
+    lines = redact(Path(path).read_text(encoding="utf-8")).split("\n")
 
     def section(name):
         start = next(i for i, l in enumerate(lines) if l.startswith(name))
@@ -149,8 +180,8 @@ def render_row(line):
     return "\n".join(out).rstrip()
 
 
-def build(progress):
-    items, bugs = parse_progress(progress)
+def build(progress, redact=lambda t: t):
+    items, bugs = parse_progress(progress, redact)
     files = {name: [f"# {title}"] for name, title, _ in ERAS}
     idx = 0
     for kind, text in items:
@@ -201,8 +232,8 @@ def archive_sections(dirpath):
     return secs
 
 
-def check(progress, dirpath):
-    items, bugs = parse_progress(progress)
+def check(progress, dirpath, redact=lambda t: t):
+    items, bugs = parse_progress(progress, redact)
     secs = archive_sections(dirpath)
     problems = []
     if len(secs) != len(items):
@@ -230,18 +261,27 @@ def check(progress, dirpath):
 
 
 def main(argv):
+    argv = list(argv)
+    redact = lambda t: t  # noqa: E731
+    if "--redact" in argv:
+        i = argv.index("--redact")
+        if i + 1 >= len(argv):
+            print(__doc__)
+            return 2
+        redact = load_redact(argv[i + 1])
+        del argv[i:i + 2]
     args = [a for a in argv if not a.startswith("--")]
     if len(args) != 2:
         print(__doc__)
         return 2
     progress, dirpath = args
     if "--check" in argv:
-        rc = check(progress, dirpath)
+        rc = check(progress, dirpath, redact)
         if rc == 0:
             print("ok: the archive holds exactly the text of the status rows and the bug log")
         return rc
     Path(dirpath).mkdir(parents=True, exist_ok=True)
-    for name, text in build(progress).items():
+    for name, text in build(progress, redact).items():
         (Path(dirpath) / name).write_text(text, encoding="utf-8")
     return 0
 
