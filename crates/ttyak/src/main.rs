@@ -171,9 +171,20 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     // macOS: the main thread runs its run loop instead, which the Notification Center answers through (clicks).
     #[cfg(target_os = "macos")]
-    return tui::notify::mac::with_run_loop(move || runtime.block_on(run()))?;
+    return tui::notify::mac::with_run_loop(move || run_to_the_end(runtime))?;
     #[cfg(not(target_os = "macos"))]
-    runtime.block_on(run())
+    run_to_the_end(runtime)
+}
+
+/// How long ttyak's exit waits for blocking work still under way (an internal timing: a system call that hangs, such as
+/// a Windows toast call, must not hold the exit).
+const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// [`run`] on `runtime`, which then gets [`EXIT_WAIT`] for its blocking work to end.
+fn run_to_the_end(runtime: tokio::runtime::Runtime) -> Result<()> {
+    let result = runtime.block_on(run());
+    runtime.shutdown_timeout(EXIT_WAIT);
+    result
 }
 
 async fn run() -> Result<()> {

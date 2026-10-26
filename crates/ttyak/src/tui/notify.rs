@@ -131,6 +131,61 @@ const CLICK_WAIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// wait: a hung server must not hold back every notification after it).
 const SERVER_WAIT: std::time::Duration = std::time::Duration::from_millis(if cfg!(test) { 300 } else { 5000 });
 
+/// Whether a value last read at `last` (None: never) is to be read again at `now`, read every `every`.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn needs_refresh(now: std::time::Instant, last: Option<std::time::Instant>, every: std::time::Duration) -> bool {
+    last.is_none_or(|last| now.saturating_duration_since(last) >= every)
+}
+
+/// How often Windows' notification setting is read again, at most (an internal timing: it only feeds a log line and F6).
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+const SETTING_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A value read on a detached thread of its own and kept: asking never waits for the read (one that hangs holds back
+/// no notification, and not ttyak's exit either); a new read starts when [`needs_refresh`] says so, one at a time.
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+struct Cached {
+    every: std::time::Duration,
+    state: Arc<Mutex<CachedState>>,
+}
+
+#[derive(Default)]
+struct CachedState {
+    /// What the last read found (None: none is back yet).
+    value: Option<Option<i32>>,
+    /// When the last read started.
+    started: Option<std::time::Instant>,
+    /// A read is under way.
+    reading: bool,
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+impl Cached {
+    fn new(every: std::time::Duration) -> Cached {
+        Cached { every, state: Arc::default() }
+    }
+
+    /// What the last read found (None: none is back yet), at once; `read` starts on a thread of its own at `now` when a
+    /// read is due and none is under way.
+    fn get(&self, now: std::time::Instant, read: impl FnOnce() -> Option<i32> + Send + 'static) -> Option<Option<i32>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.reading && needs_refresh(now, state.started, self.every) {
+            (state.reading, state.started) = (true, Some(now));
+            let shared = self.state.clone();
+            let reader = std::thread::Builder::new().name("notification setting".into()).spawn(move || {
+                let value = read();
+                let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+                (state.value, state.reading) = (Some(value), false);
+            });
+            if let Err(e) = reader {
+                tracing::debug!("notification setting not read: {e}");
+                state.reading = false;
+            }
+        }
+        state.value
+    }
+}
+
 /// A future a notification backend hands back.
 type Fut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -259,10 +314,10 @@ impl Backend for System {
                 // (Replaced in place by its tag: a newer toast with it takes the older one's place.)
                 let sound = bubble.sound.as_deref() == Some("system") && bubble.by == SoundBy::Notification;
                 let tag = bubble.tag.clone();
-                let (shown, setting) = tokio::task::spawn_blocking(move || toast::show(&bubble.title, &bubble.body, sound, bubble.tag.as_deref(), &toast::own_group()).map(|t| (t, toast::setting()))).await??;
+                let shown = tokio::task::spawn_blocking(move || toast::show(&bubble.title, &bubble.body, sound, bubble.tag.as_deref(), &toast::own_group())).await??;
                 // (Kept as shown either way: withdrawing a toast Windows dropped does no harm, and the setting may read
-                // wrongly where no one is signed in at the desktop.)
-                match windows_shown_log(setting) {
+                // wrongly where no one is signed in at the desktop. Read off the show: it has been seen to hang.)
+                match windows_shown_log(toast::cached_setting()) {
                     (tracing::Level::INFO, line) => tracing::info!(?tag, "{line}"),
                     (_, line) => tracing::debug!(?tag, "{line}"),
                 }
@@ -703,6 +758,23 @@ pub mod toast {
         ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).and_then(|n| n.Setting()).map(|s| s.0).ok()
     }
 
+    /// [`setting`] as last read, refreshed in the background at most every [`super::SETTING_REFRESH`].
+    #[cfg(windows)]
+    static SETTING: std::sync::LazyLock<super::Cached> = std::sync::LazyLock::new(|| super::Cached::new(super::SETTING_REFRESH));
+
+    /// Windows' notification setting as last read, at once (None: not read yet, or it can't be read); a new read starts
+    /// in the background when one is due.
+    #[cfg(windows)]
+    pub fn cached_setting() -> Option<i32> {
+        SETTING.get(std::time::Instant::now(), setting).flatten()
+    }
+
+    /// Whether a read of Windows' notification setting is back (until then F6 reads "reading…").
+    #[cfg(windows)]
+    pub fn setting_known() -> bool {
+        SETTING.get(std::time::Instant::now(), setting).is_some()
+    }
+
     #[cfg(windows)]
     impl super::Shown for Toast {
         /// (Replaced by its tag, not the server's id.)
@@ -1031,6 +1103,9 @@ pub struct RouteInfo {
 impl Notifier {
     /// Notifications through the system's notifier.
     pub fn new() -> Notifier {
+        // (Windows' notification setting is read early, so the first toast's log line has it.)
+        #[cfg(windows)]
+        toast::cached_setting();
         Notifier::with(Arc::new(System))
     }
 
@@ -1125,7 +1200,7 @@ impl Notifier {
         }
         #[cfg(windows)]
         {
-            let (shown_by, click) = windows_route(toast::setting());
+            let (shown_by, click) = if toast::setting_known() { windows_route(toast::cached_setting()) } else { (tr(SETTING_READING).into_owned(), tr(SETTING_READING).into_owned()) };
             return RouteInfo { shown_by, sound_by, click };
         }
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1138,9 +1213,13 @@ impl Notifier {
         (!self.inner.route_reading.swap(true, Ordering::Relaxed)).then(|| RouteCheck(self.clone()))
     }
 
-    /// Whether the notification server has been found (until then the sound's route reads "not known yet").
+    /// Whether the notification server has been found (until then the sound's route reads "not known yet") and, for
+    /// Windows' toasts, their notification setting read (until then who shows them reads "reading…").
     pub fn route_known(&self) -> bool {
-        self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+        let found = self.inner.shared.environment.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+        #[cfg(windows)]
+        let found = found && (self.via_terminal() || toast::setting_known());
+        found
     }
 
     /// Whether the terminal shows the bubbles itself (and so brings its own window forward on a click).
@@ -1290,7 +1369,7 @@ fn windows_route(setting: Option<i32>) -> (String, String) {
 fn windows_shown_log(setting: Option<i32>) -> (tracing::Level, String) {
     let why = match setting {
         Some(0) => return (tracing::Level::DEBUG, "notification shown by Windows".into()),
-        None => return (tracing::Level::DEBUG, "notification handed to Windows (its notification setting could not be read)".into()),
+        None => return (tracing::Level::DEBUG, "notification handed to Windows (its notification setting is not known)".into()),
         Some(1) => WIN_OFF_APP,
         Some(2) => WIN_OFF_USER,
         Some(3) => WIN_OFF_POLICY,
@@ -1330,6 +1409,8 @@ fn mac_route(sender: &str, clicks: bool) -> (String, String) {
 
 /// F6's "On this machine" words: how bubbles, their sound and clicks go. (On every platform, for the locale template.)
 const SOUND_NOT_KNOWN: &str = "not known yet";
+/// Windows' notification setting is being read (F6, who shows the toasts and what a click does).
+const SETTING_READING: &str = "reading…";
 const SOUND_BY_NOTIFICATION: &str = "the notification";
 const SOUND_BY_NOBODY_SYSTEM: &str = "nobody (the server has no sound of its own to play)";
 const SOUND_BY_TTYAK: &str = "ttyak";
@@ -1352,7 +1433,7 @@ const MAC_SHOWN: &str = "macOS's notifications, as {name}'s (only where {name}'s
 const MAC_TAB: &str = "{name}'s tab";
 const MAC_CLICK_HEARD: &str = "opens it in ttyak and brings {forward} forward (up to 32 waiting at once)";
 const MAC_CLICK_UNHEARD: &str = "brings {name} forward (ttyak isn't told)";
-pub const ROUTE_WORDS: &[&str] = &[SOUND_NOT_KNOWN, SOUND_BY_NOTIFICATION, SOUND_BY_NOBODY_SYSTEM, SOUND_BY_TTYAK, SOUND_BY_NOBODY_OFF, SHOWN_BY_SYSTEM, CLICK_SYSTEM, CLICK_TERMINAL, NOTHING_WHY, NOTHING_TO_CLICK, WIN_OFF_APP, WIN_OFF_USER, WIN_OFF_POLICY, WIN_OFF_MANIFEST, WIN_SHOWN, WIN_CLICK, MAC_OFF_FINDER, MAC_OFF_KITTY, MAC_NOT_TRIED, MAC_SHOWN, MAC_TAB, MAC_CLICK_HEARD, MAC_CLICK_UNHEARD];
+pub const ROUTE_WORDS: &[&str] = &[SOUND_NOT_KNOWN, SETTING_READING, SOUND_BY_NOTIFICATION, SOUND_BY_NOBODY_SYSTEM, SOUND_BY_TTYAK, SOUND_BY_NOBODY_OFF, SHOWN_BY_SYSTEM, CLICK_SYSTEM, CLICK_TERMINAL, NOTHING_WHY, NOTHING_TO_CLICK, WIN_OFF_APP, WIN_OFF_USER, WIN_OFF_POLICY, WIN_OFF_MANIFEST, WIN_SHOWN, WIN_CLICK, MAC_OFF_FINDER, MAC_OFF_KITTY, MAC_NOT_TRIED, MAC_SHOWN, MAC_TAB, MAC_CLICK_HEARD, MAC_CLICK_UNHEARD];
 
 /// How long after F6's "Send a test notification" the bell rings (if the terminal is then unfocused and the bell is on):
 /// time to switch away. Part of the test action, not a setting.
@@ -1618,6 +1699,10 @@ pub mod fake {
         /// Bubbles can't be replaced in place (macOS): each gets an id of its own and is closed to be replaced.
         closes_to_replace: AtomicBool,
         clicks: Mutex<HashMap<u32, Arc<tokio::sync::Notify>>>,
+        /// How long a read of Windows' notification setting takes, how many were started, and what they found.
+        setting_slow: Mutex<std::time::Duration>,
+        setting_reads: AtomicU32,
+        setting: Cached,
     }
 
     impl Default for Server {
@@ -1637,6 +1722,9 @@ pub mod fake {
                 no_files: AtomicBool::default(),
                 closes_to_replace: AtomicBool::default(),
                 clicks: Mutex::default(),
+                setting_slow: Mutex::default(),
+                setting_reads: AtomicU32::default(),
+                setting: Cached::new(SETTING_REFRESH),
             }
         }
     }
@@ -1700,6 +1788,28 @@ pub mod fake {
             self.hung.store(hung, Ordering::Relaxed);
         }
 
+        /// From now on a read of Windows' notification setting takes `slow`.
+        pub fn set_setting_slow(&self, slow: std::time::Duration) {
+            *self.setting_slow.lock().unwrap() = slow;
+        }
+
+        /// How many reads of Windows' notification setting were started.
+        pub fn setting_reads(&self) -> u32 {
+            self.setting_reads.load(Ordering::Relaxed)
+        }
+
+        /// Windows' notification setting (Enabled) as last read, as [`toast::cached_setting`] has it: a read takes the
+        /// time [`Server::set_setting_slow`] says.
+        fn cached_setting(self: &Arc<Self>) -> Option<i32> {
+            let server = self.clone();
+            let read = move || {
+                server.setting_reads.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(*server.setting_slow.lock().unwrap());
+                Some(0)
+            };
+            self.setting.get(std::time::Instant::now(), read).flatten()
+        }
+
         /// The user clicks bubble `id` (the server then takes it away).
         pub fn click(&self, id: u32) {
             self.knock(id).notify_one();
@@ -1725,6 +1835,8 @@ pub mod fake {
                 }
                 let in_place = b.replaces.filter(|_| !server.closes_to_replace.load(Ordering::Relaxed));
                 let id = in_place.unwrap_or_else(|| server.last_id.fetch_add(1, Ordering::Relaxed) + 1);
+                // (As Windows' toasts: the notification setting as last read, for the log line.)
+                let _ = server.cached_setting();
                 Ok(Arc::new(OnScreen { id, server }) as Arc<dyn Shown>)
             })
         }
@@ -2024,7 +2136,7 @@ mod tests {
     fn a_toast_windows_drops_is_logged_as_not_shown() {
         use tracing::Level;
         assert_eq!(windows_shown_log(Some(0)), (Level::DEBUG, "notification shown by Windows".to_string()));
-        assert_eq!(windows_shown_log(None), (Level::DEBUG, "notification handed to Windows (its notification setting could not be read)".to_string()));
+        assert_eq!(windows_shown_log(None), (Level::DEBUG, "notification handed to Windows (its notification setting is not known)".to_string()));
         // Dropped: in the log at its default level (ttyak=info), as the wiki says.
         for (setting, why) in [(1, "Windows PowerShell's notifications are turned off"), (2, "for this user"), (3, "group policy"), (4, "manifest")] {
             let (level, line) = windows_shown_log(Some(setting));
@@ -2539,6 +2651,77 @@ mod tests {
         n.show(note("D2", "2.0", None, "next"), None, Box::new(|_| {}));
         tokio::time::timeout(std::time::Duration::from_secs(3), n.settled()).await.unwrap();
         assert_eq!(server.calls(), [shown(None, "stuck"), shown(None, "next")]);
+    }
+
+    /// A read of Windows' notification setting that takes long (#17) neither holds a show back nor leaves its bubble
+    /// untracked.
+    #[tokio::test]
+    async fn a_slow_setting_never_delays_a_show() {
+        let (n, server) = Notifier::fake();
+        server.set_setting_slow(SERVER_WAIT * 3);
+        let started = std::time::Instant::now();
+        n.show(note("D1", "1.0", None, "one"), None, Box::new(|_| {}));
+        n.show(note("D2", "2.0", None, "two"), None, Box::new(|_| {}));
+        n.settled().await;
+        assert!(started.elapsed() < SERVER_WAIT, "{:?}", started.elapsed());
+        let d1 = Key { workspace: 0, channel: "D1".into() };
+        assert!(n.live(&d1).await, "tracked");
+        n.withdraw(&d1);
+        n.settled().await;
+        assert_eq!(server.calls(), [shown(None, "one"), shown(None, "two"), fake::Call::Close(1)]);
+        // (The read's thread may not have started yet.)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.setting_reads() == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(server.setting_reads(), 1, "one read at a time");
+    }
+
+    #[test]
+    fn needs_refresh_when_never_read() {
+        let now = std::time::Instant::now();
+        assert!(needs_refresh(now, None, SETTING_REFRESH));
+    }
+
+    #[test]
+    fn needs_refresh_not_within_the_period() {
+        let last = std::time::Instant::now();
+        assert!(!needs_refresh(last, Some(last), SETTING_REFRESH));
+        assert!(!needs_refresh(last + SETTING_REFRESH - std::time::Duration::from_millis(1), Some(last), SETTING_REFRESH));
+    }
+
+    #[test]
+    fn needs_refresh_after_the_period() {
+        let last = std::time::Instant::now();
+        assert!(needs_refresh(last + SETTING_REFRESH, Some(last), SETTING_REFRESH));
+        assert!(needs_refresh(last + SETTING_REFRESH * 3, Some(last), SETTING_REFRESH));
+    }
+
+    /// The value comes at once (none until the first read is back), the read on a thread of its own, one at a time.
+    #[test]
+    fn a_cached_value_is_read_in_the_background_one_at_a_time() {
+        let cache = Cached::new(SETTING_REFRESH);
+        let (reads, (go, wait)) = (Arc::new(std::sync::atomic::AtomicUsize::new(0)), std::sync::mpsc::channel::<()>());
+        let wait = Arc::new(Mutex::new(wait));
+        let read = || {
+            let (reads, wait) = (reads.clone(), wait.clone());
+            move || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                let _ = wait.lock().unwrap().recv();
+                Some(3)
+            }
+        };
+        let now = std::time::Instant::now();
+        assert_eq!(cache.get(now, read()), None, "not read yet");
+        assert_eq!(cache.get(now + SETTING_REFRESH * 2, read()), None, "still being read");
+        go.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while cache.get(now, read()).is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(cache.get(now, read()), Some(Some(3)));
+        assert_eq!(reads.load(Ordering::Relaxed), 1, "one read at a time, none again within the period");
     }
 
     #[tokio::test]

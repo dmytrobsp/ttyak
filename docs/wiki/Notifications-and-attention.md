@@ -238,7 +238,8 @@ Can't do on macOS:
 ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu shortcut),
 so its toasts go out as Windows PowerShell's — they say "Windows PowerShell". F6 and `ttyak ctl check` say when Windows
 has PowerShell's notifications turned off (they would vanish without a trace; tried), and the log says such a toast
-was not shown.
+was not shown. That setting is read in the background, never while a toast goes out: F6 reads "reading…" until the
+first answer.
 
 Each toast carries its conversation as its tag, in a group of its profile's own: two ttyaks on other profiles leave
 each other's alone (tried: two profiles in two Windows Terminal tabs each get their own toast and notification-center
@@ -247,7 +248,7 @@ a new popup), and reading takes it off the screen and out of the notification ce
 
 A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and brings the console's window
 forward: Windows Terminal's window (Windows Terminal 1.14 and newer own the hidden window of the console they give
-ttyak; older ones not tried) or conhost's own window is restored when minimised and brought to the foreground; after
+ttyak; older ones are not supported, see below) or conhost's own window is restored when minimised and brought to the foreground; after
 WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the foreground only in some
 cases (the user's last input went to it, or the program in front allows it); otherwise the window's taskbar button
 flashes instead. Tried at the desktop in Windows Terminal 1.24 and in conhost.
@@ -275,6 +276,9 @@ Follow the system's do-not-disturb asks Windows two things:
 - the documented notification state (`SHQueryUserNotificationState`): presentation mode and full-screen Direct3D count
   as on; busy (a full-screen app, presentation settings) only while that app is not ttyak's own terminal; and quiet
   time — the first hour after the first sign-in on a new install or after an upgrade — too
+
+Not supported: a full-screen ttyak in Windows Terminal older than 1.14 holds its own notifications back (it can't be
+told from another full-screen app, so it counts as busy); update Windows Terminal.
 
 While it is on, the toast still goes out, without ttyak's sound, Windows' sound or the bell (and the huddle ring keeps
 quiet): Windows' do-not-disturb files it in the notification center, as it does other apps' toasts. In a busy state

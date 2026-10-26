@@ -221,6 +221,8 @@ reason names, and choose the language again. More: [Translations](Translations#m
   Notification Center without a banner, unless "Allow notifications when mirroring or sharing the display" is on.
 - Windows: toasts come as Windows PowerShell's; when its notifications are turned off, F6 and `ttyak ctl check` say
   `Windows PowerShell's notifications are turned off (Settings → System → Notifications)`.
+- Windows: not supported: a full-screen ttyak in Windows Terminal older than 1.14 holds its own notifications back
+  (sent without sound or the bell, as for a busy Windows); update Windows Terminal.
 
 F6 → Notifications → **Send a test notification** sends one through the same route. More:
 [Desktop notifications](Notifications-and-attention#desktop-notifications),
