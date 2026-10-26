@@ -361,13 +361,13 @@ mod tests {
         let boot = serde_json::json!({"self": {"id": "UME"}, "team": {"plan": "std"}, "ims": [{"id": "D1", "user": "U2"}],
             "prefs": {"vip_users": "U2", "priority_dnd_override": true}});
         let ws = hidden_workspace(vec![bob], &boot);
-        assert!(ws.vip.contains("U2") && ws.vip_override && ws.paid);
+        assert!(ws.vip.contains("U2") && ws.vip_override && ws.paid == Some(true));
         let m = slack_core::types::Message { ts: "10.0".into(), user: Some("U2".into()), text: "hi".into(), ..Default::default() };
         let paused = Gates { paused: true, system_dnd: false, viewing: false, focus: TermFocus::Unfocused };
         let on = Switches { desktop: true, sound: false, bell: false };
         assert_eq!(outputs(&decide(&ws, 1, "D1", &m), &paused, &on), Outputs { bubble: true, sound: false, bell: false });
         let free = hidden_workspace(Vec::new(), &serde_json::json!({"team": {"plan": ""}, "prefs": {"vip_users": "U2", "priority_dnd_override": false}}));
-        assert!(!free.vip_override && !free.paid);
+        assert!(!free.vip_override && free.paid == Some(false));
     }
 
     #[test]

@@ -102,7 +102,8 @@ pub fn decide(ws: &Workspace, workspace: usize, channel: &str, m: &Message) -> D
 /// DM or group DM (`is_dm`) or mentions a person, a user group or a channel (`@here`, `@channel` and `@everyone` don't
 /// count; the mention needn't be of you). Only the pause: the level, mutes and the other rules still decide first.
 pub fn vip_passes(ws: &Workspace, m: &Message, is_dm: bool) -> bool {
-    if !ws.paid || !ws.vip_override {
+    // (A plan not known yet is taken as free.)
+    if ws.paid != Some(true) || !ws.vip_override {
         return false;
     }
     let vip = |u: Option<&str>| u.is_some_and(|u| ws.vip.contains(u));
@@ -384,7 +385,7 @@ mod tests {
         let mut w = ws();
         w.vip.insert("U2".into());
         w.vip_override = true;
-        w.paid = true;
+        w.paid = Some(true);
         w.conversations.insert("D3".into(), Conversation { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() });
         w.conversations.insert("G1".into(), Conversation { id: "G1".into(), is_mpim: true, is_member: true, ..Default::default() });
         w
@@ -450,8 +451,11 @@ mod tests {
 
     #[test]
     fn free_plan_holds_vips_back() {
-        let w = Workspace { paid: false, ..vip_ws() };
-        assert!(!bubbles(&w, "D1", &msg("U2", "hi"), &PAUSED));
+        // A plan not known yet (before the boot) too.
+        for paid in [Some(false), None] {
+            let w = Workspace { paid, ..vip_ws() };
+            assert!(!bubbles(&w, "D1", &msg("U2", "hi"), &PAUSED), "{paid:?}");
+        }
     }
 
     #[test]

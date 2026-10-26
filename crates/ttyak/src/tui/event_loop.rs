@@ -9130,11 +9130,14 @@ mod tests {
         let (url, mut asked) = fake_slack(&[]).await;
         let (mut app, _net) = test_app_at(&url);
         select_vip_override(&mut app);
-        // A free plan: nothing is sent.
-        app.change_preference();
-        assert!(!app.ws.vip_override);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(300), asked.recv()).await.is_err(), "not sent");
-        app.ws.paid = true;
+        // A plan not known yet, then a free plan: nothing is sent.
+        for paid in [None, Some(false)] {
+            app.ws.paid = paid;
+            app.change_preference();
+            assert!(!app.ws.vip_override);
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(300), asked.recv()).await.is_err(), "not sent: {paid:?}");
+        }
+        app.ws.paid = Some(true);
         for on in [true, false] {
             app.change_preference();
             assert_eq!(app.ws.vip_override, on, "at once");
@@ -9147,7 +9150,7 @@ mod tests {
     async fn always_allow_vips_goes_back_when_slack_refuses() {
         let (url, _asked) = fake_slack(&[("users.prefs.set", r#"{"ok":false,"error":"not_allowed"}"#)]).await;
         let (mut app, mut net) = test_app_at(&url);
-        app.ws.paid = true;
+        app.ws.paid = Some(true);
         select_vip_override(&mut app);
         app.change_preference();
         assert!(app.ws.vip_override, "at once");

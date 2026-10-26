@@ -187,8 +187,8 @@ pub struct Workspace {
     pub vip: std::collections::HashSet<String>,
     /// Slack's `priority_dnd_override` pref ("Always allow notifications from VIPs"): VIPs get through a pause.
     pub vip_override: bool,
-    /// The workspace is on a paid plan (boot's `team.plan` is set); VIPs need one.
-    pub paid: bool,
+    /// Whether the workspace is on a paid plan (boot's `team.plan` is set); VIPs need one. None until the boot.
+    pub paid: Option<bool>,
 }
 
 /// A huddle going on in a conversation.
@@ -847,7 +847,7 @@ impl Workspace {
         self.dnd.zone = boot["self"]["tz"].as_str().and_then(|z| z.parse().ok()).or(self.dnd.zone);
         self.starred = boot["starred"].as_array().into_iter().flatten().filter_map(|s| s.as_str()).map(String::from).collect();
         // (Slack's own test of a paid plan.)
-        self.paid = boot["team"]["plan"].as_str().is_some_and(|p| !p.is_empty());
+        self.paid = Some(boot["team"]["plan"].as_str().is_some_and(|p| !p.is_empty()));
         self.apply_prefs(&boot["prefs"]);
     }
 

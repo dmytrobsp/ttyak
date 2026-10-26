@@ -402,7 +402,9 @@ impl Field {
                 Some(DayHours::Unknown(v)) => format!("{v:?}: {UNKNOWN_SCHEDULE}"),
                 None => String::new(),
             },
-            Field::VipOverride if !ws.paid => super::i18n::tr(NEEDS_PAID_PLAN).into_owned(),
+            // The plan not known yet (before the workspace's boot).
+            Field::VipOverride if ws.paid.is_none() => "…".into(),
+            Field::VipOverride if ws.paid == Some(false) => super::i18n::tr(NEEDS_PAID_PLAN).into_owned(),
             Field::VipOverride => yes(ws.vip_override),
             Field::Vips if ws.vip.is_empty() => "none".into(),
             Field::Vips => {
@@ -1392,7 +1394,8 @@ impl Prefs {
             }
             Field::ChannelDefault => Some(SlackChange::ChannelDefault(next_level(&ws.notify.global))),
             Field::Vips => None,
-            Field::VipOverride if !ws.paid => {
+            Field::VipOverride if ws.paid.is_none() => None,
+            Field::VipOverride if ws.paid == Some(false) => {
                 self.saved = Some(Err(super::i18n::tr(NEEDS_PAID_PLAN).into_owned()));
                 None
             }
@@ -1886,7 +1889,7 @@ mod tests {
         for word in ["Always allow notifications from VIPs", NEEDS_PAID_PLAN, VIP_OVERRIDE_FAILED] {
             assert!(translatable().iter().any(|t| t == word), "{word} is translatable");
         }
-        let mut ws = Workspace { paid: true, ..Default::default() };
+        let mut ws = Workspace { paid: Some(true), ..Default::default() };
         let mut p = Prefs { category: notifications, selected: vips + 1, ..Default::default() };
         assert!(p.on_slack(&keys), "kept on Slack");
         assert_eq!(Field::VipOverride.value(&ws, None, &keys), "off");
@@ -1895,10 +1898,25 @@ mod tests {
         assert_eq!(Field::VipOverride.value(&ws, None, &keys), "on");
         assert_eq!(p.change(&mut ws, None, &keys), Some(SlackChange::VipOverride(false)));
         // A free plan: said on the row, and Enter changes nothing.
-        let mut ws = Workspace::default();
+        let mut ws = Workspace { paid: Some(false), ..Default::default() };
         assert_eq!(Field::VipOverride.value(&ws, None, &keys), NEEDS_PAID_PLAN);
         assert_eq!(p.change(&mut ws, None, &keys), None);
         assert_eq!(p.saved, Some(Err(NEEDS_PAID_PLAN.into())));
+        assert!(!ws.vip_override);
+    }
+
+    /// Before the workspace's boot (just after the start or a switch) its plan is not known: the row says nothing of it
+    /// yet, and Enter does nothing.
+    #[test]
+    fn the_vip_row_waits_for_the_workspace_s_plan() {
+        let keys = Keymap::default();
+        let notifications = CATEGORIES.iter().position(|c| c.0 == "Notifications").unwrap();
+        let selected = CATEGORIES[notifications].1.iter().position(|f| *f == Field::VipOverride).unwrap();
+        let mut ws = Workspace::default();
+        let mut p = Prefs { category: notifications, selected, ..Default::default() };
+        assert_eq!(Field::VipOverride.value(&ws, None, &keys), "…");
+        assert_eq!(p.change(&mut ws, None, &keys), None);
+        assert_eq!(p.saved, None, "nothing said");
         assert!(!ws.vip_override);
     }
 
