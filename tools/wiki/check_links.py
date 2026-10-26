@@ -17,6 +17,8 @@ _CODE = re.compile(r"`[^`]*`")
 _ABS_WIKI = re.compile(re.escape(REPO) + r"/wiki/([^\s)#\"'<>]+)(?:#([^\s)\"'<>]*))?")
 _ABS_README = re.compile(re.escape(REPO) + r"/?#([^\s)\"'<>]*)")
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+# The repository's root, found from this script's place (tools/wiki/), so the defaults hold from any folder.
+ROOT = Path(__file__).resolve().parents[2]
 # What `check_links.py` checks without arguments besides the wiki and the README (globs, from the repo root).
 DEFAULT_EXTRA = ["site/index.html", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "docs/*.md", "docs/agents/*.md",
                  "docs/distribution/*.md", "docs/protocol/*.md", "docs/history/README.md",
@@ -127,11 +129,11 @@ def check(wiki, readme, extra):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--wiki", default="docs/wiki")
-    ap.add_argument("--readme", default="README.md")
+    ap.add_argument("--wiki", default=str(ROOT / "docs" / "wiki"))
+    ap.add_argument("--readme", default=str(ROOT / "README.md"))
     ap.add_argument("extra", nargs="*", default=None)
     a = ap.parse_args(argv)
-    extra = a.extra if a.extra else sorted({p for g in DEFAULT_EXTRA for p in glob.glob(g)})
+    extra = a.extra if a.extra else sorted({str(ROOT / p) for g in DEFAULT_EXTRA for p in glob.glob(g, root_dir=ROOT)})
     bad = check(Path(a.wiki), Path(a.readme), [Path(e) for e in extra])
     for line in bad:
         print(line)

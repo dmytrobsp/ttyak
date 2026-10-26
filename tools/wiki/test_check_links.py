@@ -1,4 +1,5 @@
 """Tests for check_links.py: heading slugs, anchors, relative and absolute links, the command line."""
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -112,8 +113,17 @@ class CheckLinks(unittest.TestCase):
         for d in ("distribution", "protocol"):
             (t.root / "docs" / d).mkdir()
             (t.root / "docs" / d / "x.md").write_text("# X\n[gone](GONE-%s.md)\n" % d, encoding="utf-8")
-        r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, cwd=t.root)
+        (t.root / "docs" / "wiki" / "Home.md").write_text("# Home\n[a](Gone)\n", encoding="utf-8")
+        # The defaults are found from the script's own place (repo root = two folders above tools/wiki), not from
+        # the folder it is run in: a copy of the script in the fake repo, run from somewhere else.
+        (t.root / "tools" / "wiki").mkdir(parents=True)
+        shutil.copy(SCRIPT, t.root / "tools" / "wiki" / "check_links.py")
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        r = subprocess.run([sys.executable, str(t.root / "tools" / "wiki" / "check_links.py")], capture_output=True,
+                           text=True, cwd=elsewhere.name)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("Home.md:2: Gone", r.stdout)
         self.assertIn("workflow.md:2: ../GONE.md", r.stdout)
         self.assertIn("x.md:2: GONE-distribution.md", r.stdout)
         self.assertIn("x.md:2: GONE-protocol.md", r.stdout)
