@@ -76,7 +76,7 @@ def build_fixtures(root):
                 info = zipfile.ZipInfo(exe)
                 info.external_attr = 0o755 << 16
                 z.writestr(info, STUB.format(platform=platform, version=version))
-                for extra in ("README.md", "LICENSE-MIT", "LICENSE-APACHE"):
+                for extra in ("LICENSE-MIT", "LICENSE-APACHE"):
                     z.writestr(extra, extra + "\n")
             digest = sha256(os.path.join(d, name))
             if version == "6.6.6" and platform == "x86_64-linux":

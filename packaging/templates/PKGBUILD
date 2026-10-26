@@ -21,7 +21,6 @@ sha256sums_aarch64=({{sha256_aarch64_linux}})
 
 package() {
 	install -Dm755 ttyak "$pkgdir/usr/bin/ttyak"
-	install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 	install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
 	install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }

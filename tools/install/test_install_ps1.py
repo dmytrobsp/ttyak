@@ -152,7 +152,7 @@ def build_fixtures(root, stub):
                 z.writestr("sub/ttyak.exe" if version == "0.9.4" else "ttyak.exe", exe)
                 if version == "0.9.5":
                     z.writestr("../../../evil.txt", "evil\n")
-                for extra in ("README.md", "LICENSE-MIT", "LICENSE-APACHE"):
+                for extra in ("LICENSE-MIT", "LICENSE-APACHE"):
                     z.writestr(extra, extra + "\n")
             with open(os.path.join(d, name), "rb") as f:
                 digest = sha256(f.read())

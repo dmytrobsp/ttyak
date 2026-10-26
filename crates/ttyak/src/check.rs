@@ -65,7 +65,7 @@ const NO_ESCAPES: &str = "This console does not take escape sequences (its virtu
 const NOT_A_TERMINAL: &str = "Not a terminal (stdin or stdout is not one: piped or redirected): the terminal part is skipped. Run it in your terminal.";
 const GLYPHS_HEAD: &str = "Glyphs: the | at the end of each line should sit in one column";
 const LOOK_FOR: &str = "Look for empty boxes or misaligned columns";
-const FONTS_HINT: &str = "Boxes: install the fonts listed under Requirements in the README, or turn on F6 → Messages & media → Show emoji as :names:. Misaligned rows: the terminal measures emoji differently.";
+const FONTS_HINT: &str = "Boxes: install the fonts listed on the wiki's Requirements page (github.com/dmytrobsp/ttyak/wiki/Requirements), or turn on F6 → Messages & media → Show emoji as :names:. Misaligned rows: the terminal measures emoji differently.";
 const LINKS_NAME: &str = "links (OSC 8)";
 const LINK_TEXT: &str = "a link to ttyak.sh";
 
@@ -341,6 +341,12 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::tui::i18n::tr;
+
+    #[test]
+    fn fonts_hint_points_at_the_wiki() {
+        assert!(FONTS_HINT.contains("wiki/Requirements"));
+        assert!(!FONTS_HINT.contains("README"));
+    }
 
     fn sample() -> Findings {
         Findings {

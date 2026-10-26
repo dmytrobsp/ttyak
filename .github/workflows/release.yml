@@ -202,12 +202,12 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/ttyak-signing.keychain-db" 2> /dev/null || true
           rm -f "$RUNNER_TEMP/ttyak-signing.p12" "$RUNNER_TEMP/ttyak-notary.p8" "$RUNNER_TEMP/ttyak-notarize.zip"
       # The plain files, not an archive: GitHub zips every artifact itself, so a run's download is one zip with
-      # the program and docs at its top. (Artifacts lose the executable bit; the release job puts it back.)
+      # the program and the licences at its top. (Artifacts lose the executable bit; the release job puts it back.)
       - name: Stage
         shell: bash
         run: |
           mkdir stage
-          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" README.md LICENSE-MIT LICENSE-APACHE stage/
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" LICENSE-MIT LICENSE-APACHE stage/
           ls -l stage
       - uses: actions/upload-artifact@v7
         with:
@@ -255,7 +255,7 @@ jobs:
         with:
           pattern: ttyak-*
           path: staged
-      # One zip per platform with the program and docs at its top (no folder, no archive inside an archive); zip keeps
+      # One zip per platform with the program and the licences at its top (no folder, no archive inside an archive); zip keeps
       # the executable bit for unzip, macOS Finder and Linux file managers.
       - name: Archives
         run: |

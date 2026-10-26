@@ -12,7 +12,7 @@
     <licenseUrl>https://github.com/dmytrobsp/ttyak#licence</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <projectSourceUrl>https://github.com/dmytrobsp/ttyak</projectSourceUrl>
-    <docsUrl>https://github.com/dmytrobsp/ttyak#readme</docsUrl>
+    <docsUrl>https://github.com/dmytrobsp/ttyak/wiki</docsUrl>
     <bugTrackerUrl>https://github.com/dmytrobsp/ttyak/issues</bugTrackerUrl>
     <tags>slack chat terminal tui cli huddles</tags>
     <summary>Slack client for the terminal. Note: choco uninstall ttyak also deletes your ttyak data.</summary>

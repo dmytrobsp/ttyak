@@ -248,10 +248,10 @@ class AllPlatforms(unittest.TestCase):
         self.assertNotIn("noextract", pb)
         package = pb[pb.index("package() {"):]
         for line in ['install -Dm755 ttyak "$pkgdir/usr/bin/ttyak"',
-                     'install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"',
                      'install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"',
                      'install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"']:
             self.assertIn("\t" + line + "\n", package)
+        self.assertNotIn("README", pb, "the README is not shipped")
         self.assertNotIn("ln ", package, "the real file at /usr/bin/ttyak, not a link")
 
     def test_srcinfo(self):
@@ -298,9 +298,10 @@ class AllPlatforms(unittest.TestCase):
                      'maintainer: "%s <%s>"' % (IDENTITY["name"], IDENTITY["email"]),
                      'homepage: "https://ttyak.sh/"', 'license: "MIT OR Apache-2.0"',
                      "  - src: ${TTYAK_DIR}/ttyak", "    dst: /usr/bin/ttyak", "      mode: 0755",
-                     "    dst: /usr/share/doc/ttyak/README.md", "    dst: /usr/share/doc/ttyak/LICENSE-MIT",
+                     "    dst: /usr/share/doc/ttyak/LICENSE-MIT",
                      "    dst: /usr/share/doc/ttyak/LICENSE-APACHE"]:
             self.assertIn("\n" + line + "\n", y)
+        self.assertNotIn("README", y, "the README is not shipped")
         self.assertNotIn("type: symlink", y, "the real file at /usr/bin/ttyak")
         self.assertIn("ttyak purge", y)
         for deps, want in [("deb", ["libasound2 (>= 1.0.16)", "libc6 (>= 2.34)", "libgcc-s1", "libstdc++6"]),

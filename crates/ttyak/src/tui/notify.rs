@@ -2025,7 +2025,7 @@ mod tests {
         use tracing::Level;
         assert_eq!(windows_shown_log(Some(0)), (Level::DEBUG, "notification shown by Windows".to_string()));
         assert_eq!(windows_shown_log(None), (Level::DEBUG, "notification handed to Windows (its notification setting could not be read)".to_string()));
-        // Dropped: in the log at its default level (ttyak=info), as the README says.
+        // Dropped: in the log at its default level (ttyak=info), as the wiki says.
         for (setting, why) in [(1, "Windows PowerShell's notifications are turned off"), (2, "for this user"), (3, "group policy"), (4, "manifest")] {
             let (level, line) = windows_shown_log(Some(setting));
             assert_eq!(level, Level::INFO, "{setting}");

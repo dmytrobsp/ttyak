@@ -92,7 +92,7 @@ jobs:
           printf x >> changed.zip
           if verify changed.zip > /dev/null 2>&1; then echo "::error::a changed copy of $ZIP passed"; exit 1; fi
           echo "a changed copy of $ZIP: refused"
-      # The zip needs ALSA's library (README: on every desktop Linux); a runner may lack it.
+      # The zip needs ALSA's library (the wiki's Requirements page: on every desktop Linux); a runner may lack it.
       - name: ALSA
         timeout-minutes: 24
         run: |
