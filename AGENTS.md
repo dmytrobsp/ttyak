@@ -40,7 +40,7 @@ cargo test                                     # all crates; the whole run befor
 cargo build --target x86_64-pc-windows-gnu     # Windows must compile too (MinGW cross-build)
 cargo test --no-run --target x86_64-pc-windows-gnu
 sh tools/check-name.sh .                       # no old project names (lines marked old-name-ok excepted)
-python3 tools/wiki/check_links.py              # wiki, README and site links
+python3 tools/wiki/check_links.py              # wiki, README, site and agent-doc links
 ```
 
 The tool tests (Python's unittest, node's test runner) are listed in [workflow.md](docs/agents/workflow.md#tests);

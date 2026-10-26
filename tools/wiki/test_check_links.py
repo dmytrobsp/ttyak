@@ -70,6 +70,41 @@ class CheckLinks(unittest.TestCase):
         t = Tree(self, {"Home": "# Home\n[a](https://example.com/x#y) [b](mailto:a@b.c) [c](img/pic.png)\n"})
         self.assertEqual(check_links.check(t.wiki, None, []), [])
 
+    def test_relative_file_links_in_other_markdown(self):
+        t = Tree(self, {"Home": "# Home\n"})
+        (t.root / "docs" / "agents").mkdir(parents=True)
+        (t.root / "tools").mkdir()
+        (t.root / "tools" / "README.md").write_text("# Tools\n## The VM\n", encoding="utf-8")
+        (t.root / "docs" / "RELEASING.md").write_text("# Releasing\n## Tag\n", encoding="utf-8")
+        page = t.root / "docs" / "agents" / "workflow.md"
+        page.write_text("# Workflow\n"
+                        "[ok](../RELEASING.md) [ok](../RELEASING.md#tag) [ok](../../tools/README.md#the-vm)\n"
+                        "[dir](../../tools/) [ok](<../RELEASING.md>) [web](https://example.com/x.md#y)\n"
+                        "[gone](../GONE.md) [anchor](../RELEASING.md#nope) [img](../images/none.png)\n"
+                        "`[code](../GONE.md)`\n", encoding="utf-8")
+        bad = check_links.check(t.wiki, None, [page])
+        self.assertEqual(len(bad), 3, bad)
+        self.assertTrue(bad[0].endswith("workflow.md:4: ../GONE.md"), bad[0])
+        self.assertTrue(bad[1].endswith("workflow.md:4: ../RELEASING.md#nope"), bad[1])
+        self.assertTrue(bad[2].endswith("workflow.md:4: ../images/none.png"), bad[2])
+
+    def test_readme_and_html_relative_links_are_not_followed(self):
+        # The wiki's publish exports only the wiki, the README and the site: their own relative files are not there
+        # (test_readme.py checks the README's).
+        t = Tree(self, {"Home": "# Home\n"}, readme="# R\n[c](CONTRIBUTING.md)\n", site='<a href="img/x.png">x</a>')
+        self.assertEqual(check_links.check(t.wiki, t.readme, [t.site]), [])
+
+    def test_cli_default_set_takes_the_agent_docs(self):
+        t = Tree(self, {"Home": "# Home\n"}, readme="# R\n")
+        (t.root / "docs" / "wiki").mkdir(parents=True)
+        (t.root / "docs" / "agents").mkdir()
+        (t.root / "AGENTS.md").write_text("# Agents\n[w](docs/agents/workflow.md)\n", encoding="utf-8")
+        (t.root / "docs" / "agents" / "workflow.md").write_text("# W\n[gone](../GONE.md)\n", encoding="utf-8")
+        r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, cwd=t.root)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("workflow.md:2: ../GONE.md", r.stdout)
+        self.assertNotIn("AGENTS.md", r.stdout)
+
     def test_cli_exit_code(self):
         t = Tree(self, {"Home": "# Home\n[a](Home)\n"}, readme="# R\n")
         run = lambda: subprocess.run([sys.executable, str(SCRIPT), "--wiki", str(t.wiki), "--readme", str(t.readme),

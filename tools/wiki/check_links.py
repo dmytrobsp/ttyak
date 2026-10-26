@@ -1,8 +1,11 @@
-"""Check the links of the wiki pages, the README and other files: page names, heading anchors, #anchors in a file."""
+"""Check the links of the wiki pages, the README and other files: page names, heading anchors, #anchors in a file,
+and relative file links (with their anchors) in other Markdown files."""
 import argparse
+import glob
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO = "https://github.com/dmytrobsp/ttyak"
 _FENCE = re.compile(r"^\s*(```|~~~)")
@@ -13,6 +16,10 @@ _LINK = re.compile(r"""\]\(\s*<?([^)\s>]+)|\bhref\s*=\s*["']([^"']+)["']""", re.
 _CODE = re.compile(r"`[^`]*`")
 _ABS_WIKI = re.compile(re.escape(REPO) + r"/wiki/([^\s)#\"'<>]+)(?:#([^\s)\"'<>]*))?")
 _ABS_README = re.compile(re.escape(REPO) + r"/?#([^\s)\"'<>]*)")
+_SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+# What `check_links.py` checks without arguments besides the wiki and the README (globs, from the repo root).
+DEFAULT_EXTRA = ["site/index.html", "AGENTS.md", "CONTRIBUTING.md", "docs/*.md", "docs/agents/*.md",
+                 "docs/history/README.md", "docs/superpowers/ledgers/README.md", "tools/README.md", "tools/*/README.md"]
 
 
 def slug(heading):
@@ -88,6 +95,9 @@ def check(wiki, readme, extra):
     bad = []
     for f in files:
         in_wiki = f in pages.values()
+        # Relative file links are followed in Markdown outside the wiki, but not in the README: the wiki's publish
+        # exports only the wiki, the README and the site (test_readme.py checks the README's own files).
+        follow_files = not in_wiki and f != readme_path and f.suffix.lower() == ".md"
         for n, target in _links(f):
             ok = True
             m = _ABS_WIKI.match(target)
@@ -99,6 +109,11 @@ def check(wiki, readme, extra):
                 ok = readme_path is None or r.group(1).lower() in anchor_set(readme_path)
             elif target.startswith("#"):
                 ok = target[1:].lower() in anchor_set(f)
+            elif follow_files and not _SCHEME.match(target) and not target.startswith("/"):
+                path, _, frag = target.partition("#")
+                dest = f.parent / unquote(path.partition("?")[0])
+                ok = dest.exists() and not (frag and dest.is_file() and dest.suffix.lower() in (".md", ".html", ".htm")
+                                            and frag.lower() not in anchor_set(dest))
             elif in_wiki and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:|^/|^\.", target):
                 page, _, frag = target.partition("#")
                 if "." in page.rsplit("/", 1)[-1]:
@@ -115,7 +130,7 @@ def main(argv=None):
     ap.add_argument("--readme", default="README.md")
     ap.add_argument("extra", nargs="*", default=None)
     a = ap.parse_args(argv)
-    extra = a.extra if a.extra else ["site/index.html"]
+    extra = a.extra if a.extra else sorted({p for g in DEFAULT_EXTRA for p in glob.glob(g)})
     bad = check(Path(a.wiki), Path(a.readme), [Path(e) for e in extra])
     for line in bad:
         print(line)
