@@ -6,7 +6,7 @@ a tracked file, or pasted into an issue. Agents read it after [AGENTS.md](../../
 live work.
 
 Each section says what it is for, then gives example values (made up). Replace them; delete a section's lines that
-don't apply and say so ("no Mac on this machine"). How to set things up is in `docs/agents/setup.md`.
+don't apply and say so ("no Mac on this machine"). How to set things up is in [setup.md](setup.md).
 
 ```markdown
 # AGENTS.local.md — <machine name>, filled in <date>
@@ -41,7 +41,7 @@ What it is for: reaching the Windows and macOS machines, and the rules for shari
   `tester`, key auth. Auto-logon: yes (console session 1). Shared with: another project's agent — check first.
   Work folder: `%USERPROFILE%\ttyak-test`. No sound card, no camera.
 - The tools that drive its desktop (interactive scheduled task, injected keys/clicks, desktop captures):
-  `~/src/vm-tools/` (or `tools/vm/` in this repository, once there).
+  `tools/vm/` in this repository, copied to `%USERPROFILE%\ttyak-test\vm` there.
 - Mac: SSH alias `mactest` (`mactest.local`, user `tester`), Apple Silicon, macOS 26, Rust via rustup, Homebrew.
   Real speakers, microphone, camera: ask first.
 

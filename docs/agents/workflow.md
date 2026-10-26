@@ -2,7 +2,7 @@
 
 The full workflow behind [AGENTS.md](../../AGENTS.md): finding where things stand, the queue, planning, executing a
 plan with subagents, making a change, verifying it, committing and pushing, docs, releasing. Live checks have their
-own page: [live-testing.md](live-testing.md). A new machine is set up with `docs/agents/setup.md`.
+own page: [live-testing.md](live-testing.md). A new machine is set up with [setup.md](setup.md).
 
 The project uses the [superpowers](https://github.com/obra/superpowers) skills for Claude Code (brainstorming, writing
 plans, subagent-driven development, test-driven development, verification before completion). An agent without them

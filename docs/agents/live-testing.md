@@ -37,7 +37,7 @@ this machine has.
 - **Posts in the test workspace** need not be deleted: it is a throwaway workspace. Drafts and files a test leaves on
   disk are still cleaned up.
 - **Never sign the test accounts out** of Slack; every email-code sign-in leaves one more session there, harmlessly.
-  Signing A and B in on a new machine is in `docs/agents/setup.md`.
+  Signing A and B in on a new machine is in [setup.md](setup.md#5-the-test-workspace).
 - One Slack user always gets the same huddle attendee id: a second session of the same account kicks the first, so live
   huddle tests top out at two people with a camera and a share.
 
@@ -187,7 +187,7 @@ Some checks need the maintainer: a real notification click, the Mac's prompts, a
 ## Test machines
 
 A Windows machine and a Mac are used for platform checks; their host aliases, users and paths are in
-`AGENTS.local.md`, and how to set one up is in `docs/agents/setup.md`.
+`AGENTS.local.md`, and how to set one up is in [setup.md](setup.md#7-the-test-machines).
 
 - **Shared machines.** Another agent may be using a test machine. Before using it check whether it is running and
   whether someone is on it (its state, logged-in users, others' processes); never shut down, restart or revert it while
@@ -200,9 +200,10 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   through nested quotes. An SSH session runs in a services session (no desktop, no notifications, no screen capture):
   to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on user;
   inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys, `mouse_event`,
-  `keybd_event`; the screen capture of that desktop, never the maintainer's). Run Windows checks this way, without
-  asking the maintainer to sit at the console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`,
-  `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test: a kitty window running `ssh -t <host> "<folder>\ttyak.exe --profile <B>"`.
+  `keybd_event`; the screen capture of that desktop, never the maintainer's): [tools/vm/](../../tools/vm/README.md).
+  Run Windows checks this way, without asking the maintainer to sit at the console. ttyak's folders there:
+  `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test: a kitty window running
+  `ssh -t <host> "<folder>\ttyak.exe --profile <B>"`.
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.

@@ -20,7 +20,7 @@ ahead, but nothing live: no running ttyak against Slack, no test machines. Ask t
 | `vendor/` | patched copies of crates (rtc-turn, crossterm) |
 | `docs/PROGRESS.md` | where the project stands now: latest release, what is in flight, outside waits, next topics |
 | `docs/history/` | the old status rows by era, with their LIVE/UNIT/NOT records and commit hashes |
-| `docs/agents/` | for agents: [workflow.md](docs/agents/workflow.md), [live-testing.md](docs/agents/live-testing.md), `setup.md` (a new machine), [local-template.md](docs/agents/local-template.md) |
+| `docs/agents/` | for agents: [workflow.md](docs/agents/workflow.md), [live-testing.md](docs/agents/live-testing.md), [setup.md](docs/agents/setup.md) (a new machine), [local-template.md](docs/agents/local-template.md) |
 | [docs/DESIGN.md](docs/DESIGN.md) | architecture and portability rules |
 | `docs/protocol/` | how the undocumented Slack endpoints ttyak uses were worked out |
 | `docs/wiki/` | the user manual, published to the GitHub wiki at each release |
