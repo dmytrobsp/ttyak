@@ -15,6 +15,10 @@ cargo test             # unit tests of all crates
 cargo test --release -p ttyak build_lines_cost -- --ignored --nocapture   # message-pane cost
 ```
 
+Agents (and anyone whose own ttyak runs from this clone's `target/release`) add `--target-dir <scratch folder>` to every
+`--release` build and test on this page, as [workflow.md](docs/agents/workflow.md#tests) does: never rebuild
+`target/release` under a running copy.
+
 `tools/container-build.sh debian|ubuntu|fedora|arch` builds and tests a clean checkout of the
 current commit in a fresh container with only the documented packages (needs podman). Run it
 before changing dependencies or build steps.

@@ -54,6 +54,7 @@ Run ttyak under a fake home in the scratch folder:
 
 ```sh
 set -euo pipefail
+REPO=<the clone>                                   # its absolute path
 FAKE=<scratch>/home                                # a literal path in your scratch folder
 mkdir -p "$FAKE"/{config,data,cache} && chmod 700 "$FAKE" "$FAKE"/*
 mkdir -p "$FAKE/config/ttyak/<A>" && install -m 600 ~/.config/ttyak/<A>/session.json "$FAKE/config/ttyak/<A>/"
@@ -69,10 +70,12 @@ ring_sound = "off"
 alone_sound = "off"
 EOF
 HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/config" XDG_DATA_HOME="$FAKE/data" XDG_CACHE_HOME="$FAKE/cache" \
-  ./target/debug/ttyak --profile <A>
+  "$REPO/target/debug/ttyak" --profile <A>
 ```
 
-- Copy only the session files you need (0600); never print them — they hold tokens. Delete the fake home after.
+- Copy only the session files you need (0600); never print them — they hold tokens. Delete the fake home after,
+  only once it is checked to lie in your scratch folder:
+  `case "$FAKE" in <scratch>/?*) rm -rf -- "${FAKE:?}" ;; *) echo "not in the scratch folder" >&2 ;; esac`.
 - A profile with two workspaces = the `workspaces` lists of two `session.json` files combined (in Python, never
   printed) into a temporary profile with a name of its own.
 - The log is `<cache>/ttyak/<profile>/ttyak.log`; `TTYAK_LOG=ttyak=debug` for detail (exactly that, not `debug`).

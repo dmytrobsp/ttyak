@@ -164,8 +164,9 @@ local file. Two ways:
    them, it reads that screen only masked: [live-testing.md](live-testing.md#checks-with-the-maintainer)):
 
    ```sh
-   cargo build
-   ./target/debug/ttyak --profile <A> auth login --email <A's address>
+   REPO=<the clone>      # its absolute path
+   cargo build --manifest-path "$REPO/Cargo.toml"
+   "$REPO/target/debug/ttyak" --profile <A> auth login --email <A's address>
    ```
 
    ttyak shows a QR code and a link; on the phone (or any browser) Slack asks for a captcha and emails a code; the
@@ -179,9 +180,9 @@ local file. Two ways:
 Then check, without posting anything:
 
 ```sh
-./target/debug/ttyak --profile <A> auth status      # the test workspace, "works"
-./target/debug/ttyak --profile <B> auth status
-./target/debug/ttyak --profile <A> ctl api dnd.info # A's do-not-disturb state, for the local file
+"$REPO/target/debug/ttyak" --profile <A> auth status      # the test workspace, "works"
+"$REPO/target/debug/ttyak" --profile <B> auth status
+"$REPO/target/debug/ttyak" --profile <A> ctl api dnd.info # A's do-not-disturb state, for the local file
 ```
 
 *Checked*: the email-code sign-in was verified LIVE on account B (2026-10-20) and is the wiki's documented way; the
