@@ -196,9 +196,7 @@ fn write_private_with(path: &Path, bytes: &[u8], protect: fn(&Path, bool) -> std
             #[cfg(not(unix))]
             let mut f = std::fs::File::create(&tmp)?;
             // Before the bytes are in it; the rename keeps the ACL.
-            if let Err(e) = protect(&tmp, false) {
-                tracing::debug!("owner-only {}: {e}", tmp.display());
-            }
+            logged(&tmp, protect(&tmp, false));
             std::io::Write::write_all(&mut f, bytes)?;
         }
         std::fs::rename(&tmp, path)
@@ -207,6 +205,19 @@ fn write_private_with(path: &Path, bytes: &[u8], protect: fn(&Path, bool) -> std
         let _ = std::fs::remove_file(&tmp);
     }
     Ok(written?)
+}
+
+/// [`owner_only`], a failure logged at debug and the caller going on (a file system without ACLs — FAT, some network
+/// shares — still gets the file: losing a sign-in would be worse).
+pub fn owner_only_or_log(path: &Path, dir: bool) {
+    logged(path, owner_only(path, dir));
+}
+
+/// Logs the failure of making `path` owner-only, if any.
+fn logged(path: &Path, made: std::io::Result<()>) {
+    if let Err(e) = made {
+        tracing::debug!("owner-only {}: {e}", path.display());
+    }
 }
 
 /// Make `path` (a folder when `dir`) the user's alone. Windows: a protected DACL granting full access to the user,
@@ -227,6 +238,9 @@ pub fn owner_only(path: &Path, dir: bool) -> std::io::Result<()> {
         let (mut present, mut defaulted, mut dacl) = (0, 0, std::ptr::null_mut::<ACL>());
         let set = if GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted) == 0 {
             Err(std::io::Error::last_os_error())
+        } else if present == 0 || dacl.is_null() {
+            // Fail closed: a null DACL would grant everyone everything.
+            Err(std::io::Error::other("no DACL in the owner-only descriptor"))
         } else {
             match SetNamedSecurityInfoW(name.as_ptr(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, std::ptr::null_mut(), std::ptr::null_mut(), dacl, std::ptr::null()) {
                 0 => Ok(()),
@@ -253,9 +267,20 @@ pub(crate) fn owner_only_sddl(user_sid: &str, dir: bool) -> String {
 }
 
 /// The SID of the user this process runs as (its token's user, not its default owner: for an elevated admin that may
-/// be Administrators), as a string.
+/// be Administrators), as a string; asked once (the status file is written often).
 #[cfg(windows)]
 pub fn user_sid() -> std::io::Result<String> {
+    static SID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(sid) = SID.get() {
+        return Ok(sid.clone());
+    }
+    let sid = token_user_sid()?;
+    Ok(SID.get_or_init(|| sid).clone())
+}
+
+/// [`user_sid`] asked of the process token.
+#[cfg(windows)]
+fn token_user_sid() -> std::io::Result<String> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -278,13 +303,15 @@ pub fn user_sid() -> std::io::Result<String> {
     }
 }
 
-/// The type of an ACE that allows (`ACCESS_ALLOWED_ACE_TYPE`).
+/// The type of an ACE that allows (`ACCESS_ALLOWED_ACE_TYPE`), for the tests of [`owner_only`].
 #[cfg(windows)]
+#[doc(hidden)]
 pub const ACCESS_ALLOWED: u8 = 0;
 
 /// What `path`'s DACL says, for the tests of [`owner_only`]: whether it is protected (inherits nothing), and each
 /// ACE's type, flags and SID.
 #[cfg(windows)]
+#[doc(hidden)]
 pub fn dacl_of(path: &Path) -> std::io::Result<(bool, Vec<(u8, u8, String)>)> {
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
@@ -700,6 +727,14 @@ mod tests {
         }
     }
 
+    /// A folder removed with what it holds when the test ends, a failed assertion too.
+    struct Temp(PathBuf);
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn owner_only_sddl_names_the_user_system_and_admins() {
         let sid = "S-1-5-21-1-2-3-1001";
@@ -711,9 +746,9 @@ mod tests {
     /// The ACL goes on the empty temporary file, before the secret is in it.
     #[test]
     fn write_private_survives_an_acl_failure() {
-        let dir = std::env::temp_dir().join(format!("ttyak-session-acl-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("session.json");
+        let dir = Temp(std::env::temp_dir().join(format!("ttyak-session-acl-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let path = dir.0.join("session.json");
         write_private_with(&path, b"{\"secret\":1}", |p, dir| {
             assert!(!dir && p.file_name().unwrap().to_string_lossy().ends_with(".tmp"), "{p:?}");
             assert_eq!(std::fs::read(p)?.len(), 0, "still empty");
@@ -721,17 +756,16 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"secret\":1}");
-        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let names: Vec<_> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["session.json"], "no temporary file left");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[cfg(windows)]
     #[test]
     fn write_private_is_owner_only_on_windows() {
-        let dir = std::env::temp_dir().join(format!("ttyak-session-dacl-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("session.json");
+        let dir = Temp(std::env::temp_dir().join(format!("ttyak-session-dacl-{}", std::process::id())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let path = dir.0.join("session.json");
         let user = user_sid().unwrap();
         // Written new, then again over the old one.
         for _ in 0..2 {
@@ -741,20 +775,12 @@ mod tests {
             assert_eq!(aces.len(), 3, "{aces:?}");
             assert_eq!(aces[0], (ACCESS_ALLOWED, 0, user.clone()), "{aces:?}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Two writers at once (two profiles' ttyaks writing `updates.json`) never mix their files: each write goes through
     /// a temporary file of its own, so the file is always one whole write and nothing is left beside it.
     #[test]
     fn writers_at_once_never_mix_their_files() {
-        /// A folder removed with what it holds when the test ends, a failed assertion too.
-        struct Temp(PathBuf);
-        impl Drop for Temp {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
         let dir = Temp(std::env::temp_dir().join(format!("ttyak-session-writers-{}", std::process::id())));
         std::fs::create_dir_all(&dir.0).unwrap();
         let path = dir.0.join("updates.json");

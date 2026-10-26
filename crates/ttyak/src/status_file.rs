@@ -92,7 +92,7 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         }
-        owner_only(dir, true);
+        slack_core::session::owner_only_or_log(dir, true);
     }
     let temp = file.with_extension(format!("tmp{}", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
@@ -103,7 +103,7 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
         options.mode(0o600);
     }
     let mut f = options.open(&temp)?;
-    owner_only(&temp, false);
+    slack_core::session::owner_only_or_log(&temp, false);
     let done = f.write_all(serde_json::to_string(s)?.as_bytes()).and_then(|()| f.flush());
     drop(f);
     match done.and_then(|()| std::fs::rename(&temp, file)) {
@@ -112,13 +112,6 @@ fn write_to(file: &Path, s: &Status) -> io::Result<()> {
             let _ = std::fs::remove_file(&temp);
             Err(e)
         }
-    }
-}
-
-/// [`slack_core::session::owner_only`], a failure logged (a file system without ACLs still gets the file).
-fn owner_only(path: &Path, dir: bool) {
-    if let Err(e) = slack_core::session::owner_only(path, dir) {
-        tracing::debug!("owner-only {}: {e}", path.display());
     }
 }
 

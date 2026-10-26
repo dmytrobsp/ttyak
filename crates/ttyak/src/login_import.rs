@@ -533,7 +533,7 @@ impl Copy {
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700).create(&dir)?;
         #[cfg(not(unix))]
         std::fs::create_dir_all(&dir)?;
-        owner_only(&dir, true);
+        session::owner_only_or_log(&dir, true);
         let name = db.file_name().ok_or_else(|| anyhow!("no file name"))?;
         let copy = Copy { dir: dir.clone(), db: dir.join(name) };
         copy_private(db, &copy.db).with_context(|| format!("copying {}", db.display()))?;
@@ -552,15 +552,8 @@ fn copy_private(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::copy(from, to)?;
     #[cfg(unix)]
     std::fs::set_permissions(to, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    owner_only(to, false);
+    session::owner_only_or_log(to, false);
     Ok(())
-}
-
-/// [`session::owner_only`], a failure logged (a file system without ACLs still gets the copy).
-fn owner_only(path: &Path, dir: bool) {
-    if let Err(e) = session::owner_only(path, dir) {
-        tracing::debug!("owner-only {}: {e}", path.display());
-    }
 }
 
 impl Drop for Copy {
@@ -1039,6 +1032,27 @@ mod tests {
         let dir = copy.dir.clone();
         drop(copy);
         assert!(!dir.exists());
+        std::fs::remove_dir_all(&profile).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cookie_copies_are_owner_only_on_windows() {
+        use slack_core::session::{ACCESS_ALLOWED, dacl_of, user_sid};
+        let profile = temp("copy-dacl");
+        let db = profile.join("cookies.sqlite");
+        std::fs::write(&db, "db").unwrap();
+        std::fs::write(profile.join("cookies.sqlite-wal"), "wal").unwrap();
+        let copy = Copy::of(&db).unwrap();
+        let user = user_sid().unwrap();
+        // The folder passes its ACEs on (object and container inherit); the copies keep their own.
+        for (p, inherit) in [(copy.dir.clone(), 3), (copy.db.clone(), 0), (copy.dir.join("cookies.sqlite-wal"), 0)] {
+            let (protected, aces) = dacl_of(&p).unwrap();
+            assert!(protected, "{p:?} inherits nothing");
+            assert_eq!(aces.len(), 3, "{p:?}: {aces:?}");
+            assert_eq!(aces[0], (ACCESS_ALLOWED, inherit, user.clone()), "{p:?}: {aces:?}");
+        }
+        drop(copy);
         std::fs::remove_dir_all(&profile).unwrap();
     }
 
