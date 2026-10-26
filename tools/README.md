@@ -10,7 +10,7 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 - `shot.sh OUT_DIR NAME` — screenshot that window (then Read the PNG).
 - `jsgrep.py PATTERN CONTEXT MAX FILE…` — regex matches with context in minified JS (ugrep chokes on wide contexts).
 - `apiargs.py METHOD DIR…` — find a Slack Web API method's webpack module and print its call sites/args.
-- `wiki/check_links.py [--wiki DIR] [--readme FILE] [EXTRA…]` — check the wiki pages', README's and site's links (page names, `#anchors`) and the relative file links of other Markdown files (by default the agent docs, `docs/*.md`, the tools' READMEs); `wiki/publish.sh [--ref REF] [--push]` — check, then mirror `docs/wiki/` at REF (default: the latest `v*` tag) into the GitHub wiki repo; nothing is pushed without `--push`.
+- `wiki/check_links.py [--wiki DIR] [--readme FILE] [EXTRA…]` — check the wiki pages', README's and site's links (page names, `#anchors`) and the relative file links of other Markdown files (by default the agent docs, `SECURITY.md`, `docs/*.md`, `docs/distribution/`, `docs/protocol/`, the tools' READMEs); `wiki/publish.sh [--ref REF] [--push]` — check, then mirror `docs/wiki/` at REF (default: the latest `v*` tag) into the GitHub wiki repo; nothing is pushed without `--push`.
 - `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
   session, keys and clicks, captures): see `vm/README.md`.
 

@@ -88,6 +88,15 @@ class CheckLinks(unittest.TestCase):
         self.assertTrue(bad[1].endswith("workflow.md:4: ../RELEASING.md#nope"), bad[1])
         self.assertTrue(bad[2].endswith("workflow.md:4: ../images/none.png"), bad[2])
 
+    def test_relative_links_with_a_query_or_encoded_characters(self):
+        t = Tree(self, {"Home": "# Home\n"})
+        (t.root / "a b.md").write_text("# A\n## Part\n", encoding="utf-8")
+        page = t.root / "page.md"
+        page.write_text("# P\n[q](a%20b.md?plain=1#part) [e](a%20b.md) [bad](a%20c.md?x=1)\n", encoding="utf-8")
+        bad = check_links.check(t.wiki, None, [page])
+        self.assertEqual(len(bad), 1, bad)
+        self.assertTrue(bad[0].endswith("page.md:2: a%20c.md?x=1"), bad[0])
+
     def test_readme_and_html_relative_links_are_not_followed(self):
         # The wiki's publish exports only the wiki, the README and the site: their own relative files are not there
         # (test_readme.py checks the README's).
@@ -100,9 +109,14 @@ class CheckLinks(unittest.TestCase):
         (t.root / "docs" / "agents").mkdir()
         (t.root / "AGENTS.md").write_text("# Agents\n[w](docs/agents/workflow.md)\n", encoding="utf-8")
         (t.root / "docs" / "agents" / "workflow.md").write_text("# W\n[gone](../GONE.md)\n", encoding="utf-8")
+        for d in ("distribution", "protocol"):
+            (t.root / "docs" / d).mkdir()
+            (t.root / "docs" / d / "x.md").write_text("# X\n[gone](GONE-%s.md)\n" % d, encoding="utf-8")
         r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, cwd=t.root)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("workflow.md:2: ../GONE.md", r.stdout)
+        self.assertIn("x.md:2: GONE-distribution.md", r.stdout)
+        self.assertIn("x.md:2: GONE-protocol.md", r.stdout)
         self.assertNotIn("AGENTS.md", r.stdout)
 
     def test_cli_exit_code(self):

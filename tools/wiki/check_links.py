@@ -18,8 +18,9 @@ _ABS_WIKI = re.compile(re.escape(REPO) + r"/wiki/([^\s)#\"'<>]+)(?:#([^\s)\"'<>]
 _ABS_README = re.compile(re.escape(REPO) + r"/?#([^\s)\"'<>]*)")
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 # What `check_links.py` checks without arguments besides the wiki and the README (globs, from the repo root).
-DEFAULT_EXTRA = ["site/index.html", "AGENTS.md", "CONTRIBUTING.md", "docs/*.md", "docs/agents/*.md",
-                 "docs/history/README.md", "docs/superpowers/ledgers/README.md", "tools/README.md", "tools/*/README.md"]
+DEFAULT_EXTRA = ["site/index.html", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md", "docs/*.md", "docs/agents/*.md",
+                 "docs/distribution/*.md", "docs/protocol/*.md", "docs/history/README.md",
+                 "docs/superpowers/ledgers/README.md", "tools/README.md", "tools/*/README.md"]
 
 
 def slug(heading):
