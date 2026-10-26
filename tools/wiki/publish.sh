@@ -78,10 +78,23 @@ if [ -d "$export_dir/docs/images" ] && [ -n "$(find "$export_dir/docs/images" -t
 fi
 
 if [ -z "$wiki_dir" ]; then wiki_dir="$work/wiki"; fi
+# The repo's own (local) credential settings, so a push from the clone uses the same helper.
+copy_credentials() {
+  local keys=() k v
+  while IFS= read -r -d '' k; do keys+=("${k%%$'\n'*}"); done < <(git -C "$repo" config --local -z --get-regexp '^credential\.' || true)
+  [ ${#keys[@]} -gt 0 ] || return 0
+  for k in "${keys[@]}"; do git -C "$wiki_dir" config --local --unset-all "$k" 2>/dev/null || true; done
+  while IFS= read -r -d '' k; do
+    v="${k#*$'\n'}"; [ "$v" = "$k" ] && v=""
+    git -C "$wiki_dir" config --local --add "${k%%$'\n'*}" "$v"
+  done < <(git -C "$repo" config --local -z --get-regexp '^credential\.' || true)
+}
 if [ -d "$wiki_dir/.git" ]; then
+  copy_credentials
   if [ -n "$(git -C "$wiki_dir" ls-remote origin)" ]; then git -C "$wiki_dir" pull -q --ff-only; fi
 else
   git clone -q "$url" "$wiki_dir"
+  copy_credentials
 fi
 if ! git -C "$wiki_dir" rev-parse -q --verify HEAD >/dev/null; then git -C "$wiki_dir" checkout -q -b master; fi
 

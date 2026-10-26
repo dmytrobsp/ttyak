@@ -143,6 +143,27 @@ class Publish(unittest.TestCase):
                              capture_output=True, text=True).stdout.strip()
         self.assertEqual(fmt, "Repo Person|repo@example.invalid|Repo Person|repo@example.invalid")
 
+    def test_clone_gets_repo_credential_entries_in_order(self):
+        key = "credential.https://example.invalid.helper"
+        git(self.repo, "config", "--local", "--add", key, "")
+        git(self.repo, "config", "--local", "--add", key, "!echo a b")
+        wd = self.tmp / "clone"
+        r = self.run_publish("--wiki-dir", str(wd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(git(wd, "config", "--local", "--get-all", key), "\n!echo a b\n")
+        # a reused clone does not accumulate duplicates
+        r = self.run_publish("--wiki-dir", str(wd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(git(wd, "config", "--local", "--get-all", key), "\n!echo a b\n")
+
+    def test_clone_without_repo_credentials_gets_none(self):
+        wd = self.tmp / "clone"
+        r = self.run_publish("--wiki-dir", str(wd))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = subprocess.run(["git", "config", "--local", "--get-regexp", "^credential\\."], cwd=wd,
+                             capture_output=True, text=True)
+        self.assertEqual(got.stdout, "")
+
     def test_refuses_without_identity(self):
         git(self.repo, "config", "--unset", "user.name")
         git(self.repo, "config", "--unset", "user.email")
