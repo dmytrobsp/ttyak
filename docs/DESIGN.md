@@ -70,7 +70,6 @@ Sessions are stored at `~/.config/ttyak/<profile>/session.json` (0600). Tokens a
 The first plan, kept for the record. Where the project stands: [PROGRESS.md](PROGRESS.md); what happened:
 [history/](history/README.md).
 
-
 1. Core: session import, API client, RTM, `ctl whoami/post/history`.
 2. TUI shell: sidebar (channels, DMs, unread markers), message pane, composer, keyboard and mouse navigation.
 3. Messaging: rendering of mrkdwn/rich_text/blocks/attachments, edit/delete/react, threads pane, @user, #channel and :emoji: autocomplete, formatting shortcuts.

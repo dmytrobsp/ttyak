@@ -89,7 +89,10 @@ A tag is pushed only with the maintainer's word.
 ## 8. Close out
 
 - Close the milestone: `gh api -X PATCH repos/dmytrobsp/ttyak/milestones/<number> -f state=closed`
-  (`gh api repos/dmytrobsp/ttyak/milestones` lists the numbers). Create the next one when its first issue is picked.
-- The release plan's ledger: the release's record (runs, timings, what was checked live and what not).
+  (`gh api repos/dmytrobsp/ttyak/milestones` lists the numbers). The next one is created when the maintainer agrees
+  to it ([workflow.md](agents/workflow.md#the-queue-github-issues)).
+- The release's record (runs, timings, what was checked live and what not): in the plan's ledger when the release
+  has a plan; otherwise in a closing comment on the milestone's last issue (GitHub milestones take no comments),
+  public wording.
 - [docs/PROGRESS.md](PROGRESS.md): rewritten for the new latest release, what is in flight and the next topics.
 - Outside waits (winget and Chocolatey moderation) go into issue #40 until they are done.
