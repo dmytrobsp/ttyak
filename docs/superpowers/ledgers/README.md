@@ -7,8 +7,9 @@ The workflow around it is in [workflow.md](../../agents/workflow.md#executing-a-
 ## Where
 
 - **Committed**: `docs/superpowers/ledgers/<plan>.md`, named like its plan (`2026-11-02-<topic>.md` for
-  `docs/superpowers/plans/2026-11-02-<topic>.md`). The controller commits it at every task boundary, in its own
-  docs-only commit (no CI runs).
+  `docs/superpowers/plans/2026-11-02-<topic>.md`). The controller commits its head (plan, design, start commit,
+  the task list) as soon as the plan starts — so a plan in flight always has a committed ledger — then again at every
+  task boundary, each time in its own docs-only commit (no CI runs).
 - **Not committed**: the bulky scratch — the rules file given to every implementer, task briefs, review packages,
   implementers' reports — in `.superpowers/sdd/<plan>/`, git-ignored. Never `git add -f` it: it can hold private
   names.
@@ -20,8 +21,8 @@ plan.
 
 ## What goes in
 
-The head says which plan and design it belongs to and the commit the plan started from. Then one entry per event, in
-order, short lines:
+The head says which plan and design it belongs to and the commit the plan started from, and lists its tasks. Then one
+entry per event, in order, short lines:
 
 - **Task status**: dispatched (with the base commit), its commits, review rounds, complete (the commit range).
 - **What was checked, per task**: `LIVE` (exercised in the real app against the test workspace, and checked on screen
@@ -41,6 +42,7 @@ Wording is public, as in commits and issues.
 # Ledger — plan docs/superpowers/plans/2026-11-02-example.md
 
 Design: docs/superpowers/specs/2026-11-02-example-design.md. Start: 1a2b3c4.
+Tasks: 1 the F6 row, 2 the help page, 3 final review.
 
 - Task 1: dispatched (base 1a2b3c4)
 - Task 1: 5d6e7f8; review: 2 minors fixed in 9a0b1c2; complete (1a2b3c4..9a0b1c2).
@@ -50,5 +52,5 @@ Design: docs/superpowers/specs/2026-11-02-example-design.md. Start: 1a2b3c4.
 - Task 2: dispatched (base 9a0b1c2)
 ```
 
-When the plan ends, the ledger stays as it is: [docs/PROGRESS.md](../../PROGRESS.md) points at the plan only while it
-is in flight.
+When the plan ends, a last entry says so ("Plan complete", with the final review's outcome) and the ledger stays as
+it is: [docs/PROGRESS.md](../../PROGRESS.md) points at the plan only while it is in flight.

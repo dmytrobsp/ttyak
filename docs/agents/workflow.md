@@ -79,8 +79,10 @@ that session.
 A controller agent runs the plan; it dispatches one implementer per task and reviewers after each.
 
 - **Ledger.** The plan's decisions are committed in
-  [`docs/superpowers/ledgers/<plan>.md`](../superpowers/ledgers/README.md) at task boundaries: each task's status and
-  commit, what was checked LIVE/UNIT/NOT, the controller's rulings, deferred items (with the issues filed for them).
+  [`docs/superpowers/ledgers/<plan>.md`](../superpowers/ledgers/README.md): its head (plan, design, start commit, the
+  task list) as soon as the plan starts, so a plan in flight always has one, then at every task boundary: each task's
+  status and commit, what was checked LIVE/UNIT/NOT, the controller's rulings, deferred items (with the issues filed
+  for them).
   Bulky scratch — the rules file, task briefs, review packages, reports — stays git-ignored in
   `.superpowers/sdd/<plan>/` (never `git add -f` it). After a crash or a lost session, the ledger and `git log` are how
   work resumes; an implementer's transcript survives and can be resumed.
