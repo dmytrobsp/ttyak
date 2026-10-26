@@ -41,6 +41,9 @@ elif os.path.exists(d) and any(os.path.samefile(p, d) for p in chain(repo)):
 # Sourced by the tests for the helpers only.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
+# Git must work on the folders named here, not on a tree the caller's environment points at.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ref="" push=0 wiki_dir=""
 while [ $# -gt 0 ]; do
@@ -126,6 +129,10 @@ if [ -d "$wiki_dir/.git" ]; then
   if [ "$have" != "$url" ]; then
     echo "refusing: --wiki-dir $wiki_dir is a git clone whose origin is '$have', not the wiki remote $url" >&2; exit 1
   fi
+  top="$(git -C "$wiki_dir" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$top" ] || ! python3 -c 'import os, sys; sys.exit(0 if os.path.samefile(sys.argv[1], sys.argv[2]) else 1)' "$top" "$wiki_dir"; then
+    echo "refusing: --wiki-dir $wiki_dir is not its own work tree (the clone's work tree is '$top')" >&2; exit 1
+  fi
   copy_credentials
   # A reused clone is only a cache: it becomes exactly the wiki's state (no local commits, edits or leftovers).
   if [ -n "$(git -C "$wiki_dir" ls-remote "$url")" ]; then
@@ -149,7 +156,7 @@ git -C "$wiki_dir" ls-files -z | (cd "$wiki_dir" && xargs -0 -r rm -f --)
 tar -C "$export_dir/docs/wiki" -c . | tar -m -C "$wiki_dir" -x
 # Empty the index so every file is hashed again: a same-size edit with an unchanged mtime must not look unchanged.
 git -C "$wiki_dir" read-tree --empty
-git -C "$wiki_dir" add -A
+git -C "$wiki_dir" add -A -f
 if git -C "$wiki_dir" diff --cached --quiet; then
   if [ "$(git -C "$wiki_dir" rev-parse -q --verify HEAD || true)" = "$remote_head" ]; then
     echo "the wiki already matches docs/wiki at $ref"

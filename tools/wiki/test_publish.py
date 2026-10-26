@@ -289,6 +289,39 @@ class Publish(unittest.TestCase):
         self.assertNotIn("dirty", self.wiki_file("Home.md"))
         self.assertNotIn("dirty", (wd / "Home.md").read_text())
 
+    def test_reused_clone_with_another_work_tree_is_refused(self):
+        wd = self.seeded_clone()
+        other = self.tmp / "other-tree"
+        other.mkdir()
+        (other / "keep.txt").write_text("keep\n", encoding="utf-8")
+        git(wd, "config", "core.worktree", str(other))
+        r = self.run_publish("--ref", "master", "--wiki-dir", str(wd), "--push")
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn("refusing", r.stderr)
+        self.assertEqual((other / "keep.txt").read_text(), "keep\n")
+        self.assertEqual(sorted(p.name for p in other.iterdir()), ["keep.txt"])
+        self.assertIn("old", self.wiki_file("Home.md"))
+
+    def test_git_environment_of_the_caller_has_no_effect(self):
+        other = self.tmp / "other-tree"
+        other.mkdir()
+        (other / "keep.txt").write_text("keep\n", encoding="utf-8")
+        wd = self.seeded_clone()
+        r = self.run_publish("--ref", "master", "--wiki-dir", str(wd), "--push",
+                             extra_env={"GIT_WORK_TREE": str(other), "GIT_DIR": str(self.repo / ".git")})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((other / "keep.txt").read_text(), "keep\n")
+        self.assertIn("new", self.wiki_file("Home.md"))
+
+    def test_an_ignore_rule_does_not_drop_a_page(self):
+        (self.repo / "docs" / "wiki" / ".gitignore").write_text("Ignored.md\n", encoding="utf-8")
+        self.write("Ignored", "# Ignored\n")
+        git(self.repo, "add", "-f", "-A")
+        git(self.repo, "commit", "-q", "-m", "ignored")
+        r = self.run_publish("--ref", "master", "--push")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.wiki_file("Ignored.md"), "# Ignored\n")
+
     def test_same_dir_spelled_otherwise_is_refused(self):
         link = self.tmp / "link"
         link.symlink_to(self.tmp)
