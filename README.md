@@ -75,7 +75,7 @@ info → Run anyway**. Or with a package manager:
 | Homebrew (macOS, Linux) | `brew install dmytrobsp/ttyak/ttyak` |
 | Scoop | `scoop bucket add ttyak https://github.com/dmytrobsp/scoop-ttyak`, then `scoop install ttyak` |
 | Chocolatey | `choco install ttyak` |
-| winget | `winget install dmytrobsp.ttyak` — not listed yet (its first version is waiting for review) |
+| winget | not listed yet (its first version is waiting for review); then: `winget install dmytrobsp.ttyak` |
 | Debian, Ubuntu · Fedora, RHEL | the release's `.deb` · `.rpm` |
 | Arch | not in the AUR yet: `makepkg -si` with the release's recipes zip |
 
@@ -88,7 +88,8 @@ Or unzip a release's zip by hand. Every way, in full:
 - an emoji font and a symbol font (macOS and Windows have them): without them emoji and symbols show as boxes;
 - on Linux, ALSA's library (`libasound.so.2`, on every desktop Linux): ttyak plays sound and huddle audio through it
   and doesn't start without it;
-- `ffmpeg` / `ffprobe` (optional): video, cameras and screen sharing;
+- `ffmpeg` / `ffprobe` (optional): video, cameras and screen sharing (on Wayland, screen sharing goes through
+  GStreamer with the PipeWire plugin instead);
 - a terminal with graphics, such as kitty, WezTerm or foot (optional): real pictures instead of half blocks;
 - a notification server on Linux (optional): desktop notifications.
 
