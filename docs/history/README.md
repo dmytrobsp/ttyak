@@ -41,6 +41,11 @@ The names of the test workspace, its channels and its people were replaced with 
 The wording is otherwise the original; the tool's `--redact` option did the replacing, from a map kept outside the
 repository.
 
+**"Sam" is not a real person.** It is a made-up name put in place of a real first name (a test account's display
+name, mostly inside quoted screen text such as `@Sam` or "Sam VIP") to keep people's names out of the public history.
+Likewise `channel-1` … `channel-6`, "Channel Five", "the test workspace", "the Windows VM", "the Mac" and `a-handle`
+are stand-ins, not real names.
+
 The first rows of `0.1-0.9.md` have no id and a short heading; they are the area names of the original table. Ten
 rows did not split into four cells (a `|` in the text); they are kept whole, with no bullets. The one line under the
 table (the test counts at 0.12.2) is the last section of `0.12.md`.
