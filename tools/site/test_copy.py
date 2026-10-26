@@ -325,6 +325,7 @@ class CopyFrom011(unittest.TestCase):
         self.assertIn("attestation", g)
         self.assertIn("Signed Windows and Linux builds are coming soon.", g)
         self.assertIn("a few days after the release", g)
+        self.assertIn("not listed yet (its first version is waiting for review); then:", g)
 
     def test_every_install_command_is_marked_to_copy(self):
         # js/copy.js adds a button to each data-copy element and copies its text without the prompt (.ps)

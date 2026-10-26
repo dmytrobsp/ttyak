@@ -93,7 +93,8 @@ def render_install(release):
         f"<li><b>Homebrew</b> (macOS, Linux) {code('brew install dmytrobsp/ttyak/ttyak')}</li>",
         f"<li><b>Scoop</b> {code('scoop bucket add ttyak https://github.com/dmytrobsp/scoop-ttyak')} "
         f"{code('scoop install ttyak')}</li>",
-        f"<li><b>winget</b> {code('winget install dmytrobsp.ttyak')}</li>",
+        f"<li><b>winget</b> not listed yet (its first version is waiting for review); then: "
+        f"{code('winget install dmytrobsp.ttyak')}</li>",
         f"<li><b>Chocolatey</b> {code('choco install ttyak')}</li>",
         f'<li><b>Debian, Ubuntu, Fedora, RHEL</b> the .deb or .rpm (amd64, arm64) from the '
         f'<a href="{esc(release["url"])}">release</a>: {code(f"sudo apt install ./ttyak_{v}_amd64.deb")} '
@@ -110,7 +111,7 @@ def render_install(release):
         "More info → Run anyway. Signed Windows and Linux builds are coming soon.</p></div></div>\n"
         f'    <p>Then sign in:</p>\n    {cmd("$", "ttyak auth login")}\n'
         f'    <h3 class="or">Or with a package manager</h3>\n    <ul class="pkgs">\n      {pkgs}\n    </ul>\n'
-        '    <p class="fine">winget and Chocolatey review each new version: they can list it a few days after the '
+        '    <p class="fine">Chocolatey reviews each new version: it can list it a few days after the '
         'release.</p>\n'
         '    <p class="verify">The macOS builds are signed and notarized by Apple. Every download has its line in '
         'SHA256SUMS and a GitHub attestation: '

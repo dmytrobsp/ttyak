@@ -357,10 +357,12 @@ class InstallTests(unittest.TestCase):
         self.assertIn("Every download has its line in SHA256SUMS and a GitHub attestation", h)
         self.assertNotIn("Every file", h)
 
-    def test_from_0_11_winget_and_chocolatey_take_days(self):
+    def test_from_0_11_winget_is_not_listed_yet_and_chocolatey_takes_days(self):
         h = F.render_install(release_at("0.11.0"))
         text = re.sub(r"<[^>]+>", "", h)
-        self.assertIn("winget and Chocolatey review each new version: they can list it a few days after the release.", text)
+        self.assertIn("winget not listed yet (its first version is waiting for review); then: winget install dmytrobsp.ttyak", text)
+        self.assertIn("Chocolatey reviews each new version: it can list it a few days after the release.", text)
+        self.assertNotIn("winget and Chocolatey", text)
         self.assertLess(text.index("choco install ttyak"), text.index("a few days"))
 
     def test_hero_before_0_11_is_as_it_was(self):
