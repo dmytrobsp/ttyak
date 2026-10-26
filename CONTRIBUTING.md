@@ -64,7 +64,8 @@ account without marking anything read: `TTYAK_FAIL=conversations.mark,subscripti
 The user manual is the [wiki](https://github.com/dmytrobsp/ttyak/wiki). Its pages are edited in `docs/wiki/` in this
 repository, with GitHub-wiki file names (`Page-Name.md`) and `[text](Page-Name)` links between pages. Check them with
 `python3 tools/wiki/check_links.py`. They are published at each release with `tools/wiki/publish.sh`; an edit made in
-GitHub's wiki editor is overwritten by the next publish.
+GitHub's wiki editor is overwritten by the next publish. The README links only pages and anchors that exist on the
+published wiki (the latest tag's `docs/wiki`); a new page is linked from the README after the release that publishes it.
 
 ## Style
 

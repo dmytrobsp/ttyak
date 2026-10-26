@@ -1,6 +1,6 @@
 # Screenshots
 
-The pictures the README and the wiki show. Everything in them is made up: the people, the workspace and the
+The pictures the README shows. Everything in them is made up: the people, the workspace and the
 conversation.
 
 | File | What it shows |

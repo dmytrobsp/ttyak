@@ -20,7 +20,8 @@ A tag is pushed only with the maintainer's word.
 
 - `Cargo.toml` (`[workspace.package] version`) and `crates/ttyak/Cargo.toml` (the `slack-core` dependency's version),
   then `cargo build` to update `Cargo.lock`. Check: `./target/debug/ttyak --version`.
-- The whole `cargo test`, then one commit `release: X.Y.Z — <one line>` with those three files, pushed to master.
+- The attestation example in `docs/wiki/Verifying-downloads.md` names X.Y.Z (see step 7).
+- The whole `cargo test`, then one commit `release: X.Y.Z — <one line>` with those four files, pushed to master.
 - Wait for CI on it (one waiter: `gh run watch <id> --exit-status`).
 
 ## 3. Dry run
@@ -69,9 +70,19 @@ A tag is pushed only with the maintainer's word.
   maintainer's word, publish them at the new tag: `tools/wiki/publish.sh` (it defaults to the latest `v*` tag; it
   prints the identity it commits as and the wiki remote, and pushes nothing). Then `tools/wiki/publish.sh --push` —
   only with the maintainer's word.
+- The attestation example in `docs/wiki/Verifying-downloads.md` names the new version (the "for version …" line, the
+  zip name and `refs/tags/v…`, and the tag in the sentence below it). The wiki is published from the tag, so that
+  edit is part of the bump (step 2). Before publishing, run the command on the new zip, and once with another tag,
+  and check that the quoted failure wording ("expected SourceRepositoryRef to be refs/tags/…") still matches what
+  `gh` prints; if it doesn't, fix the page on master (it goes out with the next publish).
 - The first release without the README in its zips and packages: the zip sentence in `docs/wiki/Install.md` must read
-  right ("0.12.1 and older: the README too" can stay), and once winget lists ttyak, the winget wording on the wiki,
-  the README and the site changes from "can list it a few days after the release" to listed.
+  right ("0.12.1 and older: the README too" can stay).
+- Once winget lists ttyak, the lines that state winget's status change to say it is listed: the winget row of the
+  package table in `README.md` ("not listed yet …"), `docs/wiki/Install.md` ("winget has not listed ttyak yet …",
+  under the package table), `docs/wiki/Troubleshooting.md` ("winget finds nothing": "winget has not listed ttyak
+  yet …"), and on the site `tools/site/fill.py` (the winget item of the package list and the note "winget and
+  Chocolatey review each new version: they can list it a few days after the release"; check both still read right),
+  then `python3 tools/site/fill.py site`.
 
 ## 8. Close out
 
