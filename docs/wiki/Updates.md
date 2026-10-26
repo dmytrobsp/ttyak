@@ -43,7 +43,7 @@ It shows the new version, its date and the version you have, with a link to the 
 - a copy the install script put in a folder ttyak can write: **Update now** downloads the new version, checks it
   against the release's `SHA256SUMS` (on macOS also its signature: see [Verifying downloads](Verifying-downloads)) and
   puts it in place. ttyak never restarts by itself: restart it when you are ready. Cancel (or Esc) during the download
-  stops it, and nothing is changed.
+  stops it, and nothing is changed; quitting while the new version is put in place waits for that to finish.
 - a copy the install script put in a folder ttyak cannot write: the install one-liner for that folder, to run as
   someone who can write there
 - Homebrew, Scoop, winget, Chocolatey: the command to run (Copy the command)

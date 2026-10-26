@@ -730,17 +730,43 @@ async fn self_update_from(latest: &Latest, install: &Install, progress: &Progres
         None => bail!("the release's SHA256SUMS has no line for {name}"),
     }
     progress.begin_install()?;
-    // Unpacking and moving files: off the async threads, and no longer cancelled.
+    // Unpacking and moving files: off the async threads, no longer cancelled, and waited for at exit.
     let version = latest.version.to_string();
     let verifier = release.verifier;
-    tokio::task::spawn_blocking(move || {
+    on_install_thread(move || {
         let leftovers = leftovers;
         install_from(&download, &exe, &version, verifier)?;
         drop(leftovers);
         Ok(exe)
-    })
+    })?
     .await
     .context("the update stopped")?
+}
+
+/// The installs under way, each on a thread of its own: ttyak's exit waits for them ([`finish_installs`]), so a quit
+/// never leaves one half done.
+static INSTALLS: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> = std::sync::Mutex::new(Vec::new());
+
+/// `install` on a thread of its own that the exit waits for; its result comes on the receiver.
+fn on_install_thread<T: Send + 'static>(install: impl FnOnce() -> T + Send + 'static) -> Result<tokio::sync::oneshot::Receiver<T>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut installs = INSTALLS.lock().unwrap_or_else(|e| e.into_inner());
+    installs.retain(|t| !t.is_finished());
+    installs.push(std::thread::Builder::new().name("ttyak-install".into()).spawn(move || drop(tx.send(install()))).context("could not start the install")?);
+    Ok(rx)
+}
+
+/// Whether an install is under way.
+pub fn install_under_way() -> bool {
+    INSTALLS.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|t| !t.is_finished())
+}
+
+/// Wait for the installs under way to end (at exit).
+pub fn finish_installs() {
+    let installs = std::mem::take(&mut *INSTALLS.lock().unwrap_or_else(|e| e.into_inner()));
+    for install in installs {
+        let _ = install.join();
+    }
 }
 
 /// The executable from the archive `zip` put in place of `exe` (once `verifier` finds it signed as
@@ -1799,6 +1825,44 @@ mod tests {
         let e = tokio::time::timeout(Duration::from_secs(5), fixture.update_within(&latest, &install, &Progress::default(), Duration::from_millis(300))).await.expect("given up within its own timeout").unwrap_err();
         assert!(format!("{e:#}").contains("could not download"), "{e:#}");
         assert!(!temp.listing().iter().any(|n| n.starts_with(".ttyak-update-")), "{:?}", temp.listing());
+    }
+
+    /// No signatures, read slowly: an install that takes a while.
+    struct Slow;
+
+    impl Verifier for Slow {
+        fn team(&self, _: &Path) -> Result<Option<String>> {
+            std::thread::sleep(Duration::from_millis(1500));
+            Ok(None)
+        }
+
+        fn holds(&self, _: &Path, _: &str) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// Quitting while the new ttyak is put in place: the runtime's exit cuts its blocking work short, but the
+    /// install finishes before the exit goes on.
+    #[test]
+    fn an_install_under_way_finishes_before_the_exit() {
+        let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let temp = Temp::new("install-at-exit");
+        let zip = archive(&[(EXE, b"new ttyak")]);
+        let (install, latest, fixture) = runtime.block_on(release(&temp, zip.clone(), Some(sums_for(&zip)), None, None));
+        let progress = std::sync::Arc::new(Progress::default());
+        runtime.spawn({
+            let progress = progress.clone();
+            async move { fixture.update_verified(&latest, &install, &progress, &Slow).await }
+        });
+        let started = std::time::Instant::now();
+        while !progress.installing() {
+            assert!(started.elapsed() < Duration::from_secs(10), "the install never started");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        runtime.shutdown_timeout(Duration::from_millis(10));
+        finish_installs();
+        assert_eq!(std::fs::read(temp.0.join("bin").join(EXE)).unwrap(), b"new ttyak");
+        assert_eq!((temp.listing(), version_recorded(&temp)), (vec!["install.json".to_string(), EXE.into()], "9.9.9".into()));
     }
 
     #[tokio::test]

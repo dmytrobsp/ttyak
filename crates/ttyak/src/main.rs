@@ -180,11 +180,15 @@ fn main() -> Result<()> {
 /// a Windows toast call, must not hold the exit).
 const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// [`run`] on `runtime`, which then gets [`EXIT_WAIT`] for its blocking work to end (after a panic too, which then
-/// goes on).
+/// [`run`] on `runtime`, which then gets [`EXIT_WAIT`] for its blocking work to end, and an update being put in place
+/// all the time it takes (after a panic too, which then goes on).
 fn run_to_the_end(runtime: tokio::runtime::Runtime) -> Result<()> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.block_on(run())));
     runtime.shutdown_timeout(EXIT_WAIT);
+    if update::install_under_way() {
+        eprintln!("{}", tui::i18n::tr(tui::update_view::FINISHING));
+    }
+    update::finish_installs();
     result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 

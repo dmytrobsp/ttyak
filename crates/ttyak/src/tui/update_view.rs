@@ -32,6 +32,8 @@ const CANCELLED: &str = "The download was cancelled; nothing was changed.";
 pub const FAILED: &str = "Could not update: {error}";
 pub const DONE: &str = "ttyak {version} is installed — restart ttyak to use it";
 const NOT_RESTARTED: &str = "This ttyak keeps running until you quit it.";
+/// Said as ttyak quits while an update is being put in place, which it waits for.
+pub const FINISHING: &str = "Finishing the update before ttyak quits…";
 const TITLE: &str = "Update ttyak";
 const UPDATE_NOW: &str = "Update now";
 const TRY_AGAIN: &str = "Try again";
@@ -61,6 +63,7 @@ pub const WORDS: &[&str] = &[
     FAILED,
     DONE,
     NOT_RESTARTED,
+    FINISHING,
     TITLE,
     UPDATE_NOW,
     TRY_AGAIN,
