@@ -46,11 +46,11 @@ class Publish(unittest.TestCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", msg)
 
-    def run_publish(self, *args):
+    def run_publish(self, *args, extra_env=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_AUTHOR", "GIT_COMMITTER"))}
         env.update({"TTYAK_WIKI_URL": str(self.bare), "TTYAK_SITE_FORBIDDEN": str(self.forbidden),
                     "TMPDIR": str(self.tmp), "GIT_CONFIG_GLOBAL": str(self.global_cfg), "GIT_CONFIG_NOSYSTEM": "1",
-                    "HOME": str(self.tmp)})
+                    "HOME": str(self.tmp), **(extra_env or {})})
         return subprocess.run(["bash", str(SCRIPT), *args], cwd=self.repo, capture_output=True, text=True, env=env)
 
     def wiki_log(self):
@@ -125,6 +125,23 @@ class Publish(unittest.TestCase):
         self.assertIn(str(self.bare), out)
         self.assertLess(out.index("repo@example.invalid"), out.index("diff --git"))
         self.assertLess(out.index(str(self.bare)), out.index("diff --git"))
+
+    def test_refuses_when_only_global_identity(self):
+        git(self.repo, "config", "--unset", "user.name")
+        git(self.repo, "config", "--unset", "user.email")
+        r = self.run_publish("--push")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.wiki_log(), "")
+        self.assertIn("identity", r.stderr)
+
+    def test_caller_env_identity_does_not_win(self):
+        other = {"GIT_COMMITTER_NAME": "Env Person", "GIT_COMMITTER_EMAIL": "env@example.invalid",
+                 "GIT_AUTHOR_NAME": "Env Person", "GIT_AUTHOR_EMAIL": "env@example.invalid"}
+        r = self.run_publish("--push", extra_env=other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        fmt = subprocess.run(["git", "--git-dir", str(self.bare), "log", "-1", "--format=%an|%ae|%cn|%ce"],
+                             capture_output=True, text=True).stdout.strip()
+        self.assertEqual(fmt, "Repo Person|repo@example.invalid|Repo Person|repo@example.invalid")
 
     def test_refuses_without_identity(self):
         git(self.repo, "config", "--unset", "user.name")

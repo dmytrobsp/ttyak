@@ -36,8 +36,8 @@ if [ -z "$ref" ]; then
 fi
 echo "publishing docs/wiki at $ref"
 short="$(git rev-parse --short "$ref^{commit}")"
-id_name="$(git -C "$repo" config user.name || true)"
-id_email="$(git -C "$repo" config user.email || true)"
+id_name="$(git -C "$repo" config --local user.name || true)"
+id_email="$(git -C "$repo" config --local user.email || true)"
 if [ -z "$id_name" ] || [ -z "$id_email" ]; then
   echo "refusing: the repo has no git identity (set user.name and user.email in $repo)" >&2; exit 1
 fi
@@ -93,6 +93,7 @@ if git -C "$wiki_dir" diff --cached --quiet; then
   echo "the wiki already matches docs/wiki at $ref"
   exit 0
 fi
+GIT_AUTHOR_NAME="$id_name" GIT_AUTHOR_EMAIL="$id_email" GIT_COMMITTER_NAME="$id_name" GIT_COMMITTER_EMAIL="$id_email" \
 git -C "$wiki_dir" -c "user.name=$id_name" -c "user.email=$id_email" commit -q --author="$id_name <$id_email>" -m "wiki: docs/wiki at $ref ($short)"
 git -C "$wiki_dir" show --stat HEAD
 git -C "$wiki_dir" show HEAD
