@@ -1,20 +1,58 @@
 # ttyak
 
-**[ttyak.sh](https://ttyak.sh/)** — what it does, the numbers against the official app, and the downloads.
+[![Latest release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fttyak.sh%2Flatest.json&query=%24.version&label=release&prefix=v)](https://github.com/dmytrobsp/ttyak/releases/latest)
+[![CI](https://github.com/dmytrobsp/ttyak/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dmytrobsp/ttyak/actions/workflows/ci.yml)
+[![Licence: MIT or Apache-2.0](https://img.shields.io/badge/licence-MIT%20or%20Apache--2.0-blue)](#licence)
+[![Homebrew tap](https://img.shields.io/badge/homebrew-tap-orange)](https://github.com/dmytrobsp/homebrew-ttyak)
+[![Scoop](https://img.shields.io/scoop/v/ttyak?bucket=https://github.com/dmytrobsp/scoop-ttyak)](https://github.com/dmytrobsp/scoop-ttyak)
+[![Chocolatey](https://img.shields.io/chocolatey/v/ttyak)](https://community.chocolatey.org/packages/ttyak)
 
-A Slack client for the terminal, written in Rust (ratatui + crossterm). Messaging with
-threads, reactions, autocomplete and formatting; inline images, an image viewer and video with
-sound; desktop notifications; search; and **huddles with audio**.
+A Slack client for the terminal, written in Rust.
+
+**[ttyak.sh](https://ttyak.sh/)** — the site and the downloads · **[The wiki](https://github.com/dmytrobsp/ttyak/wiki)**
+— the manual
+
+![The main screen: the sidebar, a channel and a thread beside it](docs/images/main.png)
+
+<p><img src="docs/images/huddle.png" width="49%" alt="A huddle with a shared screen">
+<img src="docs/images/signin.png" width="49%" alt="The sign-in guide: a code from your email"></p>
+
+## What ttyak is
+
+ttyak does in a terminal what Slack's desktop app does in a window: messages and threads, reactions, search, pictures
+and video, desktop notifications, and huddles (calls) with audio, cameras and screen sharing. How it differs from the
+official app:
+
+- it runs in a terminal, also over SSH;
+- it is far lighter: download, disk, memory and CPU against the official app are measured on
+  [ttyak.sh](https://ttyak.sh/#numbers);
+- it is **not an official Slack app** and is not affiliated with Slack. It talks to Slack the way the web client in
+  your browser does.
 
 ttyak was called klack until 0.9 (and slacktui before that); folders of the old names are not read. <!-- old-name-ok -->
 
-It talks to Slack the way the web client does: a browser session (`xoxc-…` token plus the `d`
-cookie). It is not an official Slack app.
+What it shows and how to use it: [The screen](https://github.com/dmytrobsp/ttyak/wiki/The-screen),
+[Keys](https://github.com/dmytrobsp/ttyak/wiki/Keys), [Huddles](https://github.com/dmytrobsp/ttyak/wiki/Huddles) and
+the rest of the [wiki](https://github.com/dmytrobsp/ttyak/wiki).
+
+## Signing in
+
+**Read this first: signing in is not as smooth as in Slack's own app.** ttyak is not an official app and not a desktop
+app with windows of its own, so it can't take the "open in Slack" (`slack://`) link that Slack's sign-in ends with, and
+it doesn't use Slack's sign-in for apps. It uses a browser session instead (an `xoxc-…` token plus the `d` cookie),
+which it gets in one of three ways:
+
+- **a code from your email:** you ask Slack for a code on your phone or in any browser and type it into ttyak (works
+  over SSH and without a browser);
+- **your browser:** you sign in to Slack in a browser on the same machine, and ttyak picks the session up from the
+  browser's files;
+- **a pasted cookie:** you copy the `d` cookie from a browser's developer tools.
+
+Workspaces that require SSO or two-factor sign-in can't use the email code (ttyak shows them dim); sign in to those in
+your browser (not tried yet with such a workspace). `ttyak auth login`, or plain `ttyak` the first time, guides you.
+All of it, step by step: [Signing in](https://github.com/dmytrobsp/ttyak/wiki/Signing-in).
 
 ## Install
-
-From 0.11.0 on, one line installs ttyak, or your package manager does (0.10.0 and older: only the zips on the
-[releases page](https://github.com/dmytrobsp/ttyak/releases)).
 
 Linux and macOS:
 
@@ -28,798 +66,77 @@ Windows (PowerShell):
 irm https://ttyak.sh/install.ps1 | iex
 ```
 
-The script takes the latest release's zip for your system, checks it against the release's `SHA256SUMS` and puts
-`ttyak` in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\ttyak`) and on your PATH; `--help` (`-Help`) lists its
-flags (another version, another folder, PATH left alone). Then `ttyak auth login`, or plain `ttyak`, signs you in.
-
-The macOS builds are signed and notarized by Apple. `ttyak.exe` is **not code-signed** yet (a later release will be),
-so SmartScreen may warn the first time you run it: **More info → Run anyway**.
-
-Or with a package manager:
+The script puts the latest release in `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\ttyak`) and on your PATH,
+after checking it against the release's `SHA256SUMS`. `ttyak.exe` is not code-signed yet: if SmartScreen warns, **More
+info → Run anyway**. Or with a package manager:
 
 | Package manager | |
 |---|---|
 | Homebrew (macOS, Linux) | `brew install dmytrobsp/ttyak/ttyak` |
 | Scoop | `scoop bucket add ttyak https://github.com/dmytrobsp/scoop-ttyak`, then `scoop install ttyak` |
-| winget | `winget install dmytrobsp.ttyak` |
 | Chocolatey | `choco install ttyak` |
-| Debian, Ubuntu | the release's `.deb`: `sudo apt install ./ttyak_<version>_amd64.deb` (arm: `_arm64.deb`) |
-| Fedora, RHEL | the release's `.rpm`: `sudo dnf install ./ttyak-<version>-1.x86_64.rpm` (arm: `.aarch64.rpm`) |
-| Arch | not in the AUR yet (its sign-up is closed for now): unzip the release's `ttyak-<version>-recipes.zip` and run `makepkg -si` in its `aur` folder |
+| winget | `winget install dmytrobsp.ttyak` — not listed yet (its first version is waiting for review) |
+| Debian, Ubuntu · Fedora, RHEL | the release's `.deb` · `.rpm` |
+| Arch | not in the AUR yet: `makepkg -si` with the release's recipes zip |
 
-winget and Chocolatey review each new version: they can list it a few days after the release.
+Or unzip a release's zip by hand. Every way, in full:
+[Install](https://github.com/dmytrobsp/ttyak/wiki/Install).
 
-Homebrew on Linux uses the system's ALSA library: `libasound2` (`libasound2t64` on Ubuntu 24.04, Debian 13 and later) on
-Debian/Ubuntu, `alsa-lib` on Fedora/Arch. Homebrew's own alsa-lib is only a fallback for systems without one, and it needs
-glibc 2.38 or newer.
+### Requirements
 
-Or by hand: each release has one zip per system with `ttyak` (`ttyak.exe`), the README and the licences at its top.
-Unzip it and put `ttyak` somewhere on your PATH. (Releases before 0.11.0 are not signed: on macOS run
-`xattr -d com.apple.quarantine ttyak` once, or allow it in System Settings → Privacy & Security.)
+- a UTF-8 terminal of at least 80 × 24 cells: ttyak draws its screen in it;
+- an emoji font and a symbol font (macOS and Windows have them): without them emoji and symbols show as boxes;
+- on Linux, ALSA's library (`libasound.so.2`, on every desktop Linux): ttyak plays sound and huddle audio through it
+  and doesn't start without it;
+- `ffmpeg` / `ffprobe` (optional): video, cameras and screen sharing;
+- a terminal with graphics, such as kitty, WezTerm or foot (optional): real pictures instead of half blocks;
+- a notification server on Linux (optional): desktop notifications.
 
-| Download | Runs on | Needs |
-|---|---|---|
-| `x86_64-linux.zip` | glibc 2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35, RHEL 9 and later) | `libasound.so.2` (ALSA), `libstdc++` — on every desktop Linux |
-| `aarch64-linux.zip` | 64-bit Arm Linux with glibc 2.34 or newer (as above; Raspberry Pi OS 12) | as above |
-| `aarch64-macos.zip` | Apple Silicon Macs, macOS 11 or newer | nothing (system frameworks only) |
-| `x86_64-macos.zip` | Intel Macs, macOS 11 or newer | as above |
-| `x86_64-windows.zip` | 64-bit Windows 10 / 11 | nothing (Windows system DLLs only, no MinGW runtime) |
+`ttyak ctl check` tells you what your terminal and system offer. The fonts to install, per system, and the rest:
+[Requirements](https://github.com/dmytrobsp/ttyak/wiki/Requirements).
 
-Optional everywhere: `ffmpeg` / `ffprobe` on PATH for video, cameras and screen sharing; a terminal
-with graphics for real pictures (see below). To build it yourself instead, see below.
+### Verify
 
-## Requirements
+Each release file has its line in the release's `SHA256SUMS` and a GitHub attestation:
+[Verifying downloads](https://github.com/dmytrobsp/ttyak/wiki/Verifying-downloads).
 
-What ttyak needs, and what makes it better. `ttyak ctl check` reports what your terminal and system
-offer (no Slack, no network; run it in your terminal) and prints one line of each kind of glyph for you to judge:
-look for empty boxes or misaligned columns.
+### Update
 
-**The terminal** (any system)
+ttyak tells you when a new version is out, and F6 → Updates shows what to run for the way you installed it (for the
+install script, an **Update now** in ttyak itself):
+[Update](https://github.com/dmytrobsp/ttyak/wiki/Install#update).
 
-- needs: UTF-8, and 80 × 24 cells (the thread opens beside the conversation from 100 columns; narrower, it takes the
-  conversation's place)
-- works best with: mouse reporting; true colour for the built-in themes (otherwise choose the `terminal` theme in F6 →
-  Appearance, which uses your terminal's own palette); focus reporting (the bell, the tab-title badge and read marks
-  need it); OSC 8 links; pictures (kitty, WezTerm, Ghostty, iTerm2, foot or any sixel terminal; others get half blocks)
-- macOS Terminal.app: 24-bit colour came with macOS 26; on macOS 26.5 Terminal.app sets `COLORTERM` and `ctl check`
-  says yes (seen on a Mac). Before macOS 26 use the `terminal` theme. It answers none of `ctl check`'s questions about
-  mouse, focus, bracketed paste or OSC 8 ("not known"), and its OSC 8 sample is not a link.
+### Uninstall
 
-**Fonts** (the terminal draws with what your system has)
+`ttyak uninstall` for the install script, your package manager's remove otherwise; `ttyak purge` deletes your ttyak
+data: [Uninstall](https://github.com/dmytrobsp/ttyak/wiki/Install#uninstall).
 
-- an emoji font: Noto Color Emoji (Debian/Ubuntu `fonts-noto-color-emoji`, Fedora `google-noto-color-emoji-fonts`, Arch
-  `noto-fonts-emoji`); macOS has Apple Color Emoji; Windows has Segoe UI Emoji
-- a symbol font for `● ○ ◆ ★ ⏎ ↪ ⬆ ✕` and the box and block characters: DejaVu Sans (`fonts-dejavu-core`, Fedora
-  `dejavu-sans-fonts`, Arch `ttf-dejavu`) or Noto Sans Symbols (`fonts-noto-core`, `google-noto-sans-symbols-fonts`,
-  `noto-fonts`); macOS and Windows have them
-- optional: CJK for Chinese, Japanese and Korean names and text (`fonts-noto-cjk`, Fedora `google-noto-sans-cjk-fonts`,
-  Arch `noto-fonts-cjk`); macOS and Windows have them
-- emoji drawn as boxes: install the font above, or F6 → Messages & media → "Show emoji as :names:" shows `:smile:`
-  instead; rows that look misaligned mean the terminal measures an emoji's width differently from ttyak (the same setting is the way out)
+## Build and contribute
 
-**Linux**
-
-- needs: ALSA (`libasound.so.2`), glibc 2.34
-- works best with: a notification server for the bubbles (swaync, mako, dunst, GNOME or KDE's own) — without one there
-  are none, and ttyak's bell and title badge still work; `xdg-open` (xdg-utils) to open links and files; a Wayland
-  compositor with the data-control protocol (or X11) for the clipboard, else ttyak copies through the terminal (OSC
-  52); a browser for the browser sign-in; `ffmpeg` / `ffprobe` for video, cameras and screen sharing, and GStreamer
-  (with the PipeWire plugin) for screen sharing on Wayland
-
-**macOS**
-
-- needs: macOS 11 or newer
-- notifications: macOS shows them as the host terminal's (Terminal's in Terminal.app, tested on macOS 26), and only if
-  that app's notifications are allowed in System Settings → Notifications; while the screen is shared or mirrored macOS
-  keeps them in the Notification Center without a banner, unless "Allow notifications when mirroring or sharing the
-  display" is on. A click on one brings the tab forward in Terminal.app (proven); kitty uses its own protocol
-- optional: `ffmpeg` for video and cameras
-
-**Windows**
-
-- needs: Windows 10 or 11, 64-bit
-- Windows Terminal is recommended (it draws sixel pictures); the classic console (conhost) draws emoji in monochrome and
-  no pictures, only half blocks (tried)
-- `ctl check`: run it in the terminal on the desktop — over ssh (no desktop session) its Focus Assist and notification
-  rows read wrongly. Windows Terminal 1.24 and conhost answer its questions about mouse, focus and bracketed paste
-  (tried); OSC 8 links can't be asked about ("not known" everywhere) — Windows Terminal draws them. Windows Terminal
-  has true colour but sets no `COLORTERM`: `ctl check` takes its `WT_SESSION` as the sign and says yes (not tried yet;
-  not inside tmux or screen, which inherit it); conhost's true colour stays "not known"
-- toasts appear under PowerShell's name; do-not-disturb (Focus Assist) is read through an undocumented state, so ttyak
-  says when it can't tell; with Follow the system's do-not-disturb on, the toast still goes out under Windows'
-  do-not-disturb, without its sound, for Windows to file in the notification center (not tried yet)
-- optional: `ffmpeg` for video and cameras
-
-## Verify
-
-Every file of a release from 0.11.0 on (the zips, the `.deb` and `.rpm`, the recipes zip) has its line in the
-release's `SHA256SUMS` and a GitHub attestation of where it was built. The install script checks the SHA256 itself. For
-files you downloaded, put `SHA256SUMS` next to them and run
-
-```sh
-sha256sum -c SHA256SUMS --ignore-missing           # Linux
-shasum -a 256 -c SHA256SUMS --ignore-missing       # macOS
-```
-
-which says `OK` for each of them. The attestation, with the [GitHub CLI](https://cli.github.com) (for version 0.11.0):
-
-```sh
-gh attestation verify ttyak-0.11.0-x86_64-linux.zip -R dmytrobsp/ttyak --source-ref refs/tags/v0.11.0 \
-  --signer-workflow dmytrobsp/ttyak/.github/workflows/release.yml
-```
-
-passes only for a file this repository's release workflow (`.github/workflows/release.yml`) built from the tag
-`v0.11.0`.
-
-## Update
-
-ttyak says once when a new version is out (see [Updates](#updates)), and F6 → Updates shows what to run for the way
-it was installed:
-
-- the install script: F6 → Updates → Update (it downloads the new version, checks it and puts it in place; start
-  ttyak again), or run the one-liner again
-- `brew upgrade dmytrobsp/ttyak/ttyak` · `scoop update ttyak` · `winget upgrade dmytrobsp.ttyak` ·
-  `choco upgrade ttyak` (winget and Chocolatey review each new version: they can list it a few days after the release)
-- `.deb`, `.rpm`: install the new release's package as above; Arch: `makepkg -si` with the new release's recipes zip
-- by hand: the new zip's `ttyak` over the old one
-
-## Uninstall
-
-- the install script: `ttyak uninstall` removes the program and the PATH line it added, and asks whether to keep your
-  settings, sign-ins and drafts (`--yes` for scripts; more under [Signing in](#signing-in))
-- `brew uninstall ttyak` · `winget uninstall dmytrobsp.ttyak` · `sudo apt remove ttyak` · `sudo dnf remove ttyak` ·
-  Arch: `sudo pacman -Rns ttyak-bin` — these leave your ttyak data (settings, sign-ins, drafts, caches) in your home
-  folder: run `ttyak purge` first to delete it
-- `scoop uninstall ttyak` and `choco uninstall ttyak` delete your ttyak data too, as `ttyak purge` does
-- by hand: `ttyak purge` (if you want your data gone), then delete `ttyak`
-
-## Build it yourself
-
-To build: a recent stable Rust toolchain (edition 2024; [rustup](https://rustup.rs)), a C/C++
-compiler, `pkg-config`, **cmake** (the bundled Opus codec is built with it) and the **ALSA headers**
-on Linux. On a fresh system that is (each line checked with a clean checkout in a container,
-`tools/container-build.sh`):
-
-| System | Packages |
-|---|---|
-| Debian 13 / Ubuntu 24.04 | `apt install build-essential pkg-config cmake libasound2-dev git curl` |
-| Fedora | `dnf install gcc gcc-c++ make pkgconf-pkg-config cmake alsa-lib-devel git` |
-| Arch | `pacman -S base-devel cmake alsa-lib git` |
-| macOS | Xcode command-line tools, then `brew install cmake` |
-
-To run: `libasound.so.2` (ALSA's library, on every desktop Linux) and the C++ runtime. Optional:
-**ffmpeg / ffprobe on PATH** for video playback, cameras and (outside Wayland) screen sharing; a
-D-Bus notification service for desktop notifications; a terminal with graphics for real images
-(kitty, WezTerm, Ghostty, iTerm2, foot or any sixel terminal; others get half-block images). Without a
-sound card huddles still work (silently, with a note in the call bar); without system CA
-certificates ttyak uses the Mozilla roots it carries.
+With a recent stable Rust toolchain, a C/C++ compiler, `pkg-config`, cmake and (on Linux) the ALSA headers:
 
 ```sh
 cargo build --release
-./target/release/ttyak    # the first time: a short guide signs you in, then ttyak opens
+./target/release/ttyak
 ```
 
-Windows from Linux: `rustup target add x86_64-pc-windows-gnu`, `apt install mingw-w64`, then
-`cargo build --release --target x86_64-pc-windows-gnu`. The result is one `ttyak.exe` that needs no
-MinGW DLLs (`crates/ttyak/build.rs` links OpenH264's C++ runtime statically, `.cargo/config.toml` the C
-runtime).
+The packages per system: [Building from source](https://github.com/dmytrobsp/ttyak/wiki/Building-from-source). How to
+work on ttyak (tests, logs, a test workspace): [CONTRIBUTING.md](CONTRIBUTING.md). Bugs and ideas go to the
+[issues](https://github.com/dmytrobsp/ttyak/issues).
 
-## The screen
+## Project layout
 
-The sidebar on the left (the Threads, Activity and Huddles rows, sections, starred conversations, channels, direct messages — the most
-recently active first; channels and DMs without a message for 30 days are left out unless starred, unread
-or open, F6 → Appearance; Ctrl+K still finds them and shows them while open; what you have not read is
-bold with a bar in the first column, muted conversations are dimmed and not counted), the
-messages in the middle with a reply pane for threads on the right (in a narrow terminal the thread
-takes the messages' place until you close it), the composer below, and a status
-line at the bottom: on the left a pill saying which mode you are in (NORMAL, INSERT, or the open
-dialog: JUMP, SEARCH, PREFS, …; THREADS, ACTIVITY or HUDDLES in those views), then the unread and mention counts, other workspaces, your
-status, and a dot for your presence as in Slack (green `● active`, dim `○ away`; "connecting…" after it while
-the connection is down, a dim `…` when the line is at its narrowest) — a note or a ringing huddle takes their place; on the right
-the keys of a sequence under way (`␣h`, `^␣h` for Ctrl+Space) and the hints of where you are, ending
-in `? help` (`↑/↓ move · Enter thread · i type · ␣ actions · ? help`). A thumb on a pane's right border shows where you are when it scrolls. The selected message is highlighted
-across the whole width of its pane, every row of it, like a selection in a list (so is the selected message of the Threads feed and the selected item of the Activity view). A conversation
-opened with unread messages has a red "new" line above the first of them; while you read further
-up, the bottom border counts the newer messages below ("↓ 3 newer"). The open conversation and thread (and the Threads feed, by its timer) are marked read only while the terminal window has focus, in a terminal that reports focus changes; what comes while it does not stays unread until you are back. With two or more
-workspaces in the profile a rail on the far left has a tile for each — its logo where it has
-one and the terminal draws pictures, else its initials and number in a colour of its own — with
-the shown one marked by an accent bar and the others with unread messages by a thinner, dimmer
-one, and below such a tile `@3` for three unread DMs or mentions there; a click on a tile switches, like Alt+1…9.
+- `crates/slack-core` — sessions and signing in, the Web API client, real-time events, message formatting
+- `crates/huddle` — huddles: signaling, WebRTC audio and video, audio devices, cameras and screen capture
+- `crates/ttyak` — the program: the terminal UI and the `ctl`, `auth` and other commands
+- `vendor/rtc-turn`, `vendor/crossterm` — two patched dependencies (each folder's `TTYAK-PATCH.md` says why)
 
-**Statuses.** A person's status emoji stands right after their name — in the sidebar's direct messages (a
-long name is shortened to keep it; group DMs show none, neither on their rows nor in a hover note; a
-custom emoji, or any with emoji shown as names, is a dim ◆), and on their messages (a custom emoji as its picture where the terminal draws pictures) — and a DM's title adds the
-text ("Name — 🌴 Vacationing"); hovering their DM in the sidebar shows it in the status line. Someone in a
-huddle without a status emoji of their own shows 🎧 ("In a huddle"; not on a sidebar row that shows the
-huddle already). An expired status is gone at once, without waiting for Slack. ttyak connects to Slack's
-own websocket gateway, as Slack's web client does, and asks it for the profile changes of the people it
-shows: when someone's status or huddle state changes, Slack says so within a second or two and ttyak looks
-that one person up. As a safety net — and on the older `rtm.connect` connection ttyak falls back to when
-Slack offers no gateway or it fails twice in a row (refused, or closed before Slack's hello; a network drop
-does not count; the gateway is tried again ten minutes later), which gets
-no such pushes — the people shown are also looked up again every ten
-minutes and once after the connection was lost (when it was down for 30 s or more, or the last such look-up
-was five minutes ago or more, so a flapping link does not bring the bursts back), up to 50 at a time: first the authors in the open
-conversation and thread, then the people of the DMs and group DMs on screen in the sidebar, then the
-sidebar's other DMs and group DMs in turn, so that everyone's comes round: F6 → Messages & media → Refresh
-people's statuses (`[messages] status_refresh_secs`, default 600, 0 = off).
-
-## Signing in
-
-`ttyak auth login` (and plain `ttyak` on a profile with no sign-ins yet) guides you, right in the
-terminal: it looks for Slack in your browsers and lists every workspace each browser profile is signed
-in to, grouped by where it comes from (`Chrome · Work  you@example.com`, `Firefox · default-release`),
-with who you are there, and then the three ways to sign in afresh, for any workspace. ↑↓ or j k move,
-Space marks several, Enter takes the marked ones (or the one under the cursor), `/` filters, a click marks
-a row, Esc in the list leaves without saving anything. Workspaces a browser is signed out of are shown dim
-with the reason; ones already in the profile say `already signed in` (picking one refreshes it). The marked
-browser sign-ins are saved first, then each marked way runs; Esc in a way goes back to the list. Nothing is
-signed out anywhere, and ttyak never opens a browser itself.
-
-The three ways:
-
-- **With a code from your email:** ttyak shows a QR code and a link (`app.slack.com/get-started?email=…`,
-  your address filled in) for your phone or any browser. There Slack sends you a code (this step needs
-  Slack's captcha, so only a real browser can do it). Type the code into the `___-___` prompt; ttyak confirms
-  it with Slack itself and lists the workspaces of that address. Workspaces that need two-factor or SSO are
-  shown dim ("needs your browser (two-factor)") — use the browser way for those. In a small terminal
-  (80 × 24) the code is drawn smaller; in a smaller one only the link is shown.
-  This way works over SSH and on machines with no browser.
-  `ttyak auth login --email you@example.com` goes straight to it with the address filled in; without a
-  terminal (a script) it prints the link, reads the code from standard input and signs in to every listed
-  workspace that can be used (failing when none was).
-- **In your browser:** ttyak prints a link; open it in whichever browser and profile you like and sign in.
-  ttyak watches the browser profiles (read only) and, when one gets a new Slack session, offers it. A
-  browser ttyak can't read is named while it waits: on Windows Chrome (app-bound encryption), elsewhere a
-  Chrome-family browser whose key the keyring or the Keychain did not give. When none can be read, the row
-  is dim and says why, pointing to Firefox or the code.
-  It needs a browser on the machine ttyak runs on; over SSH, use the code way instead, or reach that
-  machine's browser through a remote desktop (such as RDP) while ttyak runs in the SSH session.
-- **Paste a cookie:** the `d` cookie by hand.
-
-Each workspace ends in one line: `✓ Signed in to Acme as you — profile default saved.`
-
-**One workspace:** `ttyak auth login --workspace acme.slack.com` in a terminal lists the browsers signed in
-to it, then a code from your email, your browser and a pasted cookie (that workspace is marked in each
-list). There is no browser window and no `--no-browser`.
-
-**From the browser you already use:** `ttyak auth login --workspace acme.slack.com --from-browser firefox`
-(or `chrome`) takes the session from a browser you are signed in to Slack with. Its cookie database is
-copied and read, never changed; Chrome's (and Chromium's, Edge's, Brave's) cookies are decrypted with its
-key from the system keyring (Linux) or the Keychain (macOS, which asks once per browser, one after another —
-the guide too). On macOS answer the Keychain's question with “Allow”, not “Always Allow” (that would let any
-program read the key through the `security` tool without asking). `--browser-profile DIR` picks one profile
-(or a browser's folder of profiles); otherwise every profile is tried. When several sign in to the
-workspace as different people, ttyak lists them (the browser's profile name and the account) and asks
-which; without a terminal to ask in it takes the one used most recently. Chrome on Windows cannot be read
-this way (app-bound encryption); Firefox can.
-
-**For scripts** (nothing is asked without a terminal), by hand: `ttyak auth login --workspace
-acme.slack.com` reads the value of the `d` cookie for `slack.com` from standard input (sign in in any
-browser, then devtools → Application → Cookies); `TTYAK_COOKIE_D` or `--cookie` give it directly. Either
-way ttyak fetches the token itself and checks it with `auth.test`. `--from-browser` and `--email` work
-without a terminal too, as said above.
-
-Sessions are saved per profile in `~/.config/ttyak/<profile>/session.json` (owner-only
-permissions), each with where it came from (which browser profile, an email code, or a cookie — names
-only, nothing secret). One profile may hold two accounts of the same workspace.
-
-- `ttyak auth status` — each workspace of the profile, who you are there, where the session came from
-  and whether it still works (checked with Slack); ★ marks the one plain `ttyak` opens.
-- `ttyak auth logout` — in a terminal lists the profile's sign-ins (Space marks several, Enter forgets
-  the marked ones, Esc changes nothing); `--team NAME` (or `--all`) for scripts. It forgets the sign-in
-  on this machine only; Slack is not signed out (a session taken from a browser stays that browser's). The profile stays, empty if
-  it was the last.
-- `ttyak profile list` — every profile, ★ on the default, with its workspaces (local files only); a
-  folder with sign-ins whose name can't be a profile's is named (`skipped NAME: why`).
-- `ttyak profile default NAME` — plain `ttyak` (and `auth`, `ctl`) use that profile from now on
-  (kept in `~/.config/ttyak/default-profile`); `--profile NAME` always wins.
-- `ttyak profile remove NAME` — lists and, after a y/N question (or `--yes`), deletes the profile's
-  `~/.config/ttyak/NAME/` (sign-ins) and `~/.cache/ttyak/NAME/` (log, caches); drafts and the
-  sidebar layout stay. Refused while a ttyak runs on that profile.
-- `ttyak purge` — deletes everything ttyak wrote, as if it was never launched: `~/.config/ttyak/`
-  (every profile's sign-ins, `settings.toml`, `keys.toml`, `locales/`, `themes/`), `~/.cache/ttyak/` (logs,
-  caches, `login-browser/`), `~/.local/share/ttyak/` (drafts, sidebar layout) and
-  ttyak's own `ttyak-cookies-*` / `ttyak-<pid>-*` files in the temporary folder (yours only). Lists them first and asks
-  y/N (or `--yes`); refused while a ttyak runs. A folder that is a symbolic link loses only the link (what it
-  points to stays, and ttyak says so). Files you saved from messages stay; Slack is not signed out.
-- `ttyak uninstall` — removes ttyak put here by the install script: the program, its `install.json` and the line
-  (on Windows the user PATH entry) that put it on PATH; asks whether to keep your settings, sign-ins and drafts, and
-  if not deletes what `purge` deletes. `--yes` for scripts (the data goes too), `--yes --keep-data` to keep it.
-  Installed by a package manager, it shows that manager's uninstall command instead.
-
-Use `--profile NAME` to keep several accounts apart (letters, digits, `-` and `_`, and `.` or `@` inside
-the name: `john.doe`, `me@work`); signing in under a
-new name makes that profile. Profiles separate accounts only:
-the preferences (`settings.toml`, everything in F6), `keys.toml`, `themes/` and `locales/` are shared
-by all profiles; each profile has its own sessions and its own log/cache folder. To tell workspaces
-apart, give each a theme of its own (F6 → Appearance → Theme for this workspace). Signing in to more workspaces
-with the same profile adds them to it: inside the app, `Alt+1 … Alt+9` switches between them
-and `/workspace [name]` lists them or switches by name. The rail on the left shows
-unread messages in the others (checked every 30 s), and their desktop notifications still arrive (titled with the workspace); clicking one switches there.
-
-The terminal's tab title carries a mark: `○ ttyak - <workspace>` with nothing unread, `●` with something unread (in any
-workspace of the profile), `◆` with something for you (a direct message, a mention); a long workspace name is cut to
-keep the title within 80 cells. When ttyak ends, your terminal's own title comes back in terminals that keep a title
-stack (kitty, …); elsewhere the title is cleared. F6 → Notifications → Mark in the tab title (`title_mark` in
-`settings.toml`) turns it off — switched off while ttyak runs, the terminal's own title comes back at once the same
-way — and ttyak then never touches the title. In tmux this needs `set -g set-titles on`.
-
-A conversation shows one desktop notification at a time: a newer message there (a thread reply too) replaces it
-instead of stacking, and it is taken away once what it shows is read — in ttyak, in another client, or, for the other
-workspaces, by their next 30-second check — where the notification server allows it (Linux desktops, macOS and
-Windows). A thread reply's notification stays until that thread is read (reading the conversation does not take it
-away).
-
-F6 → Notifications → Bell when not focused (`bell` in `settings.toml`, off by default) also rings the terminal's bell
-with such a notification while the terminal is not focused. Terminals turn it into an urgent mark (the window manager
-or bar highlights the window), tmux flags the window. Some desktops bring the window forward and switch to its
-workspace on a bell instead — kitty's default `window_alert_on_bell` with Hyprland's `misc:focus_on_activate = 1`
-does — and kitty may also beep (`enable_audio_bell`). The bell never rings while notifications are paused, nor in a
-terminal that does not report focus; it does ring with desktop notifications off.
-
-The notification sound (F6 → Notifications → Sound) goes with the notification where the notification server can play
-it (it lists the `sound` capability: GNOME's does, SwayNotificationCenter, mako and dunst do not), so the system's
-do-not-disturb silences both; ttyak's volume and speaker setting then do not apply. Where the server cannot, ttyak plays
-the sound itself — except `system`, the desktop's own sound, which then stays silent because there is none to play. With
-Follow the system's do-not-disturb on (below), ttyak asks the system whether notifications are suppressed before an
-interruption (the answer stands for the next ones for up to 2 seconds, so a burst of messages asks once — and a
-do-not-disturb switched on or off just before may be missed for that long), whoever plays the sound: SwayNotificationCenter,
-mako (a `do-not-disturb` or `dnd` mode), dunst (paused), GNOME (banners off), KDE (notifications inhibited) and Windows (below) can be asked, and while the answer is yes ttyak
-fires nothing: no notification, no sound, no bell, and a huddle invitation's ring keeps quiet (asked when it starts
-ringing; it rings if no answer comes within 2 seconds) — except on Windows, where the toast still goes out without its
-sound or the bell, and Windows' do-not-disturb files the toast in the notification center as it does other apps' (in a busy
-state — a full-screen app — with Windows' full-screen rule off it may still show a banner). With any other server, or
-when it does not answer within a second, notifications go through. F6 → Notifications → Follow the system's
-do-not-disturb (`follow_system_dnd` in `settings.toml`, on by default) turns this off; ttyak's own pause and schedule always hold notifications back.
-
-F6 → Notifications is the one place for all of this: what notifies you (kept on Slack: this conversation, channels,
-keywords, VIPs); how you are told (desktop notifications, the sound and its volume — `sound_volume` under
-`[notifications]` in `settings.toml`; a file from before 0.12 with `[audio] sound_volume` keeps its value, and saving
-writes the new place — the bell, the tab-title mark); quiet hours (the pause and the schedule, the same settings as in
-Availability, and Follow the system's do-not-disturb); and, shown only, what this machine does: who shows the
-notifications and plays their sound, what a click does (and how the window is brought forward), and what the system
-says about do-not-disturb (read in the background). **Send a test notification** (Enter) sends a note like one for you
-through the same route with the sound as set and, 3 seconds later, the bell if the terminal is then unfocused and the
-bell is on; clicking it opens nothing in ttyak but brings the window forward as usual, so the click path can be checked.
-
-**Notifications through the terminal.** In a terminal that shows notifications itself — kitty (0.36 or newer; tried),
-and other terminals that answer the query (foot 1.18 or newer, Konsole 24.12 or newer, Contour, by the protocol — not
-tried) — ttyak hands its notifications to the terminal (its OSC 99 protocol) instead of the system's notifier; ttyak
-asks the terminal at start whether it can (`p=?`, answered before ttyak's screen is up). Clicking one makes the terminal
-focus its own window **and tab**, and tell ttyak, which opens what it showed — the message, a reply in its open thread,
-the conversation of a huddle — in NORMAL (a draft being typed stays; a notification from another workspace of the
-profile switches there first). One per conversation, replaced by a newer one and taken away once read, as above. The
-terminal passes the notification on to the desktop's notification server, so the system's do-not-disturb still applies;
-the sound: `system` goes with the notification (where the server can play sounds), ttyak's own sounds (chime, …) are
-played by ttyak, since the terminal can only ask for the desktop's sounds. Inside tmux the system's notifier shows them
-(tmux would hand the terminal's answer about a click to whichever pane is active), as in every other terminal. Whether a
-click can bring the window forward across workspaces is up to the desktop: the terminal asks for focus, and the window
-manager may only mark it urgent. Tried: a click on kitty's popup from another workspace (Hyprland) brought the window
-forward and opened the message in NORMAL. `TTYAK_NOTIFY_ROUTE=system` (for debugging) keeps to the system's notifier.
-
-**A click brings the window forward.** A click on a notification the system's notifier showed (every terminal that
-does not show them itself, tmux, `TTYAK_NOTIFY_ROUTE=system`; also the update notice) opens what it showed, as above,
-and then brings ttyak's window forward by the first of these that works here:
-- inside tmux: ttyak's tmux window and pane are selected and the client last active on its session is switched to
-  them (one `tmux` call); then the terminal around that client is brought forward as below, found from that client's
-  environment — its desktop's variables (`DISPLAY`, `XAUTHORITY`, `HYPRLAND_INSTANCE_SIGNATURE`, `SWAYSOCK`, …) are
-  the ones used, so a tmux server started in an earlier session does not matter;
-- kitty with remote control on (`allow_remote_control` and `listen_on`, so that ttyak sees `KITTY_LISTEN_ON`; ttyak
-  checks with `kitty @ ls` that the window runs one of its parents): `kitty @ focus-window` picks ttyak's window and
-  tab; WezTerm: `wezterm cli activate-pane`. Then the window manager as well, which switches to the workspace;
-- the window manager, for the terminal's window (of the nearest of ttyak's parent processes that has one), by its id:
-  Hyprland (`hyprctl dispatch focuswindow address:…`), sway (`swaymsg [con_id=…] focus`), niri (`niri msg action
-  focus-window --id …`), KDE Plasma 5 and 6 (a small KWin script loaded over D-Bus with `dbus-send`), X11 (EWMH
-  `_NET_ACTIVE_WINDOW`, the window from `WINDOWID` or a parent's `_NET_WM_PID`). When that process has several windows
-  (kitty with more than one OS window, footclient, WezTerm, Konsole), the one with ttyak's tab is picked by its title —
-  kitty's remote control tells it (kitty retitles the window once it has shown ttyak's tab), otherwise the title ttyak
-  set itself (Mark in the tab title on, and ttyak's tab the one shown); when the title can't tell them apart, the window
-  manager is left out rather than raising the wrong window;
-- macOS: Terminal.app's tab running ttyak (by its tty) is selected and its window brought to the front, and iTerm2's
-  session (`ITERM_SESSION_ID`) in its tab and window, by AppleScript (`osascript`); after kitty's or WezTerm's remote
-  control, and for Ghostty, the terminal app is brought forward with its own front window (`open -b`);
-- Windows: the console's window — Windows Terminal's window (Windows Terminal 1.14 and newer own the hidden window of
-  the console they give ttyak; older ones not tried), conhost's own window — is restored when minimised and brought to
-  the foreground; after WezTerm's `activate-pane` too (WezTerm on Windows not tried). Windows lets a program take the
-  foreground only in some cases (the user's last input went to it, or the program in front allows it); otherwise the
-  window's taskbar button flashes instead. In Windows Terminal (`WT_SESSION`) ttyak's tab is then selected through UI
-  Automation: the tab titled as ttyak titled it (Mark in the tab title on; the read/unread mark may differ). The tab is
-  left as it is, and the log says why, when no tab or several carry that title: two ttyaks of one workspace; ttyak in a
-  split pane that isn't the focused one (Windows Terminal names the tab after its focused pane); a Windows Terminal
-  profile with `tabTitle` or `suppressApplicationTitle`; a tab renamed by hand. Tried at the desktop after a toast
-  click: Windows Terminal 1.24's window and conhost's came forward, and Windows Terminal 1.24 selected ttyak's tab from
-  behind a cmd tab (its tabs are TabItems named as the title ttyak set).
-
-**On macOS** ttyak stays a plain program, not an app bundle, so it uses the Notification Center's older interface:
-its notifications come from the terminal's app — Terminal.app, iTerm2, WezTerm, Ghostty, kitty, known by
-`TERM_PROGRAM`, kitty by `KITTY_WINDOW_ID`, inside tmux by the app the tmux server was started from
-(`__CFBundleIdentifier`) — with that app's icon. They show only where that app's notifications are allowed (System
-Settings → Notifications → Terminal, …), and while the screen is shared or mirrored macOS keeps them in the
-Notification Center without a banner unless "Allow notifications when mirroring or sharing the display" is on.
-macOS 26 refuses the older interface for apps that use the newer one themselves: tried, Terminal.app's are shown,
-kitty's are refused (in kitty ttyak uses kitty's own notifications instead, above), and so are Finder's, which ttyak
-sends as when the terminal's app isn't known; iTerm2, WezTerm and Ghostty are not tried. A click — on the banner or
-in the Notification Center — brings the app forward (macOS does that), and ttyak, whose main thread listens to the
-Notification Center (everything else runs beside it), opens what the notification showed in NORMAL and selects its
-tab as above (tried in Terminal.app; up to 32 notifications wait for a click at once — the log says when one goes out
-without). The AppleScript may make macOS ask once whether the terminal may control Terminal (or iTerm2) — System
-Settings → Privacy & Security → Automation; ttyak waits a minute for the answer, and with "Don't Allow" the tab stays as
-it is. A newer notification of a conversation takes the older one out of the Notification Center, and reading takes it
-out (the older interface knows a notification only by its title and text, so two that read the same both go). Can't do
-on macOS: the Focus modes (no program can read them without extra rights, so Follow the system's do-not-disturb has
-nothing to ask — macOS itself holds the notification and the `system` sound back, ttyak's own sounds and a huddle
-invitation's ring still play); and
-inside tmux, raising the terminal around it (tmux's pane is selected; macOS brings the app forward on the click).
-
-**On Windows** ttyak stays a plain program too, with no app id of its own (that would take an installer and a Start menu
-shortcut), so its toasts go out as Windows PowerShell's — they say "Windows PowerShell" — as before; F6 and `ctl check`
-say when Windows has PowerShell's notifications turned off (they would vanish without a trace), and the log says such a
-toast was not shown. Each carries its conversation as its tag, in a group of its profile's own (two ttyaks on other
-profiles leave each other's alone — tried: two profiles in two Windows Terminal tabs each get their own toast and
-notification-center entry): a newer one replaces it in place (tried: one entry in the notification center; Windows
-shows the newer one as a new popup), and reading takes it off the screen and out of the notification center (tried in
-the notification center). A click on the toast while it is on screen opens what it showed in ttyak, in NORMAL, and
-brings the console's window forward as above — tried at the desktop in Windows Terminal and in conhost — and in
-Windows Terminal selects ttyak's tab by its title — tried: ttyak's tab behind a cmd tab, Windows Terminal unfocused, a
-click on the toast showed ttyak's tab with the message. Two profiles of one workspace in two tabs carry the same title,
-so neither tab is selected there (tried: the tab in front stays, the log says so). A click on it
-later in the notification center does nothing — tried: no click reaches ttyak and no Windows
-PowerShell opens (it has no COM activator registered, which takes an installer). Only the `system` sound goes with the
-toast (Windows' own, silenced with it); ttyak plays its own sounds itself. Follow the system's do-not-disturb asks Windows two things: Focus Assist's
-profile — Windows 11's Do not disturb — read through an undocumented Windows state
-(`WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED`; priority only and alarms only count as on, since ttyak can't be on the
-priority list; if Windows changes that state, ttyak can't tell and plays its own sound), and the documented
-notification state (`SHQueryUserNotificationState`): presentation mode and full-screen Direct3D count as on, busy (a
-full-screen app, presentation settings) only while that app is not ttyak's own terminal, and quiet time — the first
-hour after the first sign-in on a new install or after an upgrade — too. While it is on, the toast still goes out, without
-ttyak's sound, Windows' sound or the bell (and the huddle ring keeps quiet): Windows' do-not-disturb files it in the
-notification center, as it does other apps' toasts — though in a busy state with Windows' full-screen rule off Windows
-may still show a banner. Tried at the desktop: Do not disturb switched on reads as on (profile 1), and so does Windows
-11's automatic one for a full-screen app (profile 2, Windows Terminal full screen); the toast sent without sound in the
-notification center under it is not tried yet. Can't do on Windows: picking Windows Terminal's tab when it doesn't
-carry ttyak's title alone (above); a click after ttyak let go of the toast (ttyak ended, or 30 minutes passed).
-
-Each command runs in the background without a shell and gets at most 2 seconds — on macOS an AppleScript gets a minute,
-one at a time, since the first one waits for the answer to macOS's question; every step is in the debug log with how it
-ended. Tried: sway (headless; also two footclient windows of one foot server, told apart by title), X11 (Xvfb with
-openbox and an `.Xauthority` cookie) and tmux inside sway and inside X11 with a stale tmux environment, raised for real
-in a container; what Hyprland with kitty picks, on a real desktop. Not tried: niri, WezTerm, KDE (by their
-documentation). A notification the terminal showed itself is brought forward by the terminal and not raised again,
-unless the terminal takes no focus within 0.4 s of the click (kitty raises its window for a click on its popup, not for
-one in swaync's panel): then ttyak brings it forward as above.
-**Can't:** GNOME on Wayland (no program may raise another's window there; only a terminal that shows notifications
-itself brings its window forward); the right tab in terminals without remote control (Ghostty, foot, Alacritty, Windows
-Terminal; kitty without `listen_on`, since ttyak never talks to kitty over the terminal it draws in) — the window comes
-forward on the tab last used; a detached tmux session; ttyak over `ssh -X` (its parents are the remote machine's: only
-`WINDOWID` would tell the window); a window manager that refuses focus requests from other programs.
-
-## Keys
-
-Press **F1** (or `?` outside the composer) in the app for the full list, with the keys in effect.
-ttyak has modes, like vim. In **NORMAL** (the sidebar, the messages, a thread) only moving around, help,
-preferences and Y/N questions sit on a key of their own; everything else — anything that changes
-something — is behind the **leader**, `Space`. **INSERT** is typing in the composer or the reply box:
-`i` (or Enter in the sidebar) starts it, Esc leaves it, and the status bar pill says which mode you
-are in. In **DIALOG** (jump to, search, preferences, menus, pickers, …) the dialog's keys are shown
-at the bottom. While you type, or in a dialog, Space is a space, so the leader there is
-`Ctrl+Space`. ttyak starts in NORMAL on the messages of the conversation you were last in, and
-opens the thread again if you quit with one open.
-
-Press the leader and wait (0.4 s) and the **which-key** panel opens in a corner with what each next
-key does; a wrong key or Esc cancels. It follows where you are: on a message it lists the message's
-actions, on a conversation the conversation's. Its corner, delay, height and icons are in F6 → Keys.
-
-| Key | |
-|---|---|
-| ↑ ↓ / `k` `j`, Home End / `g` `G`, PgUp PgDn, Ctrl+U / Ctrl+D | move, first / last, a page, half a page — in the conversation, the sidebar, the Threads, Activity and Huddles views, and the Keys page (a snippet: lines, start / end, a page, half a page) |
-| Tab / Shift+Tab | move between sidebar, messages, composer, thread, reply box |
-| Alt+↑ / Alt+↓ | previous / next conversation |
-| Alt+Shift+↑ / Alt+Shift+↓ | previous / next unread conversation (muted ones are skipped) |
-| Ctrl+O · Alt+← / Alt+→ | back / forward, as in a browser: to the conversation (its thread open again if it was), the Threads, Activity (on its tab) or Huddles view you came from, at the message you were on (the reply selected in the open thread, the item selected in the Threads or Activity view, their next pages loaded to find it, up to five, until you do something there or leave; older history loaded until it is there, as for a link, until you do something there; a message deleted meanwhile: the one before it, said so; a selection you had left behind — sending a message takes you to the newest — or the newest message itself: at the newest, following new ones), however you went there (the sidebar, Ctrl+K, a link, Enter in a view, a notification; moving through the sidebar — ↑/↓, the wheel over it, Alt+↑/↓ — is one step however far, back to where you were before it) — the last 20 places, per workspace (kept while you are in another); going somewhere new after going back drops the places ahead; a channel left or archived meanwhile is skipped; only in NORMAL, never while you type. The mouse's side buttons do the same (button 8 back, 9 forward; in a terminal that reports them; ttyak reads them through a patched `crossterm`, `vendor/crossterm`) |
-| Ctrl+K · `␣␣` | jump to any conversation or person — unread first, then the most recently active; with something typed, a name equal to it first (ignoring case, spaces and a leading `#` / `@`; a person's display name, real name or handle), then the names starting with it, then the rest (`#` lists every channel, including ones you are not in) |
-| Ctrl+F · `␣fs` | search messages, the newest match first (more results load as you move down the list) |
-| Ctrl+A · `␣fa` | the **Activity** view, in the main pane in place of the conversation: mentions, reactions to your messages, thread replies, new direct messages, and the rest of what Slack's Activity badge counts — new messages in a channel you get notified of, an app's messages, being added to a channel, a mention in a channel you are not in, someone new to welcome, Slack Connect invitations and list items — newest first under date headers ("Today", "Yesterday", then the day as F6 → Region writes it). Each item shows who (in a thread, "+N" others who replied in it), their status emoji and when; the message itself as a conversation draws it (links, code, custom emoji; up to three lines, then "…"; "message not available" when it is gone); and where it happened — "Mention in #general thread", "Thread in #general · 2 new replies", "Direct message", "Reacted (🎉 1) to:" over your message, "New messages in #general · 3 new", "App message in …", "You were added to #general", "Mention in #general, a channel you are not in" — with the unread bar on unread ones. Tabs **All · DMs · Mentions · Threads** in a bar on top: `]` / `[` next / previous, `1`–`4` straight to one, or click it (each tab keeps its list while the view is open, and loads again when shown); `u` keeps only the unread items (again: all; it stays on until you turn it off, across tabs and each time the view opens, until ttyak quits). Older items load as the end of the list comes on screen (with only the unread ones kept, until one shows or the list ends — at most 5 pages by themselves: then "There is more: move down to load it" at the end, and moving down, `u`, another tab, `r` or opening the view again goes on; a page that could not be loaded, or one with nothing new, is said there and asked for again the same way). With nothing shown, Enter does nothing. Enter goes there: a DM opens the conversation, a mention or a reaction the message (a reply in its thread), a thread item the thread at its first unread reply, a channel item the channel at its newest message, an app's item its DM, an "added to" item the channel (one you are not in is previewed); a Slack Connect invitation or a list item has nowhere to go in ttyak, so Enter marks it read and the status line says to open it in Slack; `r` or Ctrl+A again loads the tab again, Esc goes back to the conversation you were in. On an item that is a message (a mention, a reply, a DM, your message someone reacted to) the message keys below (`␣r` react, `␣e` `␣d` edit and delete your own, `␣y` `␣Y` `␣o` `␣s` `␣p` `␣u` `␣U` `␣hT`) and its right-click menu (`␣m`) work as in a conversation, and the view stays: an edit opens a box under the view, only while it lasts (Enter saves, Esc drops it, `i` goes back to it; the conversation's draft is kept aside meanwhile and comes back; leaving the view or quitting with it open keeps it as the draft of the message's thread — or conversation, for a top-level message; when that box is on screen and empty, the edit simply stays in it, "Editing message" — unless a draft is kept there already, and the status line says which; then quitting asks for Ctrl+Q a second time, and another workspace waits until the edit is saved or cancelled); a reaction, an edit or a deletion shows on the item at once (as do other people's, live); mark unread marks the message's own conversation (not a reply's, which is in a thread); on an item that is no message they say so (or that its message is still loading). The **Activity** row in the sidebar (under Threads) opens it too: it turns bold with a bar and a number while there is unread activity — Slack's own Activity badge (unread mentions, thread replies, direct messages and the other kinds above; reactions never count, as in Slack — every kind the badge counts is listed in the All tab, so its unread items and the number agree), kept current from Slack's live events: a new mention, DM or thread reply raises it, reading the item here or on another device lowers it, with no polling (asked for again only after a reconnect). New items show up in the open view as they come, and Enter on an unread item marks it read on Slack as Slack's own client does (a workspace whose counts have no such badge: the All tab's unread items, counted when the workspace starts and each time it loads) |
-| `␣fh` | the **Huddles** view, in the main pane in place of the conversation: at a glance, every huddle going on now and who is in it, then the recent ones. **Live now** lists the huddles in conversations you are a member of (not muted ones, as Slack does), yours first, each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going, and who is in it with their status emoji. **Recent** lists the ended huddles you were in or missed (from Slack's huddle history, newest first, more loading as the end comes on screen): where, "3 h ago · 25 min", who took part, "N replies" when its thread has some, and a missed one as "Missed huddle" in the alert colour. ↑/↓ (and a click) select; Enter on a live one opens its conversation, on a recent one its thread; the huddle key (`␣hh`) on a live one joins it. `r` or `␣fh` again loads it again, Esc goes back to the conversation you were in. The **Huddles** row in the sidebar (under Activity) opens it too: a badge on it counts the live huddles you can join (not the one you are in), kept current from Slack's live events and asked for again at start and after each reconnect |
-| Ctrl+T · `␣ft` | the **Threads** view, in the main pane in place of the conversation: a feed of every thread you are in, unread ones first, so you can read each one where it is; a dim "You're up to date" line under those that had new replies when the view loaded says that the rest had nothing new (no line when all or none had); it stays there until the view loads again — a thread that gets a reply meanwhile shows it in its own block. A thread's block has a heading in bold (where — `#channel`, the person or the people of a DM — and who is in it, "and 2 others", the day when it is not today; unread ones with a bar and "2 new"), its parent in full as in a conversation (a very long one cut after 12 lines with "… more"), "N more replies" when some are hidden, and its last 3 replies in full — all the unread ones when there are more, with the red "new" line above the first of them (Slack's list carries only some replies: for a block on screen that shows fewer than it has, ttyak fetches its newest ones once); a reply that comes meanwhile goes into its block (one of yours posted from another client too, as read), and an edit, a deletion or a reaction shows in its block as it happens (as in Slack, the threads keep their place: new threads and the order come when the view loads again); a parent ttyak cannot read says "message not available". A dim rule across the feed and a blank row set each block apart from the next. ↑/↓ (and a click) select message by message, highlighted across the row; Enter opens the whole thread at the selected message, as does a click on a block's header or its "more replies"; `i` replies in the selected message's thread in the box under the feed ("Reply in #channel thread"; its draft is the thread's own — the conversation's comes back when you leave the view), and the reply shows in its block; however the box gets the focus there, it replies in the selected message's thread (Esc with nothing typed lets go of it), and a thread open in the thread pane beside the feed is replied to in that pane's box. The message keys below (`␣r` react, `␣e` `␣d` edit and delete your own, `␣y` `␣Y` `␣o` `␣s` `␣p` `␣u` `␣U` `␣hT`) and the right-click menu (`␣m`) work on the selected message — a parent or a reply — as in a conversation, and the view stays: an edit goes into the box under the feed ("Editing message"; Enter saves, Esc drops it; `i` goes back to it — on another thread too, which the status line says: one edit stays open until you save or cancel it; leaving the view or quitting keeps it as its thread's draft (or in its box, when that is the thread's own and empty) unless that thread has a draft already, and the status line says which — then quitting asks for Ctrl+Q a second time), and once it is over the box has again what it held — a reply half typed stays, as does any thread's draft; nothing opens beside the feed and nothing is marked read for it; a reaction, an edit or a deletion shows in its block at once; mark unread is offered on a parent, not on a reply. A thread is marked read on Slack once its whole block — only for one taller than the view, its unread replies — has been on screen for 2 seconds, not while you scroll past (F6 → Messages & media → Mark feed threads read, `[threads] read_after_secs`, 0 = only when opened); its bar and count go, its "new" line stays until the view loads again; opening it or replying marks it read too. `r` or Ctrl+T again loads it again, more load as the end of the feed comes on screen, Esc goes back to the conversation you were in. The **Threads** row atop the sidebar opens it too: it turns bold with a bar and the number of unread replies when threads you follow get new ones. Selecting a conversation in the sidebar (or jumping to one) leaves a view; ttyak always starts on a conversation, never a view |
-| F6 · `/prefs` | preferences: availability, appearance, messages, region, notifications (the whole notification system: what notifies you, how you are told, quiet hours, what this machine does, a test notification), audio, huddles, updates, keys |
-| F1 · `?` | all keys |
-| Alt+1 … Alt+9 · `␣w1` … | workspace |
-| Ctrl+Q | quit |
-| Enter (on a message) · `␣t` | open its thread |
-| Enter · `i` (sidebar) | type in the conversation |
-| Esc | leave the composer · close the thread or a dialog · back from the Threads / Activity / Huddles view |
-| mouse | click to select, wheel to scroll (also the help and the preferences; in lists like Ctrl+K, search and the Activity and Huddles views it moves the selection; it scrolls the Threads feed; a selection a scroll — the wheel, PgUp / PgDn — leaves off screen goes onto the nearest message still there, the top one after scrolling down, the bottom one after scrolling up, so ↑ / ↓ go on from what you see; with nothing selected, a scroll up selects in the pane with the focus; new messages are not a scroll: a selection they push off the top of a conversation at its newest stays on the message you picked (the keys still act on it), the conversation still at its newest; a resize or a thread opened beside keeps a conversation at its newest, and brings the selection back into view of one scrolled up and of the views), hover shading (the whole message row, edge to edge), right-click for a context menu (messages, sidebar entries); a thumb on a pane's right border shows where you are when it scrolls |
-
-After `Space` (written `␣`), on a **message**:
-
-| Key | |
-|---|---|
-| `␣r` `␣e` `␣d` | react · edit · delete (the reaction picker also shows who reacted: `remove · you, alice`). A click on a reaction pill under a message — in a conversation, a thread, the Threads feed or Activity (there also the pill of a "Reacted to" item), a custom emoji's picture too — adds your reaction with that emoji, or takes it off when it is yours, as in Slack: the message is selected (an Activity item is not opened), the pill changes at once and Slack's own event for it changes nothing more; a second click before Slack has answered the first is ignored (a double-click is one), and one Slack refuses (an archived channel, no connection) is put back with Slack's reason in the status line — from the `␣r` picker too; a click beside a pill does what it did. The pointer over a pill says who reacted in the status line (`:eyes: · you, alice, +2`) |
-| `␣y` `␣Y` | copy the text · copy a link to the message |
-| `␣o` | open what the message holds — a link (one into your Slack opens in ttyak, others in your browser), a picture, a video (Space pauses, ← / → jump 10 s), a snippet; with several, a list to pick from |
-| `␣s` | save files (a dialog: Space / `a` pick which, Tab changes the folder for this save, Enter saves) |
-| `␣p` `␣u` `␣m` | pin · profile card of the author — their big profile picture on top (as Slack shows it; smaller on a short terminal, none when too short; their initials while it loads and where the terminal draws no pictures), then name, status, local time and the rest (←/→: people the message mentions; Enter messages them, `␣hp` starts a huddle) · the message's menu, as a right-click opens it |
-| `␣U` | mark unread from this message (the conversation is unread again from here; ttyak leaves it so until you switch away and back) |
-| `␣hT` | start (or join) a huddle in the message's thread |
-
-The same keys work on the selected message of the Threads feed and on an Activity item that is a message, the view
-staying (`␣t` says Enter opens it there); they are the `[messages]` keys, so rebinding one there rebinds it in those views too (their own keys come
-first: a `[threads]` or `[activity]` binding on the same keys wins there).
-
-On a **conversation** in the sidebar: `␣s` star · `␣m` move to a section (or a new one) · `␣d` details (about,
-members, pins) · `␣b` what it notifies about · `␣M` mute / unmute · `␣y` copy the conversation's link · `␣l` leave. The
-same, and more, from anywhere under `␣c` (`␣cs` `␣cm` `␣cd` `␣cb` `␣cM` `␣cy` `␣cl`, `␣cu` mark unread from the selected message
-or the latest, `␣cj` join, `␣cr` rename and `␣cx` delete the section). The sidebar's right-click menu offers mute, mark unread and
-copy link too. The other groups:
-
-| Group | |
-|---|---|
-| `␣h` huddle | `h` join or leave · `m` mute · `t` its thread · `v` huddle view · `c` camera · `s` share screen · `d` decline an invitation |
-| `␣n` new | `c` channel · `p` private channel · `d` DM · `s` snippet · `f` upload a file |
-| `␣a` availability | `s` set status · `c` clear it · `a` away / active · `n` pause notifications for 30 minutes, or resume them when paused · `N` pause for a time you type (`/dnd `) |
-| `␣f` find | `f` jump to · `s` search · `a` activity · `t` threads · `h` huddles · `c` every channel (channels) |
-| `␣w` workspace | `1` … `9` |
-
-In the sidebar `z` (or a click on a header) folds / unfolds the section: folded, only "▸ name" shows,
-with the number of its conversations with unread messages and a badge for mentions; Enter on it unfolds
-too, and going to a conversation inside (Ctrl+K, search, a notification) unfolds it. Kept per workspace
-account in `sidebar/<team>-<user>.json` under the local data folder. `/section rename <name>` ·
-`/section delete` (each section's name heads a rule, with a blank row between sections — none in
-compact mode).
-
-What you type is kept per conversation and per thread: leave a half-written message (or an
-edit in progress) and it is back when you return, until you send it; the sidebar marks such
-conversations with ✎. Drafts also survive quitting, switching workspace and crashes (they are saved two seconds after you stop typing): they are kept per
-workspace account in `drafts/<team>-<user>.json` under the local data folder
-(`~/.local/share/ttyak` on Linux), readable by you only, and the file goes once no draft is left.
-
-Typing (INSERT):
-
-| Key | |
-|---|---|
-| Enter · Alt+Enter | send · new line |
-| Esc | cancel an edit, else leave the box (back to NORMAL) |
-| Ctrl+V | paste from the clipboard: text is typed in; a picture (a screenshot) or files copied in a file manager are attached above the box (✕, or Backspace in an empty box, removes one) and Enter sends them with your text — or on their own — as one message. Your terminal's own paste (Ctrl+Shift+V) only carries text, and over SSH there is no clipboard to read |
-| `Ctrl+Space` | the leader while you type: Ctrl+Space then `h` and so on, as `␣h` elsewhere |
-| `Ctrl+Space x` · `Ctrl+Space Backspace` | clear the box for good: the text, attachments and mentions (an edit in progress is cancelled, as Esc does) |
-| `/` (first in the box) · @ # : | command (ttyak's own and Slack's, with what they take; a command typed out in full runs on Enter) and its fixed choices (`/dnd 30m`…`off`, `/dnd schedule` kinds and hours, `/status clear` and `… for today`, `/section rename\|delete`, `/workspace` names, `/snippet` languages), mention, channel, emoji autocomplete |
-| `/status [:emoji:] [text] [for 30m\|2h\|today]` · `/status clear` | set or clear your status |
-| `/away` · `/active` · `/dnd` · `/dnd 30m` · `/dnd off` | appear away / active · plain `/dnd` pauses notifications for 30 minutes, or resumes them when paused · pause for a time · resume (ends a pause and the current quiet hours of your notification schedule; the schedule stays) |
-| `/dnd schedule` · `/dnd schedule off` · `… every day 9:00-17:00` · `… weekdays 9:00-17:00` | say the notification schedule · turn it off · receive notifications every day / Monday to Friday in these hours (the account's time zone), paused outside them; per-day hours in F6 → Availability |
-| any other `/command` | run by Slack, as its own clients do (`/remind`, `/giphy`, `/shrug`, apps' commands); an answer only you see is marked "only visible to you"; an unknown one says so; a leading space sends the line as text |
-| `/upload <path> [text]` | upload a file (the path completes as you type: Tab goes into a folder; `~` is your home; names with spaces are quoted for you) |
-| `/join [#channel]` · `/leave` | join (default: the channel you are previewing — Ctrl+K finds channels you are not in; a previewed one is fetched again every 15 s, F6 → Messages & media) · leave the current channel |
-| `/create <name>` · `/create-private <name>` | create a channel |
-| `/dm @a [@b …]` | open a DM, or a group DM with up to 8 people |
-| `/snippet [lang] [title]` + lines | post the lines after the command (Alt+Enter) as a text snippet |
-
-Ctrl+Space is also what macOS uses to switch input sources, and Windows input methods may take it. If
-ttyak never sees it, rebind `insert_leader` in F6 → Keys.
-
-If you miss a single key: single letters and F-keys moved behind `Space`, and every one of them can
-be put back on a key of its own (see below). `ttyak ctl keys-template` prints every action with its keys.
-
-### Links into your Slack
-
-A link to a channel, a message, a thread reply, a person or a file in one of your profile's
-workspaces is shown as `↪ <label>` (for a message, `› message from <author>` once ttyak has
-looked it up) in a colour of its own (`app_link` in the theme). A plain click opens it in ttyak: a
-link into another workspace of the profile switches to it first, and a link to something ttyak
-cannot find says so in the status bar. Hovering a link names where it goes. `␣o` lists "In ttyak"
-first, then "In the browser", then "Files"; Ctrl+Shift+click (kitty) still opens the link in the
-browser. Links to other places open in the browser as before.
-
-### Rebinding keys
-
-F6 → Keys lists every action under its group, with the which-key settings above them. `/` filters
-the list (Enter keeps the filter, Esc clears it), Enter on a row records the new keys — press
-them, or a whole sequence such as `Space r` — Delete unbinds, `r` restores the default, and Enter on a
-group renames it (`i` changes its icon). Only the one entry you change is written to
-`~/.config/ttyak/keys.toml` (macOS: `~/Library/Application Support/ttyak/`, Windows:
-`%APPDATA%\ttyak\config\`); your comments and the order of the file stay.
-
-`ttyak ctl keys-template` prints a complete keys.toml with every default and a comment for each action
-— a good start to edit by hand. Each table is a context (`[global]`, `[sidebar]`, `[messages]`,
-`[composer]`, one per dialog…), each entry replaces an action's keys, and a line left out keeps its default:
-
-```toml
-leader = "space"              # the leader in NORMAL; "" for none
-insert_leader = "ctrl+space"  # the leader while typing and in dialogs
-
-[groups]                      # names and icons in the which-key panel
-"<leader> h" = { name = "calls", icon = "🎧" }
-
-[labels.messages]             # a label and icon for one action
-react = { label = "quick", icon = "⚡" }
-
-[messages]
-react = ["<leader> r", "R"]   # several keys or sequences for one action
-pin = []                      # unbound
-copy = "y"                    # back on a key of its own
-```
-
-A sequence is keys separated by spaces, `"<leader> r"` or `"ctrl+x ctrl+s"`; a key is written like
-`ctrl+k`, `alt+up`, `shift+tab`, `G`, `f5`, `space`, `pageup`. An action can have a key of its own and
-sequences at once. Plain characters cannot be bound where you type (global, composer, search fields)
-— there use `insert_leader` sequences. Problems are shown in the status bar at startup, and the
-default stays in place for any entry that has one. Existing keys.toml files keep working: your binding
-beats the default.
-
-## Huddles
-
-`␣hh` joins (or starts) the huddle of the conversation you are in, and `␣hT` on a message starts (or
-joins) a huddle in that message's thread; you join **muted**, and the
-microphone is only opened while you are unmuted (`␣hm`). While you are in a huddle, others see you
-"In a huddle" (🎧 when you have no status emoji) as with Slack's own app: Slack sets it when you join and
-clears it when you leave (leaving, or quitting ttyak in a huddle, also tells Slack with `rooms.leave`, as its own client does, so the huddle's list drops you at once), and ttyak renews it every ~4 minutes, as Slack's app does — only when your Slack
-preference for it (`huddles_set_status`) is on, and never touching your status. The call bar at the bottom shows that you are
-still in the huddle — where, how many are there, your microphone (🎙 live with your level, or 🔇
-muted), your camera and a screen share — and the picture and name of whoever is talking, or talked
-last, instead of everyone; with its keys underneath, and it takes more rows rather than cutting
-anything off when the window is narrow. `␣hv` (or a click on the call bar) shows the huddle view in place of
-the messages: a tile per participant with their picture or video — the border lights up while
-they speak, 🔇 in the title when muted — that shrinks as people join and scrolls (mouse wheel,
-"▲/▼ N more") when they no longer fit; a screen share takes the stage with everyone else in a
-strip. Arrows select a tile, Enter (or a second click) maximizes it, Esc shows all tiles again
-and then leaves the tiles; `␣hv` again, or opening a conversation, brings the messages back. Someone starting a huddle in a DM with you sends a
-desktop notification. While you are in Do Not Disturb (snoozed or in your schedule), Slack sends no
-invitation at all, so nothing rings — as in Slack's own app.
-
-If a huddle's connection is lost (a network change, say), ttyak joins again by itself, as Slack's app
-does: the status line says "huddle connection lost — joining again…" and the call bar "reconnecting…"
-(with no microphone level meanwhile), then "back in the huddle", usually a few seconds later; mute and camera
-stay as they were (also when changed meanwhile). Once you were
-connected, any trouble with the connection joins again: the media failing or staying disconnected for
-4 s, a signaling error from the server, a broken signaling socket. The call ends when you leave (also while
-it is joining again), when the server closes the signaling connection (the huddle ended, or you were
-removed), when the very first join fails, after three tries in a row that do not stay up for 30 s
-(0, 2 and 4 s apart), or after more than ten reconnects within an hour. In those last two cases ttyak tells
-Slack it left, as when you leave, and the status line says "huddle connection lost — left the huddle".
-
-Clicking a desktop notification (Linux desktops with an XDG notification server; macOS and Windows: see "On macOS" and
-"On Windows") opens its conversation in ttyak — a thread reply opens the thread with the reply selected — for 30
-minutes after it was shown, and brings the window forward where it can (see "A click brings the window forward").
-
-Under the hood a huddle is an Amazon Chime SDK meeting: `rooms.join` hands out the meeting
-credentials, `crates/huddle` speaks Chime's signaling protocol and runs WebRTC audio (webrtc-rs,
-Opus). See `docs/protocol/huddles.md` for how this was worked out.
-
-Pick audio devices with `TTYAK_AUDIO_INPUT` / `TTYAK_AUDIO_OUTPUT` (part of a device id or
-name from `ttyak ctl audio-devices`). A device that is named but missing is an error; there is
-no silent fallback.
-
-F6 → Huddles has the huddle sounds (at the notification sound volume; each can be turned off): a soft
-rising arpeggio when you join, and while you are in a huddle a short "pop" when someone joins and a
-falling pair when someone leaves. A huddle invitation (someone starts one in a DM with you) rings — a
-soft trill every few seconds (silent under the system's do-not-disturb, when followed and ttyak can read it), with
-"📞 X invites you to a huddle" in the status bar — until you join (`␣hh`,
-from any conversation), decline (`␣hd`), the huddle ends, or it has rung for the set time (30 s); then,
-if "Then decline it on Slack" is on, it is declined for you. When you have been the only one in a
-huddle for a while (300 s by default, adjustable), a quiet melody loops until someone joins or you leave.
-
-F6 → Audio also has the huddle volume, the notification sound volume, a microphone gain, a
-speaking threshold (quieter microphone input is sent as silence, held open 300 ms after you
-stop so words are not cut), noise suppression (RNNoise via `nnnoiseless`) and echo cancellation
-(on by default: WebRTC's AEC3 via the pure-Rust `sonora`, so others do not hear themselves from your
-speakers; it drops the microphone above 16 kHz, which speech does not need). `+`/`-` (or Enter)
-step the levels, and a huddle you are in follows at once.
-
-Other people's cameras play in their tiles in the huddle view (`␣hv`); a screen share gets its own
-"🖥 <name>'s screen" tile ("🖥 <name> is sharing" in the call bar).
-
-Your camera: choose it in F6 → Audio & video → Camera (until you do, it can never switch on), then
-`␣hc` in a huddle switches it on and off; you see yourself in your tile. Capture goes through the
-`ffmpeg` tool (V4L2 on Linux; AVFoundation/DirectShow on macOS/Windows, where cameras are listed
-with ffmpeg's `-list_devices`, are written but have never been run).
-
-Video is H.264 (OpenH264, built from source — note that H.264 is patent-encumbered when you
-distribute binaries). For tests, `ttyak ctl huddle-media <channel> --video-test` joins with a
-synthetic camera (a moving test pattern), `--share-test` shares it as a screen, `--camera NAME`
-sends a real camera (`ctl cameras` lists them), and `--record-video DIR` saves what arrives.
-
-Your screen: `␣hs` in a huddle starts sharing, `␣hs` again stops. Others see it as your screen share;
-you see it in a "🖥 Your screen" tile. In a Wayland session the desktop asks what to share (a
-screen or a window, through the screen-cast portal, read with GStreamer's `pipewiresrc` —
-`gst-launch-1.0` and the GStreamer PipeWire plugin must be installed). Elsewhere there is no picker
-and `␣hs` shares the **whole** screen through `ffmpeg`: `x11grab` in an X11 session, the main screen
-via AVFoundation on macOS (the terminal needs the Screen Recording permission), the desktop via
-`gdigrab` on Windows. The Wayland portal and X11 (against a virtual Xvfb display) have been tried;
-on Windows only from an SSH session, where `gdigrab` cannot capture (no desktop); macOS is untested.
-
-## Other settings
-
-| Variable | |
-|---|---|
-| (F6 or `/prefs`) | preferences: availability (status, away, Notifications — on or paused until when; Enter pauses for 30 minutes or resumes, + / - change a pause's length — and the notification schedule: off, every day, weekdays or custom, with the hours you receive notifications in, per day for custom: hours, receive all day or paused all day; kept on Slack), theme, compact list, thumbnails, profile pictures, emoji as names, custom emoji as pictures, how often people's statuses are looked up again, when feed threads are marked read, 12/24 h clock, date format, time zone, language, desktop notifications and sound, the bell when not focused, the mark in the tab title, microphone and speaker, volumes, microphone gain, speaking threshold, noise suppression, echo cancellation, camera, huddle sounds (joining, someone joining or leaving, the ring and how long it rings, declining when it rings out, the alone reminder and when it starts), updates (the version and install method, the check on or off, how often, the download timeout, Check now, the command to update, Update) — saved in `settings.toml` next to `keys.toml` |
-| `TTYAK_LOG` | log filter, e.g. `ttyak=debug` (log file: `~/.cache/ttyak/<profile>/ttyak.log`); the websocket library's handshake and frames (`tungstenite::handshake::client`, `tungstenite::client`, `tungstenite::protocol`), which would print the token, cookie and messages, stay off unless named |
-| `TTYAK_NOTIFY_ROUTE=system` | for debugging: notifications through the system's notifier even in a terminal that shows them itself (kitty; by the protocol foot, Konsole, Contour) |
-| `TTYAK_DOWNLOAD_DIR` | where `␣s` saves attachments first, over F6 → Messages & media → Save files to (default: your downloads folder) |
-| `TTYAK_OPEN_WITH` | the program `␣o` opens links with, given the address (default: the system's opener — `xdg-open`, `open`, Windows' URL handler); only web and mail links are opened |
-| `TTYAK_AVATARS=0` | initials instead of profile pictures next to names (as on terminals without real graphics; F6 → Messages & media → Show profile pictures turns both off, Two-row profile pictures makes them bigger) |
-| `TTYAK_GRAPHICS` | how pictures are drawn: `kitty`, `sixel`, `iterm2` or `halfblocks` (default: asked from the terminal). F6 → Messages & media → Draw pictures with (`[messages] graphics` in `settings.toml`) offers only the ways the terminal said at start it can draw — `auto` and `halfblocks` always — and its help marks the others "not available in this terminal"; a `settings.toml` naming one of those draws as `auto`, with a note in the status bar (the file is left as it is). `TTYAK_GRAPHICS` still forces the way it names, for when the terminal is not asked right (over ssh or tmux) — with a warning in the log when the terminal did not report it |
-
-### Updates
-
-ttyak looks for a new version once a day: a plain GET of `https://ttyak.sh/latest.json`, which sends nothing about you
-but ttyak's name and version as the User-Agent (no cookies). A new version is told once, ever — a desktop notification
-(when they are on; on Linux a click opens the update screen) and `⬆ <version>` in the status line, which comes back
-after a restart until you open the update screen or that version is installed — and the last one told, the newer version
-found and the last one whose update screen you opened are kept in `updates.json` in ttyak's data folder (a check that
-finds nothing newer forgets the version found; with the check off nothing does, so a version found before is offered
-from the start of every run, even one no longer out, until Check now says otherwise). F6 → Updates shows the version and
-how this ttyak was installed (the install script, Homebrew, Scoop, winget, Chocolatey, the Arch package, a .deb or .rpm
-package, or manual download for a copy downloaded by hand), turns the check on or off and sets how often it runs
-(`[updates] check`, `check_every_secs` in `settings.toml`), how long it waits for an answer (`check_timeout_secs`, 10
-seconds) and how long the update screen's download waits for data (`download_timeout_secs`). Check now looks at once,
-due or not and with the check off too, and says what it found on its row — never with a desktop notification; a version
-it finds counts as told, so no notification or `⬆` comes for it later either, but the Update row stays while it is
-known, in a later run from the start. Hand-edited seconds below the least F6 offers count as it (an hour between checks,
-5 s for the check's answer, which waits 10 minutes at most, 10 s for the download, which waits a day at most). The page
-also shows what to run to update this install (Enter copies it), and while a newer version is known an Update row that
-opens the update screen: a copy the install script put in a folder ttyak can write updates itself there (downloaded,
-checked against the release's SHA256s, put in place; ttyak never restarts by itself), any other says the command or the
-page to download from.
-
-### Themes
-
-F6 → Appearance → Colour theme opens a picker of dark, light, terminal and your own themes,
-each with a few of its colours: type to filter, ↑/↓ show each one on the whole screen at once,
-Enter keeps it, Esc goes back (a theme file that does not load says why). A theme is
-a TOML file in `themes/` next to `settings.toml`: `base = "dark"` plus any colours to change
-(`"#ff8800"`, ANSI names such as `"light-red"`, or 0–255). Start from
-`ttyak ctl theme-template dark > sunset.toml`, edit it, and install it (checked first) with
-`ttyak ctl theme-import sunset.toml`; share themes by passing the file around. `link` is the colour of web links, `app_link` of links into your own Slack.
-
-To tell workspaces apart at a glance, F6 → Appearance → Theme for this workspace gives the
-workspace you are in a theme of its own (the same picker, with "(colour theme)" for none);
-`settings.toml` keeps it under `[appearance.workspace_themes]` by workspace id.
-
-### Translations
-
-The interface can be translated: `ttyak ctl locale-template > ~/.config/ttyak/locales/de.toml`,
-fill in the right-hand sides, then choose `de` in F6 → Language & region. Only the help, the
-preferences, overlay titles and the status-bar hints go through translation so far.
-
-## Scripting
-
-`ttyak ctl …` exposes the API for automation and tests: `whoami`, `channels`,
-`history`, `replies`, `post`, `react`, `pin`, `upload`, `search`, `listen`, `status` (below), `check` (see
-Requirements), `audio-devices`,
-`huddle-media`, `huddles` (the huddles happening now, `--recent` the latest ones, with ids shown as `C1`, `U1`, …)
-and a few research probes (`api`, `get`, `huddle-*`, `huddles --shape`) that redact secrets.
-
-### Status for bars and scripts
-
-`ttyak --profile NAME ctl status` prints what the running ttyak of that profile says, from a small file it keeps up to
-date (`$XDG_RUNTIME_DIR/ttyak/NAME.json`, readable by you only; elsewhere in the cache folder), so it needs no Slack
-session and is cheap to poll every second. The line looks like `◆ acme: 2 for you · paused until 14:00`; the mark is
-`○` all read, `●` unread, `◆` for you, the same as the tab title. `--json` prints the whole object (`state`
-`read`/`unread`/`for_you`, `mark`, `for_you`, `workspaces`, `paused_until`, `huddle`, `update`, `updated_at`, times in
-RFC 3339), `--follow [--every SECS]` prints a new line only when it changes, for bars that read a stream; it keeps
-running when ttyak isn't (it waits for it and prints the `not running` line on the change, then the next). `huddle.where`
-names no person: `a direct message`, `a group DM` or `#channel`. When no ttyak
-runs the profile it says `ttyak is not running` (`"running": false` in JSON) and exits 0. The file holds no message text
-and no authors, and ttyak removes it when it quits.
-
-```sh
-ttyak ctl status --json | jq -r '"\(.mark) \(.for_you)"'   # a plain bar line: ◆ 2
-ttyak ctl status --json | jq -r .mark                      # the mark only
-```
-
-## Layout
-
-- `crates/slack-core` — session/auth, Web API client, RTM websocket, message formatting.
-- `crates/huddle` — Chime signaling (protobuf), WebRTC audio, Opus, audio devices.
-- `crates/ttyak` — the TUI and the `ctl` CLI.
-- `vendor/rtc-turn` — webrtc-rs' TURN client 0.21.1 with a fix for "438 Stale Nonce" answers, which
-  dropped a huddle's audio about 10 minutes in (why, what changed, when to drop it: `vendor/rtc-turn/TTYAK-PATCH.md`).
-
-Status and verification notes: `PROGRESS.md`. Design: `DESIGN.md`.
+The whole map: [Project layout](https://github.com/dmytrobsp/ttyak/wiki/Project-layout).
 
 ## Licence
 
 ttyak is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the
 [MIT licence](LICENSE-MIT), at your option. Unless you say otherwise, any contribution you submit
 for inclusion in ttyak is licensed the same way, without any additional terms or conditions.
-`vendor/rtc-turn` is webrtc-rs' code (MIT or Apache-2.0, its licence files are in that folder).
+`vendor/rtc-turn` is webrtc-rs' code (MIT or Apache-2.0, its licence files are in that folder) and `vendor/crossterm`
+crossterm's (MIT).

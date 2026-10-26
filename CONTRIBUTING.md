@@ -2,7 +2,9 @@
 
 ## Building and testing
 
-Install the packages for your system from the README's Requirements, then:
+Install the packages for your system from the wiki's
+[Building from source](https://github.com/dmytrobsp/ttyak/wiki/Building-from-source) (what ttyak needs to run is on
+[Requirements](https://github.com/dmytrobsp/ttyak/wiki/Requirements)), then:
 
 ```sh
 cargo build            # debug build: target/debug/ttyak
@@ -19,7 +21,8 @@ MinGW-w64 (`apt install mingw-w64`), then `cargo build --release --target x86_64
 
 ## Running against Slack
 
-ttyak signs in with a browser session (`ttyak auth login`, see the README "Signing in"). Use a
+ttyak signs in with a browser session (`ttyak auth login`, see the wiki's
+[Signing in](https://github.com/dmytrobsp/ttyak/wiki/Signing-in)). Use a
 workspace of your own for testing: `ttyak --profile <name>` keeps separate sessions, and
 `ttyak --profile <name> ctl …` (post, edit, react, history, listen, api, huddle-media with a test
 tone or test video …) lets a second account play the other person in tests.
