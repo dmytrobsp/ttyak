@@ -65,7 +65,11 @@ Sessions are stored at `~/.config/ttyak/<profile>/session.json` (0600). Tokens a
 - **Sending:** `chat.postMessage` takes the composer's mrkdwn as `text` (Slack renders it), plus `thread_ts` for replies. Edits and deletes use `chat.update` / `chat.delete`; reactions use `reactions.add/remove`.
 - **Files:** uploads use `files.getUploadURLExternal`, then a PUT, then `files.completeUploadExternal`. Downloads fetch `url_private` with the session cookie and token.
 
-## Milestones (tracked in PROGRESS.md)
+## Milestones (the original plan)
+
+The first plan, kept for the record. Where the project stands: [PROGRESS.md](PROGRESS.md); what happened:
+[history/](history/README.md).
+
 
 1. Core: session import, API client, RTM, `ctl whoami/post/history`.
 2. TUI shell: sidebar (channels, DMs, unread markers), message pane, composer, keyboard and mouse navigation.

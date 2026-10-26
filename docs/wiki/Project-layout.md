@@ -15,7 +15,8 @@ A short map of the [repository](https://github.com/dmytrobsp/ttyak), for finding
 | `docs/DESIGN.md`, `docs/RELEASING.md`, `docs/distribution/` | the architecture and portability rules; how a release is made, and the accounts it needs |
 | `.github/workflows/` | CI, the release, the site's deployment, the install check |
 
-At the top: `PROGRESS.md` (the development log),
+In `docs/`, for working on ttyak: `docs/PROGRESS.md` (where the project stands), `docs/history/` (the development
+log), `docs/agents/` (how the work is done). At the top: `AGENTS.md` (for coding agents),
 `CONTRIBUTING.md` (see [Contributing](Contributing)) and the licences: ttyak is MIT or Apache-2.0, at your option;
 `vendor/rtc-turn` is webrtc-rs' code (MIT or Apache-2.0, its licence files are in that folder) and `vendor/crossterm`
 crossterm's (MIT).

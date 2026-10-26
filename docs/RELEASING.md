@@ -90,5 +90,6 @@ A tag is pushed only with the maintainer's word.
 
 - Close the milestone: `gh api -X PATCH repos/dmytrobsp/ttyak/milestones/<number> -f state=closed`
   (`gh api repos/dmytrobsp/ttyak/milestones` lists the numbers). Create the next one when its first issue is picked.
-- PROGRESS.md: a row for the release (runs, timings, what was checked live and what not) and the NEXT UP paragraph.
-- Outside waits (winget and Chocolatey moderation) go into NEXT UP until they are done.
+- The release plan's ledger: the release's record (runs, timings, what was checked live and what not).
+- [docs/PROGRESS.md](PROGRESS.md): rewritten for the new latest release, what is in flight and the next topics.
+- Outside waits (winget and Chocolatey moderation) go into issue #40 until they are done.

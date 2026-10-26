@@ -1,7 +1,6 @@
 Some things Slack's own app does that ttyak doesn't do yet. None of them is a bug: ttyak just has no way to do them
 for now. Use Slack's app or the web page for these. The list is tracked in one
-[issue on GitHub](https://github.com/dmytrobsp/ttyak/issues?q=is%3Aissue+%22Not+supported+yet%22) — say there which
-one you miss.
+[issue on GitHub](https://github.com/dmytrobsp/ttyak/issues/43) — say there which one you miss.
 
 ## The list
 

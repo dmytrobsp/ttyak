@@ -18,7 +18,7 @@ ahead, but nothing live: no running ttyak against Slack, no test machines. Ask t
 | `crates/huddle` | huddles: Chime signaling, WebRTC audio/video, devices, camera, screen sharing |
 | `crates/ttyak` | the terminal UI and the `ctl` command line (scripting and test helper) |
 | `vendor/` | patched copies of crates (rtc-turn, crossterm) |
-| `docs/PROGRESS.md` | where the project stands now: latest release, what is in flight, outside waits, next topics |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | where the project stands now: latest release, what is in flight, outside waits, next topics |
 | `docs/history/` | the old status rows by era, with their LIVE/UNIT/NOT records and commit hashes |
 | `docs/agents/` | for agents: [workflow.md](docs/agents/workflow.md), [live-testing.md](docs/agents/live-testing.md), [setup.md](docs/agents/setup.md) (a new machine), [local-template.md](docs/agents/local-template.md) |
 | [docs/DESIGN.md](docs/DESIGN.md) | architecture and portability rules |
@@ -88,8 +88,9 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
 
 Full text: [docs/agents/workflow.md](docs/agents/workflow.md).
 
-1. **Where we are**: `docs/PROGRESS.md`, the open issues of the current milestone, the newest ledger in
-   `docs/superpowers/ledgers/` with unfinished tasks, `git log`. Never re-run a task the ledger or the log shows done.
+1. **Where we are**: [docs/PROGRESS.md](docs/PROGRESS.md), the open issues of the current milestone, the newest ledger
+   in [docs/superpowers/ledgers/](docs/superpowers/ledgers/README.md) with unfinished tasks, `git log`. Never re-run a
+   task the ledger or the log shows done.
 2. **Pick work** from the milestone, then `later`; issues labelled `triage` are user reports nobody has looked at.
 3. **Plan** anything bigger than a focused fix: brainstorm with the maintainer → design in `docs/superpowers/specs/`
    → a builder's read → the maintainer's approval → a plan in `docs/superpowers/plans/` → subagent-driven execution
@@ -101,8 +102,8 @@ Full text: [docs/agents/workflow.md](docs/agents/workflow.md).
    before claims. Live checks follow [docs/agents/live-testing.md](docs/agents/live-testing.md).
 6. **Commit and push**: explicit paths, never a scripted edit chained with `git commit`, the co-author trailer,
    `Fixes #N`. Docs-only pushes skip CI; after any push that runs CI, watch it.
-7. **Docs**: the wiki in `docs/wiki/` (published at each release), the README short, `docs/PROGRESS.md` rewritten
-   (never appended to), the site checked for private strings.
+7. **Docs**: the wiki in `docs/wiki/` (published at each release), the README short,
+   [docs/PROGRESS.md](docs/PROGRESS.md) rewritten (never appended to), the site checked for private strings.
 8. **Release** with [docs/RELEASING.md](docs/RELEASING.md), only on the maintainer's word.
 
 When something only the maintainer can decide comes up (an account, a live check with them, a public post, a

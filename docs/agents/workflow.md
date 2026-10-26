@@ -12,10 +12,12 @@ follows the same steps by hand; this page says what they are.
 
 Read, in this order:
 
-1. `docs/PROGRESS.md` — the latest release, what is in flight (milestone, active plan and its ledger), outside waits,
-   the next topics. It is a short current-state page: it is rewritten when things change, never appended to.
+1. [docs/PROGRESS.md](../PROGRESS.md) — the latest release, what is in flight (milestone, active plan and its ledger),
+   outside waits, the next topics. It is a short current-state page: it is rewritten when things change, never
+   appended to.
 2. The open issues of the current milestone: `gh issue list -R dmytrobsp/ttyak -m <milestone>`.
-3. The newest ledger in `docs/superpowers/ledgers/` that still has unfinished tasks, with its design and plan.
+3. The newest ledger in [docs/superpowers/ledgers/](../superpowers/ledgers/README.md) that still has unfinished tasks,
+   with its design and plan.
 4. `git log --oneline -20`, `git status`, and the latest runs: `gh run list -R dmytrobsp/ttyak -L 5`.
 
 Never re-run a task that the ledger or `git log` shows done. History (every step since the start, with its
@@ -65,18 +67,20 @@ Registries and GitHub alone once missed chat apps of the same name; ordinary cha
 fare better.
 
 **Handoff before big work.** At the start of a large new piece of work the maintainer may ask for a session handoff
-first: write the design, update `docs/PROGRESS.md`, commit and push, and give a self-contained continuation prompt
-(where things are, how to resume, the hard rules, the test setup). Do not start implementing in that session.
+first: write the design, update [docs/PROGRESS.md](../PROGRESS.md), commit and push, and give a self-contained
+continuation prompt (where things are, how to resume, the hard rules, the test setup). Do not start implementing in
+that session.
 
 ## Executing a plan with subagents
 
 A controller agent runs the plan; it dispatches one implementer per task and reviewers after each.
 
-- **Ledger.** The plan's decisions are committed in `docs/superpowers/ledgers/<plan>.md` at task boundaries: each
-  task's status and commit, what was checked LIVE/UNIT/NOT, the controller's rulings, deferred items (with the issues
-  filed for them). Bulky scratch — the rules file, task briefs, review packages, reports — stays git-ignored in
-  `.superpowers/sdd/<plan>/` (never `git add -f` it). After a crash or a lost session, the ledger and `git log` are
-  how work resumes; an implementer's transcript survives and can be resumed.
+- **Ledger.** The plan's decisions are committed in
+  [`docs/superpowers/ledgers/<plan>.md`](../superpowers/ledgers/README.md) at task boundaries: each task's status and
+  commit, what was checked LIVE/UNIT/NOT, the controller's rulings, deferred items (with the issues filed for them).
+  Bulky scratch — the rules file, task briefs, review packages, reports — stays git-ignored in
+  `.superpowers/sdd/<plan>/` (never `git add -f` it). After a crash or a lost session, the ledger and `git log` are how
+  work resumes; an implementer's transcript survives and can be resumed.
 - **Briefs.** Each implementer gets a self-contained brief: the plan's Global Constraints (the shell rules always),
   its task, the files to read, what it must not do. Write the brief to its file before dispatching, never in the same
   chained command.
@@ -197,8 +201,8 @@ A new tool test is added to CI's `Tool tests` line in the same commit. Test coun
 - **The privacy check on new public docs**: copy the new or moved files into a scratch folder and run
   `check_private.py` on it. It reads a private list (`~/.config/ttyak-site/forbidden.txt` by default; the local file
   names the private lists); where no list exists, skip it and say so.
-- **`docs/PROGRESS.md`** stays short and current; history goes to `docs/history/` and the ledgers. Old specs and plans
-  keep their historical text.
+- **[docs/PROGRESS.md](../PROGRESS.md)** stays short and current; history goes to [docs/history/](../history/README.md)
+  and the ledgers. Old specs and plans keep their historical text.
 
 ## Releasing
 
