@@ -35,7 +35,8 @@ workspaces of the profile, by their next 30-second check — where the notificat
 macOS and Windows). A thread reply's notification stays until that thread is read (reading the conversation does not
 take it away). A huddle's notification goes once the huddle ends or its invitation is withdrawn (answered in another
 client, say), or once the conversation is read in ttyak or another client. One the notification server shows late,
-after ttyak stopped waiting for it (5 seconds), is replaced and taken away all the same.
+after ttyak stopped waiting for it (5 seconds), is replaced and taken away all the same if it comes within a minute;
+it plays no ttyak sound.
 
 Notifications from the other workspaces of the profile still arrive, titled with the workspace; clicking one switches
 there ([Profiles and sessions](Profiles-and-sessions#several-workspaces-in-one-profile)). A new version of ttyak is told
