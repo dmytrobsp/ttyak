@@ -51,3 +51,22 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   without sleeping until StoreBusy (10 s); a persistent PermissionError surfaces as PermissionError, not StoreBusy;
   a release error in `mutex()`'s `finally` can mask the body's result or error (carried into Task 2's brief); clearing
   an abandoned `mutex.break` is itself a small race.
+- Task 2: dispatched (<tool> base 37944ba).
+- Ruling: Task 2's open points settled in the dispatch (answer states incl. `no_claim` and `left`; `status` drops
+  expired tickets; an idempotent re-claim renews) — costs a rename in Task 3 if wrong.
+- Task 2: d4ada83; review: spec ✅, approved. Complete (37944ba..d4ada83, review clean). UNIT: 32 tests.
+- Task 2: minor (deferred): equal `enqueued` ties order by ticket id; no tests for a resumed ticket after expiry, the
+  TTL boundary, a stale break with an empty queue, `position` after an expiry.
+- Task 2: note: a head waiter that stopped polling (exited with a report) holds up later arrivals on a free box until
+  it resumes or its ticket expires (15 min) — the README (Task 6) tells agents to resume promptly or `leave`.
+- Task 3: dispatched (<tool> base d4ada83).
+- Ruling: `op` answers a store error (busy, corrupt) with `ok: false` and a `kind`, exit 0; a malformed request
+  exits 2 — the brief only names the malformed case — costs an exit-code change in Task 4 if wrong.
+- Task 3: 6a4f7f9; review: spec ✅, approved with 1 important (the `_Held` no-op mutex wrapper in cli.py, made to
+  read the clock inside the mutex, is fragile and Task 4 would have to copy it) → fix round 1: claims functions take
+  `now=None` = read the box clock inside the mutex.
+- Task 3: minor (deferred): NaN/Infinity/non-positive lease or ttl accepted; a deeply nested JSON request gives a
+  RecursionError traceback; no test for the busy answer; the 8-process test does not strictly start all before
+  serving (cannot pass falsely, may miss a regression).
+- Task 3: fix round 1/5 (1 addressed, 0 open; c884314). Complete (d4ada83..c884314, review clean). UNIT: 38 tests.
+- Task 4: dispatched (<tool> base c884314).
