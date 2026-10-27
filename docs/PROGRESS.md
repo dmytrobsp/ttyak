@@ -35,10 +35,13 @@ Last rewritten: 2026-10-27.
   [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): the Slack test accounts
   are claimed with `tools/accounts/accounts.py`, and live checks get their sessions through `install` into a fake
   home; no agent recipe uses the real config folder any more.
-- **Plan in flight: Linux instances** — plan
+- **Done: Linux instances** (2026-10-27) — plan
   [2026-10-27-linux-instances.md](superpowers/plans/2026-10-27-linux-instances.md), ledger
-  [2026-10-27-linux-instances.md](superpowers/ledgers/2026-10-27-linux-instances.md): throwaway sway (then GNOME)
-  desktops in rootless podman for live checks. Then one plan for VM clones (a Hyprland VM, the Windows base).
+  [2026-10-27-linux-instances.md](superpowers/ledgers/2026-10-27-linux-instances.md): throwaway sway and GNOME
+  desktops in rootless podman; ttyak's Linux live checks run there (docs/agents/live-testing.md, "A Linux
+  instance"); a Slack notification reached ttyak in one, live.
+- **Next: VM clones** — one plan for a Hyprland VM and the Windows evaluation base on the same clone machinery
+  (the design's Part 3), then macOS.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits

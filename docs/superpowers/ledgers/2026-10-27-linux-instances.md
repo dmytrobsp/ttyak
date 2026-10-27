@@ -83,3 +83,40 @@ first), 5 ttyak's live checks in an instance, final review. Tasks 1–4 are in t
   mounted.
 - Task 5 step 1: docs 1aa7622, fix round 1/5 (4 + a re-wrap addressed; 4839ba4), review clean. Carried to the final
   fix wave: a ragged line in the Slot bullet.
+- Live-run fixes: 604f887 (symbol fonts in both images; ~/.cache and ~/.local/state as tmpfs over a mounted home).
+  Review: the runtime created the mount points on the host as the container's root (sub-uid), undeletable by the user
+  and blocking ~/.local/share inside → fix round: the tool creates them as the user before the start; the test temp
+  folders fail loudly when they cannot be removed. Outside event: two test leftovers under /tmp (empty mount points
+  owned by the sub-uid) removed by the controller with `podman unshare rm -r` after looking at their contents.
+- Mount-point fix: 2cc6ed3, review clean; the controller ran the whole suite with the real-podman tests: 225 OK, no
+  containers or temp folders left. Carried to the final fix wave: two README lines over 120 columns.
+- Final whole-plan review dispatched (claim tool 0406eff..2cc6ed3; ttyak 0e111f0's docs).
+- Final review (claim tool 0406eff..2cc6ed3, ttyak docs): no critical; 4 important — the opt-in real-podman tests
+  reaped every instance on the machine (all pools); the account claim not renewed while ttyak runs in an instance; the
+  recipe's account-id capture could not work; `--mount` could hand host sockets (/run/user, /tmp/.X11-unix) to an
+  instance — plus 6 minor (incl. the 3 carried items, a second reap before `podman run`, deleting the fake home, the
+  local file's instance line) → one fix wave in each repository. `AGENTS.local.md` got its instance line (controller).
+- Ruling: the ledger keeps naming the claim tool's failure file as it is — the tool's name is already public in the
+  box-claims plan and ledger, and the privacy check passes — costs a wording change if wrong.
+- For the maintainer: a memory cap per instance (`--memory`), a user timer running `instance reap`, and the
+  notification check during quiet hours.
+- Fix waves: claim tool 2338848..9aa6135 (pool label; host-socket mount sources refused; renewal around
+  `podman run`, leases ≥ 5 min; a second reap), ttyak docs 3bddb41 (account renewed before ttyak starts, `timeout
+  25m`, the claim id, the fake home deleted). Scoped re-review: all addressed. UNIT: 231; with real podman: 231.
+- The maintainer's decisions (2026-10-27): a memory cap per instance (2 × the budget); a user timer running
+  `instance reap`; the notification check now, with A's DND ended and put back.
+- LIVE (2026-10-27 23:3x, the maintainer's word): A's 28 DND preferences and DND state saved; `dnd.endDnd` ended
+  A's current quiet period (the schedule untouched); ttyak as A in a sway instance; B sent A a DM with `ctl post`;
+  the instance's `notifications` listed it (raised by ttyak through kitty, with the sender and the text); the window
+  stayed focused (the only one). Put back: `dnd.setSnooze` until the period's original end (58 s later, whole
+  minutes); the 28 DND preferences read back identical. Cleanup: instance removed, both accounts released, the fake
+  homes' mount points owned by the user and deleted cleanly; the instance's caches no longer reached the host. NOT: a
+  raise from another window's focus (only one window); sound (sounds off in the fake home); GNOME with ttyak.
+- The maintainer's decisions built: claim tool f47460c..e79a81a (a `--memory` cap of 2 × instance_gb; `instance
+  reap-timer install|remove|status` with two user units; long lines rewrapped). Review clean. UNIT: 239; with real
+  podman: 239. Dropped (nits): the unit's fixed clone path (the clone's place is set in `AGENTS.local.md`) and
+  `install` overwriting the tool's own unit files. The timer installed and enabled on the desktop (the maintainer's
+  word); its service ran once with success; next run every 10 minutes.
+- Plan complete (2026-10-27): the claim tool 0406eff..e79a81a, ttyak b8661ed..3bddb41 (docs). Every review finding
+  fixed except the nits dropped above with their reasons; nothing filed. Next: one plan for VM clones (a Hyprland VM
+  and the Windows evaluation base).
