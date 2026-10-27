@@ -37,3 +37,17 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
 - The `<tool>` repository was created private on the maintainer's account (their word, 2026-10-27); the local
   repository uses the repository's own identity and the user-named https origin (the machine's global URL rewrite to
   ssh would use another key).
+- Task 1: dispatched (<tool> empty, no base commit; ttyak 51d0615).
+- Task 1: ca055ff; review: spec ✅, not approved — 1 critical (a stale mutex that cannot be removed spins forever),
+  4 important (two breakers can both hold the mutex; release does not check ownership; a Windows release can fail
+  silently while a waiter reads `info.json`; corrupt state reads as absent, failing open).
+- Ruling: the commit trailer names the model that wrote the commit (rules.md said one fixed name) — costs nothing.
+- Task 1: minor (deferred): wait deadline on `time.time()` instead of monotonic; no fsync before `os.replace`; no
+  test for "`at` fresh, folder mtime old"; `log.txt` gets CRLF on Windows.
+- Task 1: fix round 1/5 (5 addressed, 0 open; 37944ba). Complete (ca055ff..37944ba, review clean). UNIT: 19 tests.
+- Task 1: minor (deferred): a rare remaining race — a holder still inside the mutex 30 s after taking it (a
+  suspended VM, a clock step) can lose it to a breaker; to be stated in a code comment and the README (Task 6).
+- Task 1: minor (deferred): `_break_stale` returns True when the folder could not be removed, so the wait spins
+  without sleeping until StoreBusy (10 s); a persistent PermissionError surfaces as PermissionError, not StoreBusy;
+  a release error in `mutex()`'s `finally` can mask the body's result or error (carried into Task 2's brief); clearing
+  an abandoned `mutex.break` is itself a small race.
