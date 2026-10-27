@@ -34,3 +34,26 @@ first), 5 ttyak's live checks in an instance, final review. Tasks 1–4 are in t
 - Task 1: fix round 2/5 (2 addressed; 3be9fe4). Complete (0406eff..3be9fe4 in the claim tool, review clean). UNIT: 144;
   opt-in podman: 15 (ready in ~1 s, null sink, ALSA reaching it, failure readable, another uid, stop < 3 s).
 - Task 2: dispatched (claim tool base 3be9fe4).
+- Task 2: fc20d0e; review: not approved — virsh inside the pool mutex (a hung libvirtd, or 3+ stopped VMs passing the
+  mutex's stale age → double grants); over-grant in a burst (MemAvailable falls only once a container runs); the
+  concurrency test modelled instant start; ids unchecked in the library; a malformed pool file → raw errors → fix
+  round 1 with all of them (pending slots charged until `started`). The desktop user is in the libvirt group (no
+  polkit prompt from virsh).
+- Task 2: fix round 1/5 (5 addressed; 5e482bf; no test lost — all 18 earlier names present, 5 new); new: MemAvailable
+  read before the mutex reopens the burst race through `started()` + 2 nits → fix round 2.
+- Task 2: fix round 2/5 (3 addressed; 7797c59). Complete (3be9fe4..7797c59, review clean). UNIT: the suite re-run by
+  the controller: 168 tests OK (5 opt-in skipped). A 126-column line in cli.py goes into Task 3's brief.
+- Task 3: dispatched (claim tool base 7797c59).
+- Task 3: b387706 (implementer; 199 unit, 2 opt-in real-podman tests; no container left). Outside the workflow: the
+  implementer did not work test-first (tests and code in one pass) — the review is asked to check by mutation that
+  the key guards' tests would fail without them.
+- Task 3: review: not approved — a failed start could remove an unlabelled container the tool did not create; the
+  real-folder rule ignored the password-database home (a fake HOME could mount the real ttyak folder); a busy pool
+  lock leaked the container; `reap` could print a claim id; the relative-path test proved nothing; `//etc` and paths
+  under /proc, /sys, /dev, /run accepted as mount targets; a README gap; 6 nits → fix round 1 with all of them,
+  test-first. Mutation checks: the claim check, reap's label/live checks and the failed-start cleanup are proven.
+- Task 3: fix round 1/5 (7 + nits addressed, test-first: 8 RED before; ac5be70). Complete (7797c59..ac5be70, review
+  clean; 8 mutations on a copy each fail their tests). UNIT: 206; opt-in podman: 2 (end to end, failed start).
+- Task 3: carried to the final fix wave (not dropped): the slot is not renewed during `podman run` itself (a lease
+  under ~3 min could lapse while the image starts).
+- Task 4: dispatched (GNOME spike, bounded to an hour; claim tool base ac5be70).
