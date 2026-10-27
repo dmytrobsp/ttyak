@@ -186,8 +186,8 @@ local file. Two ways:
    python3 "$REPO/tools/accounts/accounts.py" import A --from <config folder>/ttyak/<profile>/session.json
    ```
 
-   (`$REPO` is as above; `<config folder>` is where the sessions were copied to, as above; `--replace` renews an existing master.) The tool
-   writes the master as `.accounts/sessions/A.json` (0600) and never prints it.
+   (`$REPO` is as above; `<config folder>` is where the sessions were copied to, as above; `--replace` renews an
+   existing master.) The tool writes the master as `.accounts/sessions/A.json` (0600) and never prints it.
 
 Then check, without posting anything:
 
