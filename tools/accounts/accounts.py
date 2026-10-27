@@ -7,12 +7,19 @@ grant, the first waiter breaks a stale claim.
 """
 from __future__ import annotations
 
+import argparse
+import errno
 import fcntl
+import getpass
 import json
 import os
 import re
+import shlex
+import socket
 import stat
+import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -118,6 +125,17 @@ def _good_ticket(t: object) -> bool:
                     for k in ("enqueued", "seen")))
 
 
+def _num(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _good_claim(c: object) -> bool:
+    return (isinstance(c, dict) and isinstance(c.get("id"), str) and NAME_RE.fullmatch(c["id"]) is not None
+            and isinstance(c.get("holder"), str) and isinstance(c.get("purpose"), str)
+            and all(_num(c.get(k)) for k in ("since", "renewed", "lease"))
+            and isinstance(c.get("installs"), list))
+
+
 class Claims:
     """The claim of one account: state.json (claim + queue) and log.txt, under a flock on `lock`."""
 
@@ -141,14 +159,15 @@ class Claims:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         except FileNotFoundError:
             return {"claim": None, "queue": []}
-        except OSError:
-            raise LedgerError("%s: not a regular file" % path) from None
+        except OSError as e:
+            raise LedgerError("%s: cannot open (not a regular file?): %s"
+                              % (path, errno.errorcode.get(e.errno, "error"))) from None
         try:
             with os.fdopen(fd, encoding="utf-8") as f:
                 s = json.load(f)
         except ValueError:
             s = None
-        if (not isinstance(s, dict) or not isinstance(s.get("claim"), (dict, type(None)))
+        if (not isinstance(s, dict) or not (s.get("claim") is None or _good_claim(s["claim"]))
                 or not isinstance(s.get("queue", []), list)
                 or not all(_good_ticket(t) for t in s.get("queue", []))):
             raise LedgerError("%s: not a valid claim state" % path)
@@ -342,3 +361,290 @@ class _Lock:
     def __exit__(self, *exc):
         os.close(self.fd)  # closing releases the flock
         return False
+
+
+# -- command line ----------------------------------------------------------------------------------------------
+
+class Usage(Exception):
+    pass
+
+
+def parse_dur(text: str, allow_forever: bool = False) -> Optional[float]:
+    """Seconds for 30s / 10m / 2h / a bare number; None for 'forever' where allowed."""
+    if allow_forever and text == "forever":
+        return None
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)([smh]?)", text)
+    if not m:
+        raise Usage("bad duration %r (use 30s, 10m, 2h%s)" % (text, ", or forever" if allow_forever else ""))
+    return float(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
+
+
+def parse_lease(text: str) -> float:
+    sec = parse_dur(text)
+    if not sec > 0:
+        raise Usage("bad --lease %r (must be greater than 0)" % text)
+    return sec
+
+
+def fmt(sec: Optional[float]) -> str:
+    sec = int(round(sec or 0))
+    if sec < 60:
+        return "%ds" % sec
+    if sec < 3600:
+        m, r = divmod(sec, 60)
+        return "%dm%02ds" % (m, r) if r else "%dm" % m
+    h, r = divmod(sec, 3600)
+    return "%dh%02dm" % (h, r // 60) if r // 60 else "%dh" % h
+
+
+def _self_argv() -> list:
+    """How this tool is run from a shell, so printed command lines can be pasted as they are."""
+    return [sys.executable, str(Path(__file__).resolve())]
+
+
+def _line(argv: list) -> str:
+    return " ".join(shlex.quote(a) for a in argv)
+
+
+def default_holder() -> str:
+    h = os.environ.get("TTYAK_ACCOUNTS_HOLDER")
+    if h:
+        return h
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = "user"
+    return "%s@%s" % (user, socket.gethostname())
+
+
+def _poll() -> float:
+    return float(os.environ.get("TTYAK_ACCOUNTS_POLL") or 5)
+
+
+def _ledger() -> tuple:
+    d = data_dir()
+    return d, load_ledger(d)["accounts"]
+
+
+def _account(args: argparse.Namespace) -> tuple:
+    """(Claims, ledger entry) for args.account; an unknown name lists the known ones."""
+    d, accts = _ledger()
+    if args.account not in accts:
+        raise Usage("unknown account %r; known accounts: %s" % (args.account, ", ".join(sorted(accts)) or "(none)"))
+    return Claims(d, args.account), accts[args.account]
+
+
+def _state_word(c: Optional[dict]) -> str:
+    return "free" if c is None else "stale" if c["stale"] else "held"
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    d, accts = _ledger()
+    rows = []
+    for name in sorted(accts):
+        a = accts[name]
+        c = Claims(d, name).status(None)["claim"]
+        if c is None:
+            st = "free"
+        else:
+            st = "held by %s for %s" % (c["holder"], c["purpose"]) + (" (stale)" if c["stale"] else "")
+        rows.append((name, a["profile"], a["role"], st, a["rules"]))
+    w = [max([len(r[i]) for r in rows] + [1]) for i in range(3)]
+    for r in rows:
+        print("  ".join(r[i].ljust(w[i]) for i in range(3)) + "  " + r[3])
+        for rule in r[4]:
+            print("    rule: " + rule)
+    return 0
+
+
+def _hide_keys(ans: dict) -> dict:
+    """The claim id and the tickets are the keys to a claim: never shown. Neither are the recorded installs."""
+    if ans.get("claim"):
+        ans["claim"].pop("id", None)
+        ans["claim"].pop("installs", None)
+    for t in ans.get("queue", []):
+        t.pop("ticket", None)
+    return ans
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    d, accts = _ledger()
+    if args.account and args.account not in accts:
+        raise Usage("unknown account %r; known accounts: %s" % (args.account, ", ".join(sorted(accts)) or "(none)"))
+    names = [args.account] if args.account else sorted(accts)
+    answers = {n: _hide_keys(Claims(d, n).status(None)) for n in names}
+    if args.json:
+        print(json.dumps(answers, indent=2, sort_keys=True))
+        return 0
+    rows = [("ACCOUNT", "STATE", "HOLDER", "PURPOSE", "HELD", "RENEWED", "QUEUE")]
+    for n in names:
+        a = answers[n]
+        c = a["claim"]
+        rows.append((n, _state_word(c), c["holder"] if c else "-", c["purpose"] if c else "-",
+                     fmt(c["held_for"]) if c else "-",
+                     (fmt(c["since_renewal"]) + " ago" + (" (stale)" if c["stale"] else "")) if c else "-",
+                     str(len(a["queue"]))))
+    widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]) - 1)]
+    for r in rows:
+        print("  ".join(r[i].ljust(widths[i]) for i in range(len(widths))) + "  " + r[-1])
+    return 0
+
+
+def _status_lines(answer: dict, ticket: str) -> list:
+    out = []
+    c = answer.get("claim")
+    if c:
+        out.append("holder: %s" % c["holder"])
+        out.append("purpose: %s" % c["purpose"])
+        out.append("held for: %s" % fmt(c["held_for"]))
+        out.append("since last renewal: %s%s" % (fmt(c["since_renewal"]), " (stale)" if c.get("stale") else ""))
+    else:
+        out.append("no live claim")
+    if answer.get("position"):
+        out.append("your position: %d of %d" % (answer["position"], len(answer["queue"])))
+    mine = [t for t in answer.get("queue", []) if t["ticket"] == ticket]
+    if mine:
+        out.append("waited: %s" % fmt(mine[0]["waited"]))
+    return out
+
+
+def cmd_claim(args: argparse.Namespace) -> int:
+    wait = parse_dur(args.wait, allow_forever=True)
+    report = parse_dur(args.report_every) if args.report_every else None
+    lease = parse_lease(args.lease) if args.lease else float(LEASE)
+    ticket = args.ticket if args.ticket is not None else uuid.uuid4().hex[:12]
+    if not NAME_RE.fullmatch(ticket):
+        raise Usage("bad --ticket %r (letters, digits, - and _, at most 64)" % ticket)
+    claims, entry = _account(args)
+    holder = args.holder or default_holder()
+    start = time.monotonic()
+
+    def left() -> str:
+        # the wait limit counts from the first claim, so a resume carries what is left of it
+        return "forever" if wait is None else "%.2fs" % max(0.0, wait - (time.monotonic() - start))
+
+    def leave() -> None:
+        """Best effort: take our ticket (and a grant whose answer we never saw) off the queue."""
+        try:
+            claims.leave(None, ticket)
+        except (OSError, LedgerError, ValueError, KeyboardInterrupt):
+            pass
+
+    try:
+        while True:
+            try:
+                ans = claims.claim(None, ticket, holder, args.purpose, lease)
+            except (OSError, LedgerError, ValueError):
+                leave()
+                raise
+            if ans["state"] == "granted":
+                c = ans["claim"]
+                print("claimed %s id=%s lease=%s" % (args.account, c["id"], fmt(c["lease"])))
+                print("profile: %s" % entry["profile"])
+                print("release: " + _line(_self_argv() + ["release", args.account, c["id"]]))
+                return 0
+            elapsed = time.monotonic() - start
+            limit = wait is not None and elapsed >= wait
+            if limit or (report is not None and elapsed >= report):
+                for line in _status_lines(ans, ticket):
+                    print(line)
+                if limit:
+                    leave()
+                    return 3
+                argv = _self_argv() + ["claim", args.account, "--ticket", ticket, "--purpose", args.purpose]
+                for flag, val in (("--holder", args.holder), ("--wait", left()),
+                                  ("--report-every", args.report_every), ("--lease", args.lease)):
+                    if val and not (flag == "--wait" and val == "forever"):
+                        argv += [flag, val]
+                print("resume: " + _line(argv))
+                return 10
+            nxt = wait if report is None else (report if wait is None else min(wait, report))
+            time.sleep(max(0.0, min(_poll(), nxt - elapsed)) if nxt is not None else _poll())
+    except KeyboardInterrupt:
+        print("accounts: interrupted", file=sys.stderr)
+        leave()
+        return 130
+
+
+def _not_holder(args: argparse.Namespace, ans: dict) -> int:
+    print("accounts: %s: no live claim with that id (not the holder, or it lapsed)" % args.account, file=sys.stderr)
+    return 6
+
+
+def cmd_renew(args: argparse.Namespace) -> int:
+    lease = parse_lease(args.lease) if args.lease else None
+    claims, _ = _account(args)
+    ans = claims.renew(None, args.id, lease)
+    if ans["state"] != "renewed":
+        return _not_holder(args, ans)
+    print("renewed %s id=%s" % (args.account, args.id))
+    return 0
+
+
+def cmd_release(args: argparse.Namespace) -> int:
+    if args.force:
+        if not args.reason:
+            raise Usage("--force needs --reason")
+    elif not args.id:
+        raise Usage("release needs an ID (or --force --reason R)")
+    else:
+        _check_id("id", args.id)
+    claims, _ = _account(args)
+    if args.force:
+        ans = claims.force_release(None, args.by or default_holder(), args.reason)
+        print("no claim on %s" % args.account if ans["state"] == "no_claim"
+              else "released %s (forced)" % args.account)
+        return 0
+    ans = claims.release(None, args.id)
+    if ans["state"] != "released":
+        return _not_holder(args, ans)
+    print("released %s" % args.account)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="accounts.py", description="ttyak's Slack test accounts and their claims")
+    sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("list", help="the accounts, their rules and claim state").set_defaults(func=cmd_list)
+    q = sub.add_parser("status", help="who holds which account")
+    q.add_argument("account", nargs="?")
+    q.add_argument("--json", action="store_true")
+    q.set_defaults(func=cmd_status)
+    q = sub.add_parser("claim", help="claim an account, waiting in the queue")
+    q.add_argument("account")
+    q.add_argument("--purpose", required=True)
+    q.add_argument("--holder")
+    q.add_argument("--wait", default="forever", metavar="DUR|forever")
+    q.add_argument("--report-every", metavar="DUR")
+    q.add_argument("--lease", metavar="DUR")
+    q.add_argument("--ticket")
+    q.set_defaults(func=cmd_claim)
+    q = sub.add_parser("renew", help="renew a claim")
+    q.add_argument("account")
+    q.add_argument("id")
+    q.add_argument("--lease", metavar="DUR")
+    q.set_defaults(func=cmd_renew)
+    q = sub.add_parser("release", help="release a claim (or --force it)")
+    q.add_argument("account")
+    q.add_argument("id", nargs="?")
+    q.add_argument("--force", action="store_true")
+    q.add_argument("--reason")
+    q.add_argument("--by")
+    q.set_defaults(func=cmd_release)
+    return p
+
+
+def main(argv: Optional[list] = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except (Usage, LedgerError, ValueError, OSError) as e:
+        print("accounts: %s" % e, file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("accounts: interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

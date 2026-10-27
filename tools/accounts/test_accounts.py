@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import re
+import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -281,6 +286,23 @@ class ClaimTests(unittest.TestCase):
             with self.assertRaises(accounts.LedgerError):
                 self.c.status(1000)
 
+    def test_bad_claim_record_is_ledger_error(self):
+        good = {"id": "t", "holder": "h", "purpose": "p", "since": 1, "renewed": 1, "lease": 60, "installs": []}
+        (self.c.dir / "state.json").write_text(json.dumps({"claim": good, "queue": []}))
+        self.assertEqual(self.c.status(1000)["claim"]["id"], "t")
+        for bad in ({}, {"id": "t"}, dict(good, id="bad id"), dict(good, lease="x"), dict(good, since=True),
+                    dict(good, installs="no"), {k: v for k, v in good.items() if k != "renewed"}):
+            (self.c.dir / "state.json").write_text(json.dumps({"claim": bad, "queue": []}))
+            with self.assertRaises(accounts.LedgerError):
+                self.c.status(1000)
+
+    def test_state_open_error_message_names_errno(self):
+        os.symlink("/nonexistent-target", self.c.dir / "state.json")
+        with self.assertRaises(accounts.LedgerError) as cm:
+            self.c.status(1000)
+        self.assertIn("cannot open (not a regular file?)", str(cm.exception))
+        self.assertRegex(str(cm.exception), r"[A-Z]{4,}")
+
     def test_folder_fsync_failure_still_logs(self):
         from unittest import mock
         real = os.fsync
@@ -288,7 +310,7 @@ class ClaimTests(unittest.TestCase):
 
         def flaky(fd):
             calls.append(fd)
-            if os.path.isdir("/proc/self/fd/%d" % fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
                 raise OSError("no fsync on dirs")
             return real(fd)
         with mock.patch.object(accounts.os, "fsync", flaky):
@@ -346,6 +368,193 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(waiting, list(range(1, 8)))
         # the positions at answer time are distinct, and the final queue holds 7
         self.assertEqual(len(self.c.status(None)["queue"]), 7)
+
+
+TOOL = Path(accounts.__file__).resolve()
+
+
+class CliTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.d = make_data(Path(self.tmp.name))
+        self.env = dict(os.environ, TTYAK_ACCOUNTS=str(self.d), TTYAK_ACCOUNTS_POLL="0.05",
+                        TTYAK_ACCOUNTS_HOLDER="tester")
+
+    def run_cli(self, *args, timeout=60):
+        p = subprocess.run([sys.executable, str(TOOL)] + list(args), env=self.env, capture_output=True,
+                           text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+
+    def inproc(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        from unittest import mock
+        with mock.patch.dict(os.environ, self.env), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            rc = accounts.main(list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    def grant(self, account="A", *extra):
+        rc, out, err = self.run_cli("claim", account, "--purpose", "holding", *extra)
+        self.assertEqual(rc, 0, err)
+        line = [l for l in out.splitlines() if l.startswith("release: ")][0]
+        return re.search(r"id=(\S+)", out).group(1), line[len("release: "):]
+
+    def queue_len(self, account="A"):
+        rc, out, _ = self.run_cli("status", account, "--json")
+        self.assertEqual(rc, 0)
+        return len(json.loads(out)[account]["queue"])
+
+    def test_list_shows_rules_not_sessions(self):
+        rc, out, err = self.run_cli("list")
+        self.assertEqual(rc, 0, err)
+        for want in ("A", "B", "p-A", "test", "no posts", "free"):
+            self.assertIn(want, out)
+        self.assertNotIn(MARKER, out + err)
+        self.grant("A")
+        self.assertIn("held by tester for holding", self.run_cli("list")[1])
+
+    def test_claim_prints_runnable_release_line(self):
+        cid, line = self.grant("A")
+        argv = shlex.split(line)
+        self.assertEqual(argv[0], sys.executable)
+        self.assertEqual(argv[1], str(TOOL))
+        self.assertEqual(argv[2:], ["release", "A", cid])
+        self.assertIn("held by tester", self.run_cli("list")[1])
+        p = subprocess.run(argv, env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("released A", p.stdout)
+        self.assertIn("free", self.run_cli("list")[1])
+        self.assertEqual(self.run_cli("release", "A", cid)[0], 6)
+
+    def test_wait_limit_exit_3_and_leaves_queue(self):
+        self.grant("A")
+        rc, out, _ = self.run_cli("claim", "A", "--purpose", "x", "--wait", "0")
+        self.assertEqual(rc, 3)
+        self.assertIn("holder: tester", out)
+        self.assertEqual(self.queue_len(), 0)
+        self.assertEqual(self.run_cli("claim", "A", "--purpose", "x", "--wait", "0.3s")[0], 3)
+        self.assertEqual(self.queue_len(), 0)
+
+    def test_report_every_exit_10_resume_keeps_place(self):
+        cid, release = self.grant("A")
+        rc, out, _ = self.run_cli("claim", "A", "--purpose", "later one", "--report-every", "0.2")
+        self.assertEqual(rc, 10)
+        self.assertIn("your position: 1 of 1", out)
+        resume = [l for l in out.splitlines() if l.startswith("resume: ")][0][len("resume: "):]
+        argv = shlex.split(resume)
+        self.assertEqual((argv[0], argv[1]), (sys.executable, str(TOOL)))
+        self.assertIn("later one", argv)
+        self.assertEqual(self.queue_len(), 1)
+        self.assertEqual(subprocess.run(shlex.split(release), env=self.env, capture_output=True).returncode, 0)
+        p = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("claimed A", p.stdout)
+        self.assertEqual(self.queue_len(), 0)
+
+    def test_resume_line_carries_remaining_wait(self):
+        self.grant("A")
+        rc, out, _ = self.run_cli("claim", "A", "--purpose", "x", "--wait", "60", "--report-every", "0.2",
+                                  "--lease", "5m", "--holder", "me")
+        self.assertEqual(rc, 10)
+        argv = shlex.split([l for l in out.splitlines() if l.startswith("resume: ")][0][len("resume: "):])
+        left = float(argv[argv.index("--wait") + 1].rstrip("s"))
+        self.assertTrue(0 < left < 60, left)
+        self.assertEqual(argv[argv.index("--lease") + 1], "5m")
+        self.assertEqual(argv[argv.index("--holder") + 1], "me")
+        self.assertEqual(argv[argv.index("--report-every") + 1], "0.2")
+        self.run_cli("claim", "A", "--purpose", "x", "--wait", "0", "--ticket", argv[argv.index("--ticket") + 1])
+
+    def test_bad_ticket_exit_2(self):
+        for t in ("", "bad id", "../x", "x" * 65, "a\n"):
+            rc, _, err = self.run_cli("claim", "A", "--purpose", "x", "--ticket", t)
+            self.assertEqual(rc, 2, t)
+            self.assertIn("--ticket", err)
+        self.assertEqual(self.queue_len(), 0)
+        self.assertEqual(self.run_cli("status", "A")[1].count("free"), 1)
+        for bad in (["--lease", "0"], ["--lease", "0s"], ["--lease", "-5"], ["--wait", "soon"],
+                    ["--report-every", "x"]):
+            self.assertEqual(self.run_cli("claim", "A", "--purpose", "x", *bad)[0], 2, bad)
+        self.assertEqual(self.run_cli("renew", "A", "bad id")[0], 2)
+        self.assertEqual(self.run_cli("release", "A", "../x")[0], 2)
+
+    def test_unknown_account_exit_2_lists_known(self):
+        for args in (("claim", "Z", "--purpose", "x"), ("status", "Z"), ("release", "Z", "id1"),
+                     ("renew", "Z", "id1"), ("release", "Z", "--force", "--reason", "r")):
+            rc, out, err = self.run_cli(*args)
+            self.assertEqual(rc, 2, args)
+            self.assertIn("A, B", err)
+        self.assertEqual(self.run_cli("claim", "bad name", "--purpose", "x")[0], 2)
+
+    def test_ledger_errors_exit_2_without_contents(self):
+        os.chmod(self.d / "sessions" / "A.json", 0o644)
+        for args in (("list",), ("status",), ("claim", "A", "--purpose", "x")):
+            rc, out, err = self.run_cli(*args)
+            self.assertEqual(rc, 2, args)
+            self.assertIn("A.json", err)
+            self.assertNotIn(MARKER, out + err)
+            self.assertNotIn("Traceback", err)
+
+    def test_status_hides_ids(self):
+        cid, _ = self.grant("A")
+        rc, out, err = self.run_cli("claim", "A", "--purpose", "w", "--wait", "0", "--ticket", "waiter-ticket-1")
+        self.assertEqual(rc, 3)
+        self.run_cli("claim", "A", "--purpose", "w2", "--report-every", "0.1", "--ticket", "waiter-ticket-2")
+        rc, text, _ = self.run_cli("status")
+        self.assertEqual(rc, 0)
+        self.assertIn("holding", text)
+        rc, js, _ = self.run_cli("status", "--json")
+        data = json.loads(js)
+        self.assertEqual(sorted(data), ["A", "B"])
+        self.assertEqual(data["A"]["claim"]["holder"], "tester")
+        self.assertEqual(len(data["A"]["queue"]), 1)
+        for blob in (text, js, self.run_cli("status", "A")[1], self.run_cli("list")[1]):
+            self.assertNotIn(cid, blob)
+            self.assertNotIn("waiter-ticket-2", blob)
+            self.assertNotIn("installs", blob)
+        self.assertNotIn("id", data["A"]["claim"])
+        self.assertNotIn("ticket", data["A"]["queue"][0])
+
+    def test_status_marks_stale(self):
+        self.grant("A", "--lease", "0.2s")
+        import time
+        time.sleep(0.4)
+        self.assertIn("(stale)", self.run_cli("status")[1])
+        self.assertIn("stale", self.run_cli("list")[1])
+        self.assertTrue(json.loads(self.run_cli("status", "--json")[1])["A"]["claim"]["stale"])
+
+    def test_ctrl_c_while_waiting_leaves_and_exits_130(self):
+        self.grant("A")
+        from unittest import mock
+        with mock.patch.object(accounts.time, "sleep", side_effect=KeyboardInterrupt):
+            rc, out, err = self.inproc("claim", "A", "--purpose", "x", "--ticket", "w1")
+        self.assertEqual(rc, 130)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.queue_len(), 0)
+
+    def test_renew_release_force(self):
+        cid, _ = self.grant("A")
+        rc, out, _ = self.run_cli("renew", "A", cid, "--lease", "10m")
+        self.assertEqual(rc, 0)
+        self.assertIn("renewed A", out)
+        self.assertEqual(self.run_cli("renew", "A", "nope")[0], 6)
+        self.assertEqual(self.run_cli("release", "A", "nope")[0], 6)
+        self.assertEqual(self.run_cli("release", "A", "--force")[0], 2)
+        self.assertEqual(self.run_cli("release", "A")[0], 2)
+        self.assertEqual(self.run_cli("renew", "A", cid, "--lease", "0")[0], 2)
+        rc, out, _ = self.run_cli("release", "A", "--force", "--reason", "stuck", "--by", "boss")
+        self.assertEqual((rc, out.strip()), (0, "released A (forced)"))
+        rc, out, _ = self.run_cli("release", "A", "--force", "--reason", "again")
+        self.assertEqual((rc, out.strip()), (0, "no claim on A"))
+        log = (self.d / "claims" / "A" / "log.txt").read_text()
+        self.assertIn('by="boss"', log)
+        self.assertIn('reason="stuck"', log)
+
+    def test_default_holder_without_env(self):
+        del self.env["TTYAK_ACCOUNTS_HOLDER"]
+        self.run_cli("claim", "A", "--purpose", "x")
+        holder = json.loads(self.run_cli("status", "--json")[1])["A"]["claim"]["holder"]
+        self.assertRegex(holder, r".+@.+")
 
 
 if __name__ == "__main__":
