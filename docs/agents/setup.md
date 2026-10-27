@@ -176,8 +176,18 @@ local file. Two ways:
 2. **Copying the sessions** from a machine where A and B are signed in: each profile's `session.json` (Linux:
    `~/.config/ttyak/<profile>/session.json`; other systems: [Profiles and sessions](../wiki/Profiles-and-sessions.md))
    into the same place here, mode 0600, piped through ssh and never printed — it holds the tokens. Then
-   `python3 tools/accounts/accounts.py import …` them into the ledger here; live checks take sessions from the ledger
-   with `install`.
+   put them into the ledger here; live checks take sessions from the ledger with `install`. The ledger is made once,
+   by hand: create `.accounts/` and `.accounts/sessions/` (both mode 0700) and write `.accounts/ledger.json` as
+   `{"accounts": {"A": {"profile": "<profile>", "role": "<role>", "rules": ["<rule>", …],
+   "session": "sessions/A.json"}, "B": {…}}}` (exactly those four keys per account; the profile, role and rules come
+   from the template's account section). Then, for A and B:
+
+   ```sh
+   python3 tools/accounts/accounts.py import A --from <config folder>/ttyak/<profile>/session.json
+   ```
+
+   (`<config folder>` is where the sessions were copied to, as above; `--replace` renews an existing master.) The tool
+   writes the master as `.accounts/sessions/A.json` (0600) and never prints it.
 
 Then check, without posting anything:
 
