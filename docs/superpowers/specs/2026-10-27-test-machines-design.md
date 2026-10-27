@@ -229,6 +229,39 @@ with a terminal window; GNOME's notifications need gnome-shell, not yet tried. T
 instances first (sway, then GNOME), then one plan for VM clones (the Hyprland VM and the Windows evaluation base on
 the same machinery).
 
+**Spike, 2026-10-28 (VM clones; both answers are yes, with no root and no manual step):**
+
+- **libvirt in user mode** (`qemu:///session`): QEMU runs as the desktop user, the files are the user's own, no
+  root-owned pool. UEFI with Secure Boot, a fresh swtpm and a per-clone copy of the NVRAM template all work there.
+  passt (libvirt's user networking with port forwards) does not: the distribution's AppArmor profile kills it in
+  user mode. QEMU's own user-mode network (SLIRP) replaces it: each VM gets a private network with internet access,
+  nothing collides between clones. No display at all: the domain has no `<graphics>` (Linux) or a VNC console on
+  127.0.0.1 nobody opens (Windows); `virsh screenshot` captures the screen in both cases, for start-up debugging.
+- **Clones**: a qcow2 overlay on a frozen, read-only base, a new domain (new UUID, so a fresh TPM state), a fresh
+  NVRAM copy. Two clones started at once did not collide.
+- **Hyprland VM**: an Arch cloud image (checksum and signature checked) made into a base by one cloud-init boot
+  (95 s). Hyprland 0.56 runs on plain virtio-gpu with Mesa's software renderer (llvmpipe), no extra settings beyond
+  a small config (hardware cursor, XWayland and animations off). Agents reach it by ssh over **vsock** (systemd's
+  ssh generator in the guest; no network port at all) and drive it with `hyprctl` (open, focus, even type keys with
+  `sendshortcut`); mako's list, a PipeWire null sink and `grim` work as in the sway image; a ready file like the
+  containers'. Host files are mounted read-only with 9p (set when the clone is defined). Per clone: ready (first
+  `hyprctl` answer) ~10 s after start; ~0.5 GiB used in a 2 GiB guest, ~0.9 GiB resident on the host; overlay
+  15–30 MB. Base 1.5 GiB. Trap: cloud-init ties the network config to the build VM's MAC — the base build replaces
+  it with a match on any ethernet device. Not tried: ttyak raising its own window, ttyak's speed under llvmpipe.
+- **Windows evaluation base**: the ISO downloads by script with no form (the Evaluation Center page's link, as
+  dockur/windows's MIT-licensed downloader does): Windows 11 Enterprise Evaluation, build 26300, 8.2 GB. Microsoft
+  publishes no checksum; size and the image's own metadata are the check. An `autounattend.xml` on a small second
+  ISO (with the virtio drivers and the OpenSSH installer) installs it with no interaction in ~6.5 min: a local test
+  user with automatic log-on, no Microsoft account screens, no device encryption, indexing, sleep and hibernation
+  off, Windows Update off by policy and service, OpenSSH with key auth, the QEMU guest agent, then a shutdown. The
+  only key press (the firmware's "boot from CD" prompt) is sent with `virsh send-key`. Checked in a clone: the
+  evaluation edition with 90 days, encryption off, the TPM ready, the user logged on, ssh. A clone answers ssh
+  9–13 s after start (two at once: 13.5 s); it takes its whole assigned RAM on the host (4 GB at 4 GB; the
+  balloon gives it back on request); its overlay grows ~0.4–1 GB. Base 10.4 GiB. Clones share the computer name
+  and ssh host key: harmless on one host with private networks, so no sysprep. Trap: the Update service comes back
+  once at the base's final shutdown — disabled again at clone start or in a second build boot. The 90 days run from
+  the base's install; `slmgr /dlv` over ssh reads what is left. Not tried: notifications and ttyak in a clone.
+
 ## Order (my call)
 
 1. `<tool>` repository and box claims — the collisions hurt today.
