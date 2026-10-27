@@ -81,3 +81,5 @@ first), 5 ttyak's live checks in an instance, final review. Tasks 1–4 are in t
   image has no symbol font); ttyak, kitty, fontconfig and Mesa write caches into the host-mounted fake home (on disk),
   against "instance scratch in RAM" — the instance's `~/.cache` (and `~/.local/state`) become tmpfs when a home is
   mounted.
+- Task 5 step 1: docs 1aa7622, fix round 1/5 (4 + a re-wrap addressed; 4839ba4), review clean. Carried to the final
+  fix wave: a ragged line in the Slot bullet.
