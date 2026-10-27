@@ -23,15 +23,14 @@ Last rewritten: 2026-10-27.
 
 ## In flight
 
-- **Nothing.** No release milestone is open and no plan is in flight.
-- **Last done: documentation housekeeping** (2026-10-26 – 2026-10-27; design
-  [2026-10-26-docs-housekeeping-design.md](superpowers/specs/2026-10-26-docs-housekeeping-design.md), plan
-  [2026-10-26-docs-housekeeping.md](superpowers/plans/2026-10-26-docs-housekeeping.md)): `docs/DESIGN.md` moved; the
-  history archive in `docs/history/`; AGENTS.md, `docs/agents/` and SECURITY.md; the setup page and the test-VM tools
-  (`tools/vm/`); the audit of the old open items (filed as #43–#62); this page; a cold read by a fresh agent, whose
-  gaps were fixed.
-- Its ledger stayed git-ignored, as for every plan before 2026-10-27: no committed ledger exists for it. Committed
-  ledgers start with the next plan ([ledgers](superpowers/ledgers/README.md)).
+- **Test machines and shared resources** ([#30](https://github.com/dmytrobsp/ttyak/issues/30)): design
+  [2026-10-27-test-machines-design.md](superpowers/specs/2026-10-27-test-machines-design.md) — box claims, throwaway
+  Linux/Windows/macOS instances, claims for the Slack test accounts — built in five parts, one plan each.
+- **Plan in flight: part 1–2, box claims** — plan
+  [2026-10-27-box-claims.md](superpowers/plans/2026-10-27-box-claims.md), ledger
+  [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md). The code lives in a private repository
+  of its own (named in the local file).
+- No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
 
