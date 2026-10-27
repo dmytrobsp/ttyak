@@ -90,3 +90,16 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   place); `_SAFE_ID` uses `$`, so a trailing newline passes (use `re.fullmatch`); a malformed id now exits 2, not 6
   (README); the remaining-wait test's 6 s bound may be tight on a slow machine.
 - Task 5: dispatched (<tool> base 4d69af7).
+- Ruling: Task 5 takes the claim id as a required positional; `$<TOOL>_CLAIM` is dropped (an agent passes the id it
+  was printed) — costs one env lookup to add back if wanted.
+- Task 5: a38723a; review: spec ✅ but the renewer is not joined; not approved — 2 important (a missing executable
+  gives a raw traceback; local `run` sends one argument through the shell but execs several, unlike ssh) plus
+  ResourceWarnings in the tests → fix round 1.
+- Task 5: minor (deferred): Ctrl-C while running prints a traceback (return 130); a repeated renewal failure warns
+  every lease/3; scp exit codes are passed through, not mapped to 5/6; the long-command test has ~1.3 s of slack.
+- Task 5: fix round 1/5 (4 addressed, 0 open; 303963c). Complete (4d69af7..303963c, review clean). UNIT: 63 tests,
+  pristine under `-W error`.
+- Task 5: minor (deferred): the missing-ssh half of the 127 test checks only "no traceback" (and has a dead
+  assignment).
+- Task 6: steps 1 and 3 (box list, README) dispatched to an implementer (<tool> base 303963c); steps 2, 4, 5 (keys,
+  clones, live check) by the controller.
