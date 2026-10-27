@@ -23,3 +23,11 @@ Start: 8295fba. Tasks: 1 ledger and claim rules, 2 the claim commands, 3 session
 ## Events
 
 - Task 1: dispatched (base 8295fba).
+- Task 1: b6965ae; review: spec ✅, not approved — 2 important (folders created with the umask, not 0700; symlinks
+  followed into other folders), 5 minor and 3 nits → fix round 1 with all of them (findings are fixed, not filed).
+- Task 1: fix round 1/5 (10 addressed; 5ef7ae7); new: the `state.json` read followed a symlink (a session's bytes
+  could be copied into the state) + 2 nits → fix round 2.
+- Task 1: fix round 2/5 (3 addressed; 6f753d4). Complete (aaace61..6f753d4, review clean). UNIT: 22 tests in the
+  file. Three remaining nits (an inaccurate "not a regular file" for any open error; the claim record's keys
+  unchecked; the folder-fsync test detects folders through /proc only) go into Task 2's brief, not dropped.
+- Task 2: dispatched (base 6f753d4).

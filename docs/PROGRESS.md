@@ -30,8 +30,9 @@ Last rewritten: 2026-10-27.
   ledger [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md): the shared test boxes are used
   only under a claim, through the claim tool named in `AGENTS.local.md` (a private repository of its own); live on
   both boxes.
-- **Plan in flight: account claims** — plan [2026-10-27-account-claims.md](superpowers/plans/2026-10-27-account-claims.md),
-  ledger [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): a ledger of the Slack test
+- **Plan in flight: account claims** — plan
+  [2026-10-27-account-claims.md](superpowers/plans/2026-10-27-account-claims.md), ledger
+  [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): a ledger of the Slack test
   accounts and a claim per account (`tools/accounts/`). Then Linux, Windows and macOS instances.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
