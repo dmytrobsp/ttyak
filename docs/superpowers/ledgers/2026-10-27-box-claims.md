@@ -103,3 +103,8 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   assignment).
 - Task 6: steps 1 and 3 (box list, README) dispatched to an implementer (<tool> base 303963c); steps 2, 4, 5 (keys,
   clones, live check) by the controller.
+- Task 6: box list and README by the implementer (1dadc72, not yet reviewed). Mac: a read-only deploy key, the ssh
+  alias, the clone and `self` set up (2026-10-27).
+- Refused action: the Windows VM's setup (registering its deploy key, the ssh alias, the clone) was refused by the
+  permission check as weakening security. Nothing of it was applied except the VM's new key pair (created by the
+  step before, not registered on GitHub). Waiting for the maintainer.
