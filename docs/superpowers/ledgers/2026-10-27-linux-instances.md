@@ -57,3 +57,16 @@ first), 5 ttyak's live checks in an instance, final review. Tasks 1–4 are in t
 - Task 3: carried to the final fix wave (not dropped): the slot is not renewed during `podman run` itself (a lease
   under ~3 min could lapse while the image starts).
 - Task 4: dispatched (GNOME spike, bounded to an hour; claim tool base ac5be70).
+- Task 4: GNOME works (16eb002: headless gnome-shell 51.1, a private stand-in system bus, an image extension for
+  windows and notifications; image 2.73 GB, idle ~305 MB). Review: not approved — the failed-start test was empty;
+  screenshots refused though the extension can take them; an unknown desktop label fell back to sway tools; a brittle
+  test line; image size → fix round 1 with all of them. Ruling: keep noto-fonts in the gnome image (text renders
+  the same as on sway) — costs ~100 MB if wrong.
+- Task 4: fix round 1/5 (fc4c897): the real failed-start test, screenshots on gnome through the extension, strict
+  desktop dispatch, the brittle assert; beyond: SYS_NICE left off for gnome (screenshots came out empty with it) and a
+  narrower private-bus policy. The slimming saved nothing (the stack dominates) → a last small round: README honesty
+  and wrap, the extension closing its stream on error. Ruling: accept the 2.73 GB gnome image (built once; dropping
+  noto-fonts or mesa's llvm would trade rendering parity for ~10%) — costs disk if wrong.
+- Task 4: fix round 2/5 (451a93b). Complete (ac5be70..451a93b, review clean). UNIT: 219; opt-in real gnome: 3
+  (notifications, a focused window, screenshots, failed start). Dropped (nit): the Containerfile's redundant doc/locale
+  `rm` (pacman.conf already NoExtracts them; the README says so).
