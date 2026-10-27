@@ -222,6 +222,13 @@ Common rules:
   Linux VM (a linked clone like Windows, with a virtual display nobody sees) instead of a container; sway (headless
   backend, proven by the spike) and GNOME (mutter's headless mode, used in GTK's CI) stay containers.
 
+**Spike, 2026-10-27 (after the account claims):** Hyprland 0.56 does not start in rootless podman — `CBackend::create()
+failed!` headless, with the GPU's render node passed in, and nested in a headless sway — so the Hyprland instance is a
+small KVM VM. sway (headless backend) and GNOME's mutter (`--headless --virtual-monitor`) both run in rootless podman
+with a terminal window; GNOME's notifications need gnome-shell, not yet tried. The maintainer's decision: container
+instances first (sway, then GNOME), then one plan for VM clones (the Hyprland VM and the Windows evaluation base on
+the same machinery).
+
 ## Order (my call)
 
 1. `<tool>` repository and box claims — the collisions hurt today.
