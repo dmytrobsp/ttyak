@@ -158,3 +158,8 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   by the final review's triage.
 - Plan complete (2026-10-27): <tool> 14 commits from the empty tree to 89ccb85; ttyak docs fed8b50..16501c6.
   Next in the design's order: part 2 — ttyak's Slack test-account ledger and claims (its own plan).
+- After the plan (2026-10-27): the maintainer did not want the deferred findings filed away ("reviews have found
+  issues that you've decided to just file away instead of fixing?"). All six private-repository issues were fixed —
+  16ae1ea..0406eff in the claim tool, three review rounds (the fixes themselves brought two important problems, a
+  shell mismatch on Windows and four small leftovers, all fixed) — and closed. UNIT: 129 tests. LIVE: the suite run
+  under claims on the Windows box (129, 3 skipped as POSIX-only) — the first run there — and on the Mac (129).
