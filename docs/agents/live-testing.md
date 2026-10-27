@@ -130,17 +130,22 @@ ACC_ID=$(python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>") 
 python3 "$REPO/tools/accounts/accounts.py" install A "$ACC_ID" --home "$FAKE"
 # the instance: the fake home is its home, the debug binary is mounted read-only
 <tool> instance new --desktop sway --purpose "ttyak: <what>" --home "$FAKE" \
-    --mount "$REPO/target/debug/ttyak:/opt/ttyak/ttyak"           # prints `instance NAME id=ID slot=N`
+    --mount "$REPO/target/debug/ttyak:/opt/ttyak/ttyak"
+# it prints `instance NAME id=ID slot=N`: ID is the slot id, not `$ACC_ID`
 <tool> instance exec NAME ID -- "setsid kitty --class ttyak-test /opt/ttyak/ttyak --profile <A> \
     >/dev/null 2>&1 < /dev/null &"
 <tool> instance windows NAME ID               # the ttyak-test window, focused
 <tool> instance shot NAME ID out.png          # what the window shows (look at it before relying on it)
-<tool> instance notifications NAME ID         # the notifications ttyak raised
-<tool> instance record NAME ID 5 out.wav      # what it played, from the null sink (at most 300 s)
+<tool> instance notifications NAME ID         # the notifications it shows
+<tool> instance record NAME ID 5 out.wav      # what the null sink heard (at most 300 s); silent unless the
+                                              # fake home's settings turn sounds on and sound is agreed
 <tool> instance exec NAME ID -- "cat ~/.cache/ttyak/<A>/ttyak.log"     # the log, before the instance goes
 <tool> instance rm NAME ID
 python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
 ```
+
+Not tried yet (NOT): a Slack notification reaching the instance's `notifications`, a raise on a mention, a sound in
+`record` — these commands are the tool's documented behaviour.
 
 - **Home.** Inside the instance `HOME` is the mounted fake home (read-write), so ttyak finds
   `.config/ttyak/<profile>/session.json` there with no extra environment; do not set the four variables. The
@@ -148,8 +153,9 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
   The binary is mounted from the clone's `target/debug` (`cargo build` first) and never from a release folder.
 - **Slot.** An instance needs a slot, granted by free RAM, and queues like a box claim (`--wait`, default forever;
   `--report-every 5m` and re-run its `resume:` line, or run `new` in the background). Waiting for a slot is not a live
-  observation: the 10-minute cap does not apply. A slot lapses after 30 minutes without use, then the instance is
-  reaped; `exec`, `shot` and the others renew it. Remove the instance when done (`rm`), then release the accounts;
+  observation: the 10-minute cap does not apply. A slot lapses after 30 minutes without use, then the next `new` or
+  `reap` removes the instance; `exec`, `shot` and the others renew it. Remove the instance when done (`rm`), then
+  release the accounts;
   `<tool> instance ls` must show none of yours.
 - **GNOME.** `--desktop gnome` gives GNOME instead of sway; `windows`, `shot`, `notifications` and `record` work there
   too. Use it when a check depends on how GNOME shows or raises things.
@@ -185,7 +191,8 @@ hyprctl dispatch exec "[workspace special:<name> silent] kitty --class <class> -
 - Focus traps: Escape in a composer moves focus to the sidebar; from a composer use Escape then Tab to reach the
   messages. Read the screen before destructive keys (`d`, `y`) and before every Enter in F6 (it opens on Availability,
   where Enter edits the real Slack status).
-- Another size: `kitty @ set-font-size 6` gives about 170×44 cells (`0` restores); the default is a "narrow" ~95 columns.
+- Another size: `kitty @ set-font-size 6` gives about 170×44 cells (`0` restores); the default is a "narrow" ~95
+  columns.
 - `TTYAK_FAKE_HOME="$FAKE" sh tools/launch.sh <A> [<B's name>]` opens a *visible* `ttyak-test` window on your A
   profile and opens the DM with B: use it only while the maintainer is watching. It refuses without a profile and
   without `TTYAK_FAKE_HOME`, a fake home that holds the profile's `session.json` (claim the account and `install` it
