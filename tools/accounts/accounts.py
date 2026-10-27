@@ -1,9 +1,12 @@
 """ttyak's Slack test accounts: the ledger and one claim per account, so one test uses an account at a time.
 
-The data folder (git-ignored, 0700) holds ledger.json, sessions/<NAME>.json (0600) and claims/<ACCOUNT>/. This part
-is the library: it loads and checks the ledger (never reading a session file) and keeps the claim rules. Claim
-semantics match the tool for test machines, so agents use one habit: a FIFO queue of tickets, a lease on the
-grant, the first waiter breaks a stale claim.
+The data folder (git-ignored, 0700) holds ledger.json, sessions/<NAME>.json (0600) and claims/<ACCOUNT>/. The
+library loads and checks the ledger and keeps the claim rules. Claim semantics match the tool for test machines, so
+agents use one habit: a FIFO queue of tickets, a lease on the grant, the first waiter breaks a stale claim.
+
+Session files hold tokens. They move only through `import` (a session.json in as an account's master) and `install`
+(the master into a fake home, under a live claim, recorded so that the release removes it). Their bytes are copied,
+never parsed, printed, logged or put in an error message, and never written into ttyak's real folders.
 """
 from __future__ import annotations
 
@@ -11,8 +14,10 @@ import argparse
 import errno
 import fcntl
 import getpass
+import hashlib
 import json
 import os
+import pwd
 import re
 import shlex
 import socket
@@ -33,6 +38,10 @@ ACCOUNT_KEYS = {"profile", "role", "rules", "session"}
 
 class LedgerError(Exception):
     """A bad ledger or data folder. The message names the file and the problem, never file contents."""
+
+
+class Refused(Exception):
+    """A session move the tool will not make: a target in ttyak's real folders, a file it did not write."""
 
 
 def data_dir() -> Path:
@@ -58,8 +67,11 @@ def _check_dir(p: Path) -> None:
         raise LedgerError("%s: mode is %04o, must be 0700" % (p, stat.S_IMODE(st.st_mode)))
 
 
-def load_ledger(d: Path) -> dict:
-    """Load and check d/ledger.json and the permissions of the folders and session files it lists."""
+def load_ledger(d: Path, require_sessions: bool = True) -> dict:
+    """Load and check d/ledger.json and the permissions of the folders and session files it lists.
+
+    require_sessions=False (for `import`, which brings the first master in) lets a session file be missing; one that
+    is there is still checked."""
     d = Path(d)
     _check_dir(d)
     _check_dir(d / "sessions")
@@ -94,6 +106,10 @@ def load_ledger(d: Path) -> dict:
         sp = d / a["session"]
         try:
             st = os.lstat(sp)
+        except FileNotFoundError:
+            if not require_sessions:
+                continue
+            raise LedgerError("%s: session file missing" % sp) from None
         except OSError:
             raise LedgerError("%s: session file missing" % sp) from None
         if not stat.S_ISREG(st.st_mode):
@@ -133,7 +149,255 @@ def _good_claim(c: object) -> bool:
     return (isinstance(c, dict) and isinstance(c.get("id"), str) and NAME_RE.fullmatch(c["id"]) is not None
             and isinstance(c.get("holder"), str) and isinstance(c.get("purpose"), str)
             and all(_num(c.get(k)) for k in ("since", "renewed", "lease"))
-            and isinstance(c.get("installs"), list))
+            and isinstance(c.get("installs"), list)
+            and all(isinstance(i, dict) and isinstance(i.get("path"), str) and isinstance(i.get("sha256"), str)
+                    for i in c["installs"]))
+
+
+# -- session files -----------------------------------------------------------------------------------------------
+
+SESSION_MAX = 4 * 1024 * 1024  # a session.json is a few KB; anything this large is not one
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC  # never a symlink, never block on a FIFO
+_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
+_REAL_DIRS = (".config/ttyak", ".local/share/ttyak", ".cache/ttyak",
+              "Library/Application Support/ttyak", "Library/Caches/ttyak")
+
+
+def _err(e: OSError) -> str:
+    return errno.errorcode.get(e.errno, "error")
+
+
+def read_session(path, master: bool) -> bytes:
+    """The bytes of a session file, unparsed. Refused (LedgerError naming the file, never its contents): a symlink,
+    a FIFO or anything else not a regular file, a file group or others may read; a master must be exactly 0600."""
+    try:
+        fd = os.open(path, _READ)
+    except FileNotFoundError:
+        raise LedgerError("%s: missing" % path) from None
+    except OSError as e:
+        raise LedgerError("%s: cannot open (a symlink, or not a regular file?): %s" % (path, _err(e))) from None
+    try:
+        st = os.fstat(fd)
+        mode = stat.S_IMODE(st.st_mode)
+        if not stat.S_ISREG(st.st_mode):
+            raise LedgerError("%s: not a regular file" % path)
+        if master and mode != 0o600:
+            raise LedgerError("%s: mode is %04o, must be 0600" % (path, mode))
+        if mode & 0o077:
+            raise LedgerError("%s: mode is %04o: a session file must not be readable by group or others "
+                              "(chmod 600 it)" % (path, mode))
+        chunks, size = [], 0
+        while True:
+            b = os.read(fd, 65536)
+            if not b:
+                break
+            size += len(b)
+            if size > SESSION_MAX:
+                raise LedgerError("%s: too large for a session file" % path)
+            chunks.append(b)
+    except OSError as e:
+        raise LedgerError("%s: cannot read: %s" % (path, _err(e))) from None
+    finally:
+        os.close(fd)
+    if not chunks:
+        raise LedgerError("%s: empty" % path)
+    return b"".join(chunks)
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+def _fsync_dir(fd_or_path) -> None:
+    """Best effort: make a new name in a folder durable."""
+    try:
+        if isinstance(fd_or_path, int):
+            os.fsync(fd_or_path)
+            return
+        fd = os.open(fd_or_path, os.O_RDONLY | os.O_DIRECTORY | _CLOEXEC)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def import_session(d: Path, account: str, source, replace: bool) -> Path:
+    """Copy the session file `source` (only read) to d/sessions/<account>.json, 0600, atomically. An existing master
+    is kept unless replace."""
+    _check_id("account", account)
+    data = read_session(source, master=False)
+    sdir = Path(d) / "sessions"
+    _check_dir(sdir)
+    dst = sdir / (account + ".json")
+    exists = "%s exists; --replace to overwrite it" % dst
+    if not replace and os.path.lexists(dst):
+        raise Refused(exists)
+    tmp = sdir / (".%s.json.%s.tmp" % (account, uuid.uuid4().hex))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC, 0o600)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+            _write_all(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if replace:
+            os.replace(tmp, dst)
+        else:
+            try:
+                os.link(tmp, dst)  # fails if a master appeared meanwhile: never overwritten without --replace
+            except FileExistsError:
+                raise Refused(exists) from None
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+    _fsync_dir(sdir)
+    return dst
+
+
+def _real_homes() -> list:
+    """The homes whose ttyak folders are the maintainer's real ones: the account's home from the password database,
+    and $HOME. $TTYAK_ACCOUNTS_REAL_HOME is a test hook: tests point it at a fake "real" home, which is added to the
+    others, never put in their place."""
+    homes = []
+    hook = os.environ.get("TTYAK_ACCOUNTS_REAL_HOME")
+    if hook:
+        homes.append(hook)
+    try:
+        homes.append(str(Path.home()))
+    except RuntimeError:
+        pass
+    try:
+        homes.append(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        pass
+    return homes
+
+
+def real_ttyak_dirs() -> list:
+    """ttyak's real folders (config, data, cache; Linux and macOS; $XDG_*_HOME/ttyak when set), each both as written
+    and fully resolved."""
+    dirs = [os.path.join(h, r) for h in _real_homes() for r in _REAL_DIRS]
+    dirs += [os.path.join(os.environ[v], "ttyak") for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME")
+             if os.environ.get(v)]
+    out = set()
+    for p in dirs:
+        out.add(os.path.normpath(os.path.abspath(p)))
+        out.add(os.path.realpath(p))
+    return sorted(out)
+
+
+def _inside(p: str, root: str) -> bool:
+    return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def in_real_dirs(path) -> Optional[str]:
+    """The real ttyak folder that `path` (as written, or resolved) lies in, or None."""
+    forms = {os.path.normpath(os.path.abspath(path)), os.path.realpath(path)}
+    for r in real_ttyak_dirs():
+        if any(_inside(f, r) for f in forms):
+            return r
+    return None
+
+
+def resolve_home(home: str) -> str:
+    """The resolved path of a fake home for `install`: an existing folder, not in ttyak's real folders."""
+    real = os.path.realpath(home)
+    if not os.path.isdir(real):
+        raise Refused("--home %s: not an existing folder" % home)
+    r = in_real_dirs(home) or in_real_dirs(real)
+    if r:
+        raise Refused("--home %s is inside ttyak's real folder %s: use a fake home" % (home, r))
+    return real
+
+
+def _open_dir(path: str, below=(), create: bool = False) -> int:
+    """A file descriptor of the folder path/below/..., every component opened from / down with O_NOFOLLOW, so no
+    symlink is followed anywhere on the way (path must be resolved already). With create, missing folders below
+    `path` are made 0700, one level at a time. A missing component raises FileNotFoundError; a symlink or anything
+    not a folder raises Refused."""
+    fd = os.open(os.sep, _DIR)
+    shown = os.sep
+    try:
+        for name, make in [(n, False) for n in path.split(os.sep) if n] + [(n, create) for n in below]:
+            shown = os.path.join(shown, name)
+            made = False
+            if make:
+                try:
+                    os.mkdir(name, 0o700, dir_fd=fd)
+                    made = True
+                except FileExistsError:
+                    pass
+            try:
+                child = os.open(name, _DIR, dir_fd=fd)
+            except FileNotFoundError:
+                raise
+            except OSError as e:
+                raise Refused("%s: not a plain folder (a symlink, or no access?): %s" % (shown, _err(e))) from None
+            os.close(fd)
+            fd = child
+            if made:
+                os.fchmod(fd, 0o700)  # the umask may have taken bits off; the mode is never wider than 0700
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def remove_copy(path, sha) -> str:
+    """Remove one recorded installed copy: one unlink of a regular file named session.json, reached without
+    following a symlink, never in ttyak's real folders, never a folder. Returns "removed", "changed" (its hash
+    differs from the recorded one: rewritten since; removed all the same, the master is the truth), "gone", or
+    "refused" (left alone)."""
+    try:
+        if (not isinstance(path, str) or not os.path.isabs(path) or os.path.basename(path) != "session.json"
+                or in_real_dirs(path)):
+            return "refused"
+        try:
+            pfd = _open_dir(os.path.dirname(path))
+        except FileNotFoundError:
+            return "gone"
+        except Refused:
+            return "refused"
+        try:
+            try:
+                fd = os.open("session.json", _READ, dir_fd=pfd)
+            except FileNotFoundError:
+                return "gone"
+            except OSError:
+                return "refused"  # a symlink (ELOOP) or a FIFO we may not open
+            h = hashlib.sha256()
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    return "refused"
+                while True:
+                    b = os.read(fd, 65536)
+                    if not b:
+                        break
+                    h.update(b)
+            finally:
+                os.close(fd)
+            try:
+                os.unlink("session.json", dir_fd=pfd)
+            except FileNotFoundError:
+                return "gone"
+            _fsync_dir(pfd)
+            return "removed" if h.hexdigest() == sha else "changed"
+        finally:
+            os.close(pfd)
+    except OSError:
+        return "refused"
 
 
 class Claims:
@@ -146,6 +410,7 @@ class Claims:
         for p in (d / "claims", d / "claims" / account):
             p.mkdir(mode=0o700, exist_ok=True)
             _check_dir(p)  # a symlink or a loose folder is refused before anything is written into it
+        self.data = d
         self.dir = d / "claims" / account
 
     # -- storage -----------------------------------------------------------------------------------------------
@@ -271,7 +536,10 @@ class Claims:
                     self._log(now, "break", id=broken["id"], holder=broken["holder"], by=ticket,
                               reason="lease lapsed")
                 self._log(now, "claim", id=ticket, holder=holder, purpose=purpose)
-                return self._answer(s, now, "granted")
+                ans = self._answer(s, now, "granted")
+                if stale:
+                    ans["cleanup"] = self._cleanup(now, broken, False)
+                return ans
             self._write(s)
             self._log_expired(now, gone)
             return self._answer(s, now, "waiting", ticket)
@@ -291,7 +559,76 @@ class Claims:
             self._write(s)
             return self._answer(s, now, "renewed")
 
-    def release(self, now: Optional[float], id: str) -> dict:
+    def _cleanup(self, now: float, c: dict, keep: bool) -> list:
+        """The copies a claim installed, after the claim is gone (still under the lock, so a new holder's install
+        into the same place cannot be taken for one of them): removed unless keep, each logged."""
+        out = []
+        for i in c["installs"]:
+            outcome = "kept" if keep else remove_copy(i["path"], i["sha256"])
+            self._log(now, "uninstall", id=c["id"], path=i["path"], outcome=outcome)
+            out.append({"path": i["path"], "outcome": outcome})
+        return out
+
+    def install(self, now: Optional[float], id: str, home: str, profile: str, data: bytes) -> dict:
+        """Write `data` (a master's bytes) to home/.config/ttyak/<profile>/session.json for the live claim `id` and
+        record {path, sha256} in its installs, all under the lock. `home` comes from resolve_home. Folders made
+        0700, the file 0600; nothing is followed through a symlink; an existing session.json is replaced only when
+        this claim installed it."""
+        _check_id("id", id)
+        _check_id("profile", profile)
+        path = os.path.join(home, ".config", "ttyak", profile, "session.json")
+        r = in_real_dirs(path)
+        if r:
+            raise Refused("%s is inside ttyak's real folder %s: use a fake home" % (path, r))
+        with self._locked():
+            now = time.time() if now is None else now
+            s = self._read()
+            c = s["claim"]
+            if c is None or c["id"] != id or now > c["renewed"] + c["lease"]:
+                self._log(now, "install_failed", id=id, holder=c["holder"] if c else None)
+                return self._answer(s, now, "not_holder")
+            pfd = _open_dir(home, (".config", "ttyak", profile), create=True)
+            try:
+                if os.path.realpath(os.path.dirname(path)) != os.path.dirname(path):  # _open_dir makes it so
+                    raise Refused("%s: not reached without a symlink" % path)
+                try:
+                    st = os.stat("session.json", dir_fd=pfd, follow_symlinks=False)
+                except FileNotFoundError:
+                    st = None
+                if st is not None:
+                    if not stat.S_ISREG(st.st_mode) or path not in [i["path"] for i in c["installs"]]:
+                        raise Refused("%s exists and is not a copy this claim installed: remove it or use "
+                                      "another --home" % path)
+                    os.unlink("session.json", dir_fd=pfd)
+                fd = os.open("session.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC,
+                             0o600, dir_fd=pfd)
+                try:
+                    c["installs"] = ([i for i in c["installs"] if i["path"] != path]
+                                     + [{"path": path, "sha256": _sha256(data)}])
+                    try:
+                        # recorded before the bytes go in: a crash leaves a record of an empty file, never an
+                        # unrecorded copy
+                        self._write(s)
+                        os.fchmod(fd, 0o600)
+                        _write_all(fd, data)
+                        os.fsync(fd)
+                    except BaseException:
+                        try:
+                            os.unlink("session.json", dir_fd=pfd)
+                        except OSError:
+                            pass
+                        raise
+                finally:
+                    os.close(fd)
+                _fsync_dir(pfd)
+            finally:
+                os.close(pfd)
+            self._log(now, "install", id=id, holder=c["holder"], path=path)
+            ans = self._answer(s, now, "installed")
+            ans["path"] = path
+            return ans
+
+    def release(self, now: Optional[float], id: str, keep: bool = False) -> dict:
         _check_id("id", id)
         with self._locked():
             now = time.time() if now is None else now
@@ -302,9 +639,11 @@ class Claims:
             s["claim"] = None
             self._write(s)
             self._log(now, "release", id=id, holder=c["holder"])
-            return self._answer(s, now, "released")
+            ans = self._answer(s, now, "released")
+            ans["cleanup"] = self._cleanup(now, c, keep)
+            return ans
 
-    def force_release(self, now: Optional[float], by: str, reason: str) -> dict:
+    def force_release(self, now: Optional[float], by: str, reason: str, keep: bool = False) -> dict:
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
@@ -314,7 +653,9 @@ class Claims:
             s["claim"] = None
             self._write(s)
             self._log(now, "force", id=c["id"], holder=c["holder"], by=by, reason=reason)
-            return self._answer(s, now, "released")
+            ans = self._answer(s, now, "released")
+            ans["cleanup"] = self._cleanup(now, c, keep)
+            return ans
 
     def leave(self, now: Optional[float], ticket: str, ttl: float = TICKET_TTL) -> dict:
         _check_id("ticket", ticket)
@@ -325,8 +666,9 @@ class Claims:
             s["queue"] = [t for t in s["queue"] if t["ticket"] != ticket]
             c = s["claim"]
             released = False
-            # an untouched grant whose answer never reached the client (a renewed claim is in use: keep it)
-            if c is not None and c["id"] == ticket and c["renewed"] == c["since"]:
+            # an untouched grant whose answer never reached the client (a renewed claim, or one with installed
+            # copies, is in use: keep it)
+            if c is not None and c["id"] == ticket and c["renewed"] == c["since"] and not c["installs"]:
                 s["claim"] = None
                 released = True
             self._write(s)
@@ -435,11 +777,15 @@ def _ledger() -> tuple:
     return d, load_ledger(d)["accounts"]
 
 
+def _known(name: str, accts: dict) -> None:
+    if name not in accts:
+        raise Usage("unknown account %r; known accounts: %s" % (name, ", ".join(sorted(accts)) or "(none)"))
+
+
 def _account(args: argparse.Namespace) -> tuple:
     """(Claims, ledger entry) for args.account; an unknown name lists the known ones."""
     d, accts = _ledger()
-    if args.account not in accts:
-        raise Usage("unknown account %r; known accounts: %s" % (args.account, ", ".join(sorted(accts)) or "(none)"))
+    _known(args.account, accts)
     return Claims(d, args.account), accts[args.account]
 
 
@@ -480,8 +826,8 @@ def _hide_keys(ans: dict) -> dict:
 
 def cmd_status(args: argparse.Namespace) -> int:
     d, accts = _ledger()
-    if args.account and args.account not in accts:
-        raise Usage("unknown account %r; known accounts: %s" % (args.account, ", ".join(sorted(accts)) or "(none)"))
+    if args.account:
+        _known(args.account, accts)
     names = [args.account] if args.account else sorted(accts)
     answers = {n: _hide_keys(Claims(d, n).status(None)) for n in names}
     if args.json:
@@ -552,6 +898,9 @@ def cmd_claim(args: argparse.Namespace) -> int:
                 c = ans["claim"]
                 print("claimed %s id=%s lease=%s" % (args.account, c["id"], fmt(c["lease"])))
                 print("profile: %s" % entry["profile"])
+                if ans.get("cleanup"):
+                    print("broke a lapsed claim; its installed copies:")
+                    _print_cleanup(ans)
                 print("release: " + _line(_self_argv() + ["release", args.account, c["id"]]))
                 return 0
             elapsed = time.monotonic() - start
@@ -593,6 +942,45 @@ def cmd_renew(args: argparse.Namespace) -> int:
     return 0
 
 
+_CLEANUP = {
+    "removed": "removed %s",
+    "changed": "rewritten by ttyak (a sign-in?), removed %s; the master is unchanged",
+    "gone": "already gone %s",
+    "kept": "kept %s (--keep: no longer recorded, remove it yourself)",
+    "refused": "not removed %s: not a regular file, or a symlink on the way; look at it by hand",
+}
+
+
+def _print_cleanup(ans: dict) -> None:
+    for r in ans.get("cleanup", []):
+        print(_CLEANUP[r["outcome"]] % _clean(r["path"]))
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    d = data_dir()
+    accts = load_ledger(d, require_sessions=False)["accounts"]
+    _known(args.account, accts)
+    dst = import_session(d, args.account, args.source, args.replace)
+    print("imported %s into %s" % (args.account, _clean(str(dst))))
+    return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    _check_id("id", args.id)
+    claims, entry = _account(args)
+    profile = args.profile if args.profile is not None else entry["profile"]
+    if not NAME_RE.fullmatch(profile):
+        raise Usage("bad profile %r (letters, digits, - and _, at most 64)" % profile)
+    home = resolve_home(args.home)
+    data = read_session(claims.data / entry["session"], master=True)
+    ans = claims.install(None, args.id, home, profile, data)
+    if ans["state"] != "installed":
+        return _not_holder(args, ans)
+    print("installed %s (profile %s): %s" % (args.account, _clean(profile), _clean(ans["path"])))
+    print("the release removes it")
+    return 0
+
+
 def cmd_release(args: argparse.Namespace) -> int:
     if args.force:
         if not args.reason:
@@ -603,14 +991,16 @@ def cmd_release(args: argparse.Namespace) -> int:
         _check_id("id", args.id)
     claims, _ = _account(args)
     if args.force:
-        ans = claims.force_release(None, args.by or default_holder(), args.reason)
+        ans = claims.force_release(None, args.by or default_holder(), args.reason, args.keep)
         print("no claim on %s" % args.account if ans["state"] == "no_claim"
               else "released %s (forced)" % args.account)
+        _print_cleanup(ans)
         return 0
-    ans = claims.release(None, args.id)
+    ans = claims.release(None, args.id, args.keep)
     if ans["state"] != "released":
         return _not_holder(args, ans)
     print("released %s" % args.account)
+    _print_cleanup(ans)
     return 0
 
 
@@ -642,7 +1032,19 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--force", action="store_true")
     q.add_argument("--reason")
     q.add_argument("--by")
+    q.add_argument("--keep", action="store_true", help="leave the installed copies in place")
     q.set_defaults(func=cmd_release)
+    q = sub.add_parser("import", help="copy a session.json in as an account's master")
+    q.add_argument("account")
+    q.add_argument("--from", dest="source", required=True, metavar="PATH")
+    q.add_argument("--replace", action="store_true", help="overwrite an existing master")
+    q.set_defaults(func=cmd_import)
+    q = sub.add_parser("install", help="copy an account's master into a fake home, under your live claim")
+    q.add_argument("account")
+    q.add_argument("id")
+    q.add_argument("--home", required=True, metavar="HOME")
+    q.add_argument("--profile", metavar="NAME", help="default: the ledger's profile")
+    q.set_defaults(func=cmd_install)
     return p
 
 
@@ -650,7 +1052,7 @@ def main(argv: Optional[list] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (Usage, LedgerError, ValueError, OSError) as e:
+    except (Usage, Refused, LedgerError, ValueError, OSError) as e:
         print("accounts: %s" % e, file=sys.stderr)
         return 2
     except KeyboardInterrupt:

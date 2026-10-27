@@ -373,7 +373,7 @@ class ClaimTests(unittest.TestCase):
 TOOL = Path(accounts.__file__).resolve()
 
 
-class CliTests(unittest.TestCase):
+class CliBase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -405,6 +405,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         return len(json.loads(out)[account]["queue"])
 
+
+class CliTests(CliBase):
     def test_list_shows_rules_not_sessions(self):
         rc, out, err = self.run_cli("list")
         self.assertEqual(rc, 0, err)
@@ -643,6 +645,394 @@ class CliTests(unittest.TestCase):
         self.run_cli("claim", "A", "--purpose", "x")
         holder = json.loads(self.run_cli("status", "--json")[1])["A"]["claim"]["holder"]
         self.assertRegex(holder, r".+@.+")
+
+
+def files_under(root: Path) -> list:
+    """Every non-folder entry under root, symlinks not followed."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for n in filenames + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+            out.append(os.path.join(dirpath, n))
+    return sorted(out)
+
+
+class SessionTests(CliBase):
+    """import, install and the release cleanup. Fake sessions only; the "real" ttyak folders live under a fake
+    real home ($TTYAK_ACCOUNTS_REAL_HOME), so nothing here comes near the maintainer's own folders."""
+
+    def setUp(self):
+        super().setUp()
+        self.root = Path(self.tmp.name)
+        self.real = self.root / "realhome"
+        (self.real / ".config" / "ttyak" / "p-A").mkdir(parents=True)
+        (self.real / ".config" / "ttyak" / "p-A" / "keep.txt").write_text("keep")
+        self.env["TTYAK_ACCOUNTS_REAL_HOME"] = str(self.real)
+        for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+            self.env.pop(v, None)
+        self.master = self.d / "sessions" / "A.json"
+
+    def home(self, name="home") -> Path:
+        h = self.root / name
+        h.mkdir(mode=0o700)
+        return h
+
+    def target(self, home: Path, profile="p-A") -> Path:
+        return Path(os.path.realpath(home)) / ".config" / "ttyak" / profile / "session.json"
+
+    def state(self, account="A") -> dict:
+        return json.loads((self.d / "claims" / account / "state.json").read_text())
+
+    def installs(self, account="A") -> list:
+        c = self.state(account)["claim"]
+        return c["installs"] if c else []
+
+    def log(self, account="A") -> str:
+        p = self.d / "claims" / account / "log.txt"
+        return p.read_text() if p.exists() else ""
+
+    def umask0(self):
+        old = os.umask(0)
+        self.addCleanup(os.umask, old)
+
+    def source(self, body=MARKER + "-import", mode=0o600) -> Path:
+        src = self.root / "src"
+        src.mkdir(exist_ok=True)
+        p = src / "session.json"
+        p.write_text(body)
+        os.chmod(p, mode)
+        return p
+
+    # -- import --------------------------------------------------------------------------------------------------
+
+    def test_import_copies_with_private_modes(self):
+        self.umask0()
+        self.master.unlink()  # a first import: the ledger names the account, its master is not there yet
+        src = self.source()
+        before = os.stat(src)
+        rc, out, err = self.run_cli("import", "A", "--from", str(src))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("imported A", out)
+        self.assertEqual(self.master.read_text(), MARKER + "-import")
+        self.assertEqual(stat.S_IMODE(os.lstat(self.master).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.d / "sessions").st_mode), 0o700)
+        self.assertEqual(sorted(os.listdir(self.d / "sessions")), ["A.json", "B.json"])  # no temp file left
+        after = os.stat(src)
+        self.assertEqual((before.st_mtime_ns, before.st_mode), (after.st_mtime_ns, after.st_mode))
+        self.assertEqual(src.read_text(), MARKER + "-import")
+        led = accounts.load_ledger(self.d)
+        self.assertEqual(led["accounts"]["A"]["session"], "sessions/A.json")
+        # the source is read like a master: private, regular, no symlink, no FIFO
+        os.chmod(src, 0o644)
+        rc, _, err = self.run_cli("import", "B", "--from", str(src), "--replace")
+        self.assertEqual(rc, 2)
+        self.assertIn("group or others", err)
+        os.chmod(src, 0o600)
+        link = self.root / "src" / "link.json"
+        os.symlink(src, link)
+        fifo = self.root / "src" / "fifo.json"
+        os.mkfifo(fifo)
+        for bad in (link, fifo, self.root / "src", self.root / "src" / "missing.json"):
+            rc, _, err = self.run_cli("import", "B", "--from", str(bad), "--replace", timeout=20)
+            self.assertEqual(rc, 2, bad)
+            self.assertNotIn("Traceback", err)
+        self.assertEqual((self.d / "sessions" / "B.json").read_text(), MARKER)
+        rc, _, err = self.run_cli("import", "Z", "--from", str(src))
+        self.assertEqual(rc, 2)
+        self.assertIn("A, B", err)
+        self.assertFalse((self.d / "sessions" / "Z.json").exists())
+
+    def test_import_refuses_overwrite(self):
+        self.umask0()
+        src = self.source()
+        rc, _, err = self.run_cli("import", "A", "--from", str(src))
+        self.assertEqual(rc, 2)
+        self.assertIn("--replace", err)
+        self.assertEqual(self.master.read_text(), MARKER)
+        rc, out, err = self.run_cli("import", "A", "--from", str(src), "--replace")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.master.read_text(), MARKER + "-import")
+        self.assertEqual(stat.S_IMODE(os.lstat(self.master).st_mode), 0o600)
+        self.assertEqual(sorted(os.listdir(self.d / "sessions")), ["A.json", "B.json"])
+
+    # -- install -------------------------------------------------------------------------------------------------
+
+    def test_install_requires_claim(self):
+        h = self.home()
+        rc, _, err = self.run_cli("install", "A", "noclaim", "--home", str(h))
+        self.assertEqual(rc, 6, err)
+        cid, _ = self.grant("A")
+        self.assertEqual(self.run_cli("install", "A", "wrong-id", "--home", str(h))[0], 6)
+        self.assertEqual(self.run_cli("install", "B", cid, "--home", str(h))[0], 6)  # the id of another account
+        self.assertEqual(self.run_cli("install", "A", "bad id", "--home", str(h))[0], 2)
+        self.assertEqual(self.run_cli("release", "A", cid)[0], 0)
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 6)
+        cid, _ = self.grant("A", "--lease", "0.2s")
+        import time
+        time.sleep(0.4)
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h))
+        self.assertEqual(rc, 6)  # a lapsed claim is not a live one
+        self.assertEqual(os.listdir(h), [])  # not even a folder made
+        self.assertEqual(self.installs(), [])
+
+    def test_install_writes_private_copy_and_records_it(self):
+        self.umask0()
+        h = self.home()
+        cid, _ = self.grant("A")
+        rc, out, err = self.run_cli("install", "A", cid, "--home", str(h))
+        self.assertEqual(rc, 0, err)
+        t = self.target(h)
+        self.assertIn(str(t), out)
+        self.assertEqual(t.read_text(), MARKER)
+        self.assertEqual(stat.S_IMODE(os.lstat(t).st_mode), 0o600)
+        for p in (h / ".config", h / ".config" / "ttyak", h / ".config" / "ttyak" / "p-A"):
+            self.assertEqual(stat.S_IMODE(os.lstat(p).st_mode), 0o700, p)
+        import hashlib
+        sha = hashlib.sha256(MARKER.encode()).hexdigest()
+        self.assertEqual(self.installs(), [{"path": str(t), "sha256": sha}])
+        self.assertIn("install", self.log())
+        # again into the same place: the recorded copy is replaced, still one record
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.installs()), 1)
+        # another profile name: a second record
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h), "--profile", "other")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.target(h, "other").read_text(), MARKER)
+        self.assertEqual(len(self.installs()), 2)
+        for bad in ("../x", "a/b", "", ".."):
+            self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h), "--profile", bad)[0], 2, bad)
+        # a session.json this claim did not write is never overwritten
+        h2 = self.home("home2")
+        (h2 / ".config" / "ttyak" / "p-A").mkdir(parents=True)
+        (h2 / ".config" / "ttyak" / "p-A" / "session.json").write_text("someone else's")
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h2))
+        self.assertEqual(rc, 2)
+        self.assertIn("exists", err)
+        self.assertEqual((h2 / ".config" / "ttyak" / "p-A" / "session.json").read_text(), "someone else's")
+        # a fake home reached through a symlink is fine; the record holds the resolved path
+        link = self.root / "homelink"
+        h3 = self.home("home3")
+        os.symlink(h3, link)
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(link))
+        self.assertEqual(rc, 0, err)
+        self.assertIn(str(self.target(h3)), [i["path"] for i in self.installs()])
+        # a master that went loose is refused
+        os.chmod(self.master, 0o644)
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(self.home("home4")))[0], 2)
+        self.assertEqual(os.listdir(self.root / "home4"), [])
+
+    def test_install_refuses_real_config_paths(self):
+        cid, _ = self.grant("A")
+        r = self.real
+        other = self.home("other")
+        link = self.root / "reallink"
+        os.symlink(r, link)
+        h1 = self.home("h1")
+        os.symlink(r / ".config", h1 / ".config")
+        h2 = self.home("h2")
+        (h2 / ".config").mkdir()
+        os.symlink(r / ".config" / "ttyak", h2 / ".config" / "ttyak")
+        h3 = self.home("h3")
+        (h3 / ".config" / "ttyak").mkdir(parents=True)
+        os.symlink(r / ".config" / "ttyak" / "p-A", h3 / ".config" / "ttyak" / "p-A")
+        (r / ".local" / "share" / "ttyak").mkdir(parents=True)
+        (r / "Library" / "Application Support" / "ttyak").mkdir(parents=True)
+        cases = [str(r), str(other) + "/../realhome", str(link), str(h1), str(h2), str(h3),
+                 str(r / ".config" / "ttyak"), str(r / ".config" / "ttyak") + "/../ttyak/p-A",
+                 str(r / ".local" / "share" / "ttyak"), str(r / "Library" / "Application Support" / "ttyak"),
+                 str(self.root / "missing"), str(self.master)]
+        for home in cases:
+            rc, out, err = self.run_cli("install", "A", cid, "--home", home)
+            self.assertEqual(rc, 2, (home, out, err))
+            self.assertNotIn("Traceback", err)
+        # a symlink on the way out of HOME to a harmless place is refused too: the target must lie inside HOME
+        outside = self.home("outside")
+        for i, hop in enumerate(((".config",), (".config", "ttyak"), (".config", "ttyak", "p-A"))):
+            h5 = self.home("h5-%d" % i)
+            if len(hop) > 1:
+                (h5.joinpath(*hop[:-1])).mkdir(parents=True)
+            os.symlink(outside, h5.joinpath(*hop))
+            rc, _, err = self.run_cli("install", "A", cid, "--home", str(h5))
+            self.assertEqual(rc, 2, hop)
+            self.assertIn("not a plain folder", err)
+            self.assertEqual(os.listdir(outside), [])
+        # $XDG_CONFIG_HOME/ttyak is a real folder too
+        h4 = self.home("h4")
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h4))
+        self.assertEqual(rc, 0, err)  # allowed without it...
+        self.env["XDG_CONFIG_HOME"] = str(h4 / ".config")
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(h4), "--profile", "other")
+        self.assertEqual(rc, 2)  # ...refused with it
+        self.assertFalse((h4 / ".config" / "ttyak" / "other").exists())
+        del self.env["XDG_CONFIG_HOME"]
+        # nothing written into the "real" folders, nothing recorded there
+        self.assertEqual(files_under(r), [str(r / ".config" / "ttyak" / "p-A" / "keep.txt")])
+        self.assertEqual([i["path"] for i in self.installs()], [str(self.target(h4))])
+        self.assertEqual(os.listdir(other), [])
+
+    def test_install_refuses_real_folder_behind_a_symlinked_config(self):
+        # dotfiles: the real home's .config is a symlink to a folder that a --home can name directly
+        dots = self.home("dotfiles")
+        (dots / ".config" / "ttyak").mkdir(parents=True)
+        real2 = self.home("realhome2")
+        os.symlink(dots / ".config", real2 / ".config")
+        self.env["TTYAK_ACCOUNTS_REAL_HOME"] = str(real2)
+        cid, _ = self.grant("A")
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(dots))
+        self.assertEqual(rc, 2, err)
+        self.assertIn("real folder", err)
+        self.assertEqual(files_under(dots), [])
+
+    def test_odd_umask_still_private_modes(self):
+        cid, _ = self.grant("A")  # before the umask: the claim folders are Task 1's (they refuse a 0500 folder)
+        src = self.source()
+        old = os.umask(0o277)  # takes the owner's write bit: only an explicit chmod gets 0700 / 0600
+        try:
+            h = self.root / "home"
+            os.mkdir(h, 0o700)
+            os.chmod(h, 0o700)
+            rc, _, err = self.run_cli("install", "A", cid, "--home", str(h))
+            self.assertEqual(rc, 0, err)
+            rc, _, err = self.run_cli("import", "A", "--from", str(src), "--replace")
+            self.assertEqual(rc, 0, err)
+        finally:
+            os.umask(old)
+        for p in (h / ".config", h / ".config" / "ttyak", h / ".config" / "ttyak" / "p-A"):
+            self.assertEqual(stat.S_IMODE(os.lstat(p).st_mode), 0o700, p)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.target(h)).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.lstat(self.master).st_mode), 0o600)
+
+    # -- release -------------------------------------------------------------------------------------------------
+
+    def test_release_removes_recorded_copies_only(self):
+        cid, _ = self.grant("A")
+        h1, h2, h3 = self.home("h1"), self.home("h2"), self.home("h3")
+        for h in (h1, h2, h3):
+            self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        t1, t2, t3 = self.target(h1), self.target(h2), self.target(h3)
+        (t1.parent / "settings.toml").write_text("keep")
+        (h1 / "other.json").write_text("keep")
+        t2.unlink()  # gone before the release
+        # h3's profile folder swapped for a symlink to a victim folder holding a session.json: never followed
+        victim = self.root / "victim"
+        victim.mkdir()
+        (victim / "session.json").write_text("victim")
+        t3.unlink()
+        os.rmdir(t3.parent)
+        os.symlink(victim, t3.parent)
+        rc, out, err = self.run_cli("release", "A", cid)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("released A", out)
+        lines = out.splitlines()
+        self.assertIn("removed %s" % t1, lines)
+        self.assertIn("already gone %s" % t2, lines)
+        self.assertTrue(any(l.startswith("not removed %s:" % t3) for l in lines), out)
+        self.assertFalse(t1.exists())
+        self.assertEqual((victim / "session.json").read_text(), "victim")
+        self.assertEqual((t1.parent / "settings.toml").read_text(), "keep")
+        self.assertEqual((h1 / "other.json").read_text(), "keep")
+        for p in (t1.parent, t2.parent, h1 / ".config" / "ttyak"):
+            self.assertTrue(p.is_dir(), p)  # folders stay
+        self.assertEqual(self.master.read_text(), MARKER)
+        self.assertIn("uninstall", self.log())
+        # --force cleans up too; --keep leaves the copies
+        cid, _ = self.grant("A")
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h1))[0], 0)
+        rc, out, _ = self.run_cli("release", "A", "--force", "--reason", "stuck")
+        self.assertEqual(rc, 0)
+        self.assertIn("removed %s" % t1, out.splitlines())
+        self.assertFalse(t1.exists())
+        cid, _ = self.grant("A")
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h1))[0], 0)
+        rc, out, _ = self.run_cli("release", "A", cid, "--keep")
+        self.assertEqual(rc, 0)
+        self.assertIn("kept %s" % t1, out)
+        self.assertEqual(t1.read_text(), MARKER)
+        # a folder where the copy was is never removed
+        t1.unlink()
+        cid, _ = self.grant("A")
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h1))[0], 0)
+        t1.unlink()
+        t1.mkdir()
+        rc, out, _ = self.run_cli("release", "A", cid)
+        self.assertEqual(rc, 0)
+        self.assertIn("not removed %s" % t1, out)
+        self.assertTrue(t1.is_dir())
+
+    def test_stale_claim_broken_removes_its_copies(self):
+        cid, _ = self.grant("A", "--lease", "0.3s")
+        h = self.home()
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        import time
+        time.sleep(0.5)
+        rc, out, err = self.run_cli("claim", "A", "--purpose", "next")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("removed %s" % self.target(h), out.splitlines())
+        self.assertFalse(self.target(h).exists())
+
+    def test_release_reports_changed_copy(self):
+        cid, _ = self.grant("A")
+        h = self.home()
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        t = self.target(h)
+        t.write_text(MARKER + "-signed-in-again")
+        rc, out, err = self.run_cli("release", "A", cid)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("rewritten by ttyak", out)
+        self.assertIn("the master is unchanged", out)
+        self.assertIn(str(t), out)
+        self.assertFalse(t.exists())
+        self.assertEqual(self.master.read_text(), MARKER)
+
+    def test_no_session_bytes_in_any_output(self):
+        src = self.source()
+        h, bad = self.home(), self.home("bad")
+        os.symlink(self.real / ".config", bad / ".config")
+        loose = self.source(body=MARKER + "-loose", mode=0o644)
+        runs = []
+
+        def run(*args, **kw):
+            r = self.run_cli(*args, **kw)
+            runs.append((args, r))
+            return r
+        run("list")
+        run("status")
+        run("status", "--json")
+        run("status", "A")
+        cid = re.search(r"id=(\S+)", run("claim", "A", "--purpose", "p")[1]).group(1)
+        run("claim", "A", "--purpose", "w", "--wait", "0")
+        run("install", "A", "wrong-id", "--home", str(h))
+        run("install", "A", cid, "--home", str(bad))
+        run("install", "A", cid, "--home", str(self.real))
+        self.assertEqual(run("install", "A", cid, "--home", str(h))[0], 0)
+        h2 = self.home("h2")
+        (h2 / ".config" / "ttyak" / "p-A").mkdir(parents=True)
+        (h2 / ".config" / "ttyak" / "p-A" / "session.json").write_text(MARKER + "-foreign")
+        run("install", "A", cid, "--home", str(h2))
+        run("status", "--json")
+        run("list")
+        run("import", "A", "--from", str(src))
+        run("import", "A", "--from", str(loose), "--replace")
+        run("import", "Z", "--from", str(src))
+        run("import", "B", "--from", str(src), "--replace")
+        run("release", "A", "wrong-id")
+        self.target(h).write_text(MARKER + "-rewritten")
+        run("release", "A", cid)
+        cid = re.search(r"id=(\S+)", run("claim", "A", "--purpose", "p")[1]).group(1)
+        run("install", "A", cid, "--home", str(h))
+        run("release", "A", "--force", "--reason", "r")
+        os.chmod(self.master, 0o640)
+        run("list")
+        run("install", "A", cid, "--home", str(h))
+        self.assertGreater(len(runs), 20)
+        for args, (rc, out, err) in runs:
+            self.assertNotIn(MARKER, out + err, args)
+            self.assertNotIn("Traceback", err, args)
+        for name in ("A", "B"):
+            for f in ("log.txt", "state.json"):
+                p = self.d / "claims" / name / f
+                if p.exists():
+                    self.assertNotIn(MARKER, p.read_text(), (name, f))
 
 
 if __name__ == "__main__":
