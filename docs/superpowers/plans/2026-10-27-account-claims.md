@@ -144,3 +144,23 @@ every live check", "A fake home"), `docs/agents/local-template.md` (the test-pro
   LIVE/UNIT/NOT record.
 - [ ] **Step 4:** Final whole-plan review; every real in-scope finding fixed (workflow.md); the ledger's last entry;
   `docs/PROGRESS.md` rewritten.
+
+### Task 5: The remaining recipes use claimed accounts in fake homes (added 2026-10-27)
+
+The maintainer's decision after the final review: no agent recipe uses the test profiles in the real config folder;
+those copies stay there for the maintainer's own use.
+
+**Files:** Modify `tools/launch.sh`, `tools/test_launch.py`, `docs/agents/live-testing.md`, `docs/agents/setup.md`,
+and any other tracked doc or tool that runs ttyak with a test profile against the real config folder (search for
+`--profile` and `ctl` in `docs/agents/`, `tools/`, `AGENTS.md`).
+
+- `tools/launch.sh PROFILE [DM_NAME]` requires `TTYAK_FAKE_HOME` (an existing directory holding
+  `.config/ttyak/PROFILE/session.json`, as `accounts.py install` makes it) and refuses to start without it (exit 2, a
+  message saying to claim the account and `install` it first); the ttyak inside the kitty window runs with
+  `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` pointing into the fake home, set on that command only
+  and passed through the environment as the profile already is (never interpolated into the quoted command).
+- Every recipe that runs `ttyak --profile <A|B> …` (the DND check before a live check, `ctl post` as B, setup.md's
+  `auth status` checks, others found by the search) shows the claim, the `install` and the fake-home environment on
+  the ttyak command, or points at the "A fake home" recipe; none uses the real folder.
+- Tests (`tools/test_launch.py`): refused without `TTYAK_FAKE_HOME`; refused when the fake home lacks the profile's
+  session; the started command gets the fake-home environment (checked through the existing test's fake kitty).

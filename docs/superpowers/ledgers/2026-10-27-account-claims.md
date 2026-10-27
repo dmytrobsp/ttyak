@@ -70,3 +70,18 @@ Start: 8295fba. Tasks: 1 ledger and claim rules, 2 the claim commands, 3 session
   ragged rewrap) sent to the implementer to fix.
 - Task 4 step 1: the two nits fixed (60aa44d, 19d44d0). Complete (8e05561..19d44d0, review clean).
 - Final whole-plan review dispatched (aaace61..19d44d0).
+- Final review (aaace61..19d44d0): no critical; 4 important docs gaps (the 30-minute lease not mentioned for account
+  claims; no "quit ttyak before release"; a foreground `claim` killed by a shell timeout blocks the queue;
+  tools/README.md's cdp recipe still read B's session from the real folder), 5 minor (SIGTERM skips `leave`; Linux-only
+  parts unlabelled; copies pushed to a box untracked; a worktree has no `.accounts/`; template/AGENTS.md disagree on
+  where profiles live), 2 nits → one fix wave with all of them (PROGRESS by the controller). One item for the
+  maintainer: the test sessions still live in the real config folder, used by launch.sh and other recipes without a
+  claim.
+- Final fix wave: 7de7503..99f6ec9 (SIGTERM handler, folder-missing hint, Linux-only labels, docs). UNIT: 64 tests in
+  the file. The controller re-ran links, names, privacy and line lengths on the final state: clean.
+- The maintainer's decision (2026-10-27): move the claim-free recipes (launch.sh, `ctl api dnd.info`, `ctl post`,
+  setup.md's `auth status`) to claims and fake homes; their real `default`/`b` copies stay for their own use. Added
+  as Task 5 of this plan.
+- Final fix wave: scoped re-review — all findings addressed. One wording nit (the template calls the A/B lines
+  "machine-specific notes") goes into Task 5.
+- Task 5: dispatched (base 99f6ec9).
