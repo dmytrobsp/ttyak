@@ -13,7 +13,9 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 1. `cargo build` (a `cargo test` alone leaves a stale `target/debug/ttyak`).
 2. Close your old test windows and wait until none remain (an open one keeps its kitty socket; a new window then fails
    with "Invalid listen_on" and keys go to the wrong window).
-3. Make sure nobody else — another agent, on this machine or a test machine — is using the Slack account you need.
+3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
+   them meanwhile: `python3 tools/accounts/accounts.py claim A --purpose "<what>"` (the same for B); keep each claim
+   id. Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
@@ -26,9 +28,10 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 
 ## The test workspace and profiles
 
-- **A Slack workspace with two test accounts, A and B**, exists only for developing ttyak. Its name, the accounts and
-  the profile names that hold their sessions are in `AGENTS.local.md`. B plays the other person: posts, reacts, rings,
-  sends test video (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
+- **A Slack workspace with two test accounts, A and B**, exists only for developing ttyak. Its name is in
+  `AGENTS.local.md`; the accounts, their profile names, roles and rules are in the account ledger (`.accounts/`,
+  git-ignored): `python3 tools/accounts/accounts.py list` shows them (the DND restore, never sign out). B plays the
+  other person: posts, reacts, rings, sends test video (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
 - **Its plan**: the current one is on Slack's **free** plan, but Slack reports `team.plan = "std"` for it, so ttyak's
   paid-plan check — like Slack's own client — treats paid features (VIPs, for one) as available there. A check that
   depends on the plan says so in its record.
@@ -59,9 +62,10 @@ Run ttyak under a fake home in the scratch folder:
 set -euo pipefail
 REPO=<the clone>                                   # its absolute path
 FAKE=<scratch>/home                                # a literal path in your scratch folder
-mkdir -p "$FAKE"/{config,data,cache} && chmod 700 "$FAKE" "$FAKE"/*
-mkdir -p "$FAKE/config/ttyak/<A>" && install -m 600 ~/.config/ttyak/<A>/session.json "$FAKE/config/ttyak/<A>/"
-cat > "$FAKE/config/ttyak/settings.toml" <<'EOF'
+mkdir -p "$FAKE"/.config "$FAKE"/.local/share "$FAKE"/.cache
+chmod 700 "$FAKE" "$FAKE"/.config "$FAKE"/.local "$FAKE"/.cache
+python3 "$REPO/tools/accounts/accounts.py" install A ID --home "$FAKE"   # ID: your claim id
+cat > "$FAKE/.config/ttyak/settings.toml" <<'EOF'
 [notifications]
 sound = "off"
 sound_volume = 0
@@ -72,15 +76,19 @@ someone_left = "off"
 ring_sound = "off"
 alone_sound = "off"
 EOF
-HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/config" XDG_DATA_HOME="$FAKE/data" XDG_CACHE_HOME="$FAKE/cache" \
+HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share" XDG_CACHE_HOME="$FAKE/.cache" \
   "$REPO/target/debug/ttyak" --profile <A>
 ```
 
-- Copy only the session files you need (0600); never print them — they hold tokens. Delete the fake home after,
-  only once it is checked to lie in your scratch folder:
+Set `HOME` and `XDG_*` only on the ttyak command line, as above, never exported before running `accounts.py`: the
+tool counts `$HOME` and `$XDG_*_HOME` as the real folders and refuses them.
+
+- The claim's `install` copies the session of an account you hold into the fake home (0600), and `release` removes
+  the copies it installed (`release --keep` keeps them). Never print a session file — it holds tokens.
+  Delete the fake home after, only once it is checked to lie in your scratch folder:
   `case "$FAKE" in <scratch>/?*) rm -rf -- "${FAKE:?}" ;; *) echo "not in the scratch folder" >&2 ;; esac`.
 - A profile with two workspaces = the `workspaces` lists of two `session.json` files combined (in Python, never
-  printed) into a temporary profile with a name of its own.
+  printed) from the installed copies inside the fake home into a temporary profile with a name of its own.
 - The log is `<cache>/ttyak/<profile>/ttyak.log`; `TTYAK_LOG=ttyak=debug` for detail (exactly that, not `debug`).
 - Debug builds read test variables: `TTYAK_FAIL=<method>,…` (those Web API calls fail), `TTYAK_DAYS_LATER=N`,
   `TTYAK_HUDDLE_DROP=N` (see [CONTRIBUTING.md](../../CONTRIBUTING.md)); any build reads `TTYAK_NOTIFY_ROUTE=system`

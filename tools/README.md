@@ -14,6 +14,10 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 - `jsgrep.py PATTERN CONTEXT MAX FILE…` — regex matches with context in minified JS (ugrep chokes on wide contexts).
 - `apiargs.py METHOD DIR…` — find a Slack Web API method's webpack module and print its call sites/args.
 - `wiki/check_links.py [--wiki DIR] [--readme FILE] [EXTRA…]` — check the wiki pages', README's and site's links (page names, `#anchors`) and the relative file links of other Markdown files (by default the agent docs, `SECURITY.md`, `docs/*.md`, `docs/distribution/`, `docs/protocol/`, the tools' READMEs); `wiki/publish.sh [--ref REF] [--push]` — check, then mirror `docs/wiki/` at REF (default: the latest `v*` tag) into the GitHub wiki repo; nothing is pushed without `--push`.
+- `accounts/accounts.py` — the ledger of the Slack test accounts (git-ignored `.accounts/`) and their claims: `list`,
+  `status`, `claim ACCOUNT --purpose P`, `renew`, `release ACCOUNT ID`, `import`, and `install ACCOUNT ID --home FAKE`
+  (puts the account's session into a fake home under your live claim; `release` removes it). Claim an account before
+  any live check: `docs/agents/live-testing.md`.
 - `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
   session, keys and clicks, captures): see `vm/README.md`.
 

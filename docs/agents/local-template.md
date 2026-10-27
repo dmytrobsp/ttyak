@@ -14,6 +14,8 @@ don't apply and say so ("no Mac on this machine"). How to set things up is in [s
 ## Test profiles
 
 What it is for: the only ttyak profiles an agent may use. Every ttyak command names one with `--profile`.
+The test accounts, their profiles, roles and rules live in the account ledger (`.accounts/`, git-ignored, made with
+`tools/accounts/accounts.py import`; `accounts.py list` shows it). This file keeps only what the ledger does not hold.
 
 - Account A: profile `test-a` — the account that runs the TUI in most checks.
 - Account B: profile `test-b` — plays the other person (`ctl post`, rings, test video).
