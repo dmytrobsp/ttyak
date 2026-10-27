@@ -48,6 +48,12 @@ class LedgerTests(unittest.TestCase):
     def write(self, ledger):
         (self.d / "ledger.json").write_text(json.dumps(ledger))
 
+    def test_missing_data_folder_hints_at_the_main_clone(self):
+        with self.assertRaises(accounts.LedgerError) as cm:
+            accounts.load_ledger(Path(self.tmp.name) / "nope")
+        self.assertIn("folder missing", str(cm.exception))
+        self.assertIn("main clone", str(cm.exception))
+
     def test_ledger_loads_and_rejects_bad_shapes(self):
         led = accounts.load_ledger(self.d)
         self.assertEqual(sorted(led["accounts"]), ["A", "B"])
@@ -605,6 +611,25 @@ class CliTests(CliBase):
         _, err = p.communicate(timeout=30)
         self.assertEqual(p.returncode, 130)
         self.assertIn("interrupted", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.queue_len(), 0)
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_real_sigterm_while_waiting(self):
+        import signal
+        import time
+        self.grant("A")
+        p = subprocess.Popen([sys.executable, str(TOOL), "claim", "A", "--purpose", "x", "--ticket", "w1"],
+                             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        deadline = time.monotonic() + 30
+        while self.queue_len() != 1:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        p.send_signal(signal.SIGTERM)
+        _, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 130)
         self.assertNotIn("Traceback", err)
         self.assertEqual(self.queue_len(), 0)
 

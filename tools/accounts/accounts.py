@@ -4,6 +4,9 @@ The data folder (git-ignored, 0700) holds ledger.json, sessions/<NAME>.json (060
 library loads and checks the ledger and keeps the claim rules. Claim semantics match the tool for test machines, so
 agents use one habit: a FIFO queue of tickets, a lease on the grant, the first waiter breaks a stale claim.
 
+Needs fcntl and pwd (Linux, macOS). `install` writes the Linux layout (.config/ttyak/<profile>); on macOS ttyak reads
+Library/Application Support, so `install` is for Linux fake homes for now.
+
 Session files hold tokens. They move only through `import` (a session.json in as an account's master) and `install`
 (the master into a fake home, under a live claim, recorded so that the release removes it). Their bytes are copied,
 never parsed, printed, logged or put in an error message, and never written into ttyak's real folders.
@@ -20,6 +23,7 @@ import os
 import pwd
 import re
 import shlex
+import signal
 import socket
 import stat
 import sys
@@ -56,11 +60,11 @@ def _mode(p: Path) -> int:
     return stat.S_IMODE(os.lstat(p).st_mode)
 
 
-def _check_dir(p: Path) -> None:
+def _check_dir(p: Path, hint: str = "") -> None:
     try:
         st = os.lstat(p)
     except OSError:
-        raise LedgerError("%s: folder missing" % p) from None
+        raise LedgerError("%s: folder missing%s" % (p, hint)) from None
     if not stat.S_ISDIR(st.st_mode):
         raise LedgerError("%s: not a folder" % p)
     if stat.S_IMODE(st.st_mode) != 0o700:
@@ -73,7 +77,7 @@ def load_ledger(d: Path, require_sessions: bool = True) -> dict:
     require_sessions=False (for `import`, which brings the first master in) lets a session file be missing; one that
     is there is still checked."""
     d = Path(d)
-    _check_dir(d)
+    _check_dir(d, " (a worktree or second clone has no .accounts/: run the tool from the main clone that holds it)")
     _check_dir(d / "sessions")
     path = d / "ledger.json"
     try:
@@ -1093,7 +1097,8 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--from", dest="source", required=True, metavar="PATH")
     q.add_argument("--replace", action="store_true", help="overwrite an existing master")
     q.set_defaults(func=cmd_import)
-    q = sub.add_parser("install", help="copy an account's master into a fake home, under your live claim")
+    q = sub.add_parser("install", help="copy an account's master into a fake home, under your live claim "
+                       "(desktop only; writes the Linux layout .config/ttyak/<profile>)")
     q.add_argument("account")
     q.add_argument("id")
     q.add_argument("--home", required=True, metavar="HOME")
@@ -1102,8 +1107,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _on_sigterm(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: Optional[list] = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        # a shell timeout or a task stop sends SIGTERM: take the same path as Ctrl+C, so a waiting ticket is removed
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except ValueError:  # not the main thread
+        pass
     try:
         return args.func(args)
     except (Usage, Refused, LedgerError, ValueError, OSError) as e:
