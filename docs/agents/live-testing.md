@@ -15,7 +15,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    with "Invalid listen_on" and keys go to the wrong window).
 3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
    them meanwhile: `python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"` (the same for B; `$REPO` is
-   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id. Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
+   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id. Waiting for a claim is not a live observation, so the 10-minute cap does not
+   apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
@@ -31,7 +32,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 - **A Slack workspace with two test accounts, A and B**, exists only for developing ttyak. Its name is in
   `AGENTS.local.md`; the accounts, their profile names, roles and rules are in the account ledger (`.accounts/`,
   git-ignored): `python3 "$REPO/tools/accounts/accounts.py" list` shows them (rules such as the DND restore and never
-  signing out). B plays the other person: posts, reacts, rings, sends test video (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
+  signing out). B plays the other person: posts, reacts, rings, sends test video
+  (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
 - **Its plan**: the current one is on Slack's **free** plan, but Slack reports `team.plan = "std"` for it, so ttyak's
   paid-plan check — like Slack's own client — treats paid features (VIPs, for one) as available there. A check that
   depends on the plan says so in its record.
