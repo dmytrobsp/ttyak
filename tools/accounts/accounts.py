@@ -44,7 +44,7 @@ def _check_dir(p: Path) -> None:
     try:
         st = os.lstat(p)
     except OSError:
-        raise LedgerError("%s: folder missing" % p)
+        raise LedgerError("%s: folder missing" % p) from None
     if not stat.S_ISDIR(st.st_mode):
         raise LedgerError("%s: not a folder" % p)
     if stat.S_IMODE(st.st_mode) != 0o700:
@@ -61,9 +61,9 @@ def load_ledger(d: Path) -> dict:
         with open(path, encoding="utf-8") as f:
             led = json.load(f)
     except OSError:
-        raise LedgerError("%s: cannot read" % path)
+        raise LedgerError("%s: cannot read" % path) from None
     except ValueError:
-        raise LedgerError("%s: not valid JSON" % path)
+        raise LedgerError("%s: not valid JSON" % path) from None
     if not isinstance(led, dict) or set(led) != {"accounts"}:
         raise LedgerError('%s: top level must be {"accounts": {...}} only' % path)
     accts = led["accounts"]
@@ -88,7 +88,7 @@ def load_ledger(d: Path) -> dict:
         try:
             st = os.lstat(sp)
         except OSError:
-            raise LedgerError("%s: session file missing" % sp)
+            raise LedgerError("%s: session file missing" % sp) from None
         if not stat.S_ISREG(st.st_mode):
             raise LedgerError("%s: not a regular file" % sp)
         if stat.S_IMODE(st.st_mode) != 0o600:
@@ -116,9 +116,12 @@ class Claims:
 
     def __init__(self, d: Path, account: str):
         _check_id("account", account)
-        self.dir = Path(d) / "claims" / account
-        self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(self.dir, 0o700)
+        d = Path(d)
+        _check_dir(d)
+        for p in (d / "claims", d / "claims" / account):
+            p.mkdir(mode=0o700, exist_ok=True)
+            _check_dir(p)  # a symlink or a loose folder is refused before anything is written into it
+        self.dir = d / "claims" / account
 
     # -- storage -----------------------------------------------------------------------------------------------
 
@@ -131,23 +134,40 @@ class Claims:
                 s = json.load(f)
         except FileNotFoundError:
             return {"claim": None, "queue": []}
+        except ValueError:
+            s = None
+        if (not isinstance(s, dict) or not isinstance(s.get("claim"), (dict, type(None)))
+                or not isinstance(s.get("queue", []), list)):
+            raise LedgerError("%s: not a valid claim state" % (self.dir / "state.json"))
         s.setdefault("claim", None)
         s.setdefault("queue", [])
         return s
 
     def _write(self, s: dict) -> None:
         tmp = self.dir / "state.json.tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(s, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.dir / "state.json")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(s, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.dir / "state.json")
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        dfd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
 
     def _log(self, now: float, event: str, **fields) -> None:
         t = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         line = " ".join([t, event] + ["%s=%s" % (k, json.dumps(v)) for k, v in fields.items()])
-        fd = os.open(self.dir / "log.txt", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        fd = os.open(self.dir / "log.txt", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -157,14 +177,14 @@ class Claims:
     def _queue(s: dict) -> list:
         return sorted(s["queue"], key=lambda t: (t["enqueued"], t["ticket"]))
 
-    def _expire(self, s: dict, now: float, ttl: float) -> None:
-        keep = []
-        for t in s["queue"]:
-            if t["seen"] + ttl < now:
-                self._log(now, "expire", ticket=t["ticket"], holder=t["holder"])
-            else:
-                keep.append(t)
-        s["queue"] = keep
+    def _expire(self, s: dict, now: float, ttl: float) -> list:
+        gone = [t for t in s["queue"] if t["seen"] + ttl < now]
+        s["queue"] = [t for t in s["queue"] if t["seen"] + ttl >= now]
+        return gone
+
+    def _log_expired(self, now: float, gone: list) -> None:
+        for t in gone:
+            self._log(now, "expire", ticket=t["ticket"], holder=t["holder"])
 
     def _answer(self, s: dict, now: float, state: str, ticket: Optional[str] = None) -> dict:
         q = self._queue(s)
@@ -189,12 +209,13 @@ class Claims:
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
-            self._expire(s, now, ttl)
+            gone = self._expire(s, now, ttl)
             c = s["claim"]
             if c is not None and c["id"] == ticket:
                 c["renewed"] = now
-                self._log(now, "claim", id=ticket, holder=c["holder"], again=True)
                 self._write(s)
+                self._log_expired(now, gone)
+                self._log(now, "claim", id=ticket, holder=c["holder"], again=True)
                 return self._answer(s, now, "granted")
             old = next((t for t in s["queue"] if t["ticket"] == ticket), None)
             s["queue"] = [t for t in s["queue"] if t["ticket"] != ticket]
@@ -203,18 +224,23 @@ class Claims:
             head = self._queue(s)[0]["ticket"]
             stale = c is not None and now > c["renewed"] + c["lease"]
             if head == ticket and (c is None or stale):
-                if stale:
-                    self._log(now, "break", id=c["id"], holder=c["holder"], by=ticket, reason="lease lapsed")
+                broken = c
                 s["claim"] = {"id": ticket, "holder": holder, "purpose": purpose, "since": now,
                               "renewed": now, "lease": lease, "installs": []}
                 s["queue"] = [t for t in s["queue"] if t["ticket"] != ticket]
-                self._log(now, "claim", id=ticket, holder=holder, purpose=purpose)
                 self._write(s)
+                self._log_expired(now, gone)
+                if stale:
+                    self._log(now, "break", id=broken["id"], holder=broken["holder"], by=ticket,
+                              reason="lease lapsed")
+                self._log(now, "claim", id=ticket, holder=holder, purpose=purpose)
                 return self._answer(s, now, "granted")
             self._write(s)
+            self._log_expired(now, gone)
             return self._answer(s, now, "waiting", ticket)
 
     def renew(self, now: Optional[float], id: str, lease: Optional[float] = None) -> dict:
+        _check_id("id", id)
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
@@ -229,6 +255,7 @@ class Claims:
             return self._answer(s, now, "renewed")
 
     def release(self, now: Optional[float], id: str) -> dict:
+        _check_id("id", id)
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
@@ -253,25 +280,31 @@ class Claims:
             return self._answer(s, now, "released")
 
     def leave(self, now: Optional[float], ticket: str, ttl: float = TICKET_TTL) -> dict:
+        _check_id("ticket", ticket)
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
-            self._expire(s, now, ttl)
+            gone = self._expire(s, now, ttl)
             s["queue"] = [t for t in s["queue"] if t["ticket"] != ticket]
             c = s["claim"]
+            released = False
             # an untouched grant whose answer never reached the client (a renewed claim is in use: keep it)
             if c is not None and c["id"] == ticket and c["renewed"] == c["since"]:
                 s["claim"] = None
-                self._log(now, "release", id=ticket, holder=c["holder"], by="leave")
+                released = True
             self._write(s)
+            self._log_expired(now, gone)
+            if released:
+                self._log(now, "release", id=ticket, holder=c["holder"], by="leave")
             return self._answer(s, now, "left")
 
     def status(self, now: Optional[float], ttl: float = TICKET_TTL) -> dict:
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
-            self._expire(s, now, ttl)
+            gone = self._expire(s, now, ttl)
             self._write(s)
+            self._log_expired(now, gone)
             return self._answer(s, now, "status")
 
 
@@ -282,8 +315,12 @@ class _Lock:
         self.path = path
 
     def __enter__(self):
-        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(self.fd)
+            raise
         return self
 
     def __exit__(self, *exc):

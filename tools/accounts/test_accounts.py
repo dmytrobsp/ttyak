@@ -87,6 +87,16 @@ class LedgerTests(unittest.TestCase):
         self.assertNotIn(MARKER, str(cm.exception))
         os.chmod(self.d / "sessions" / "A.json", 0o600)
         accounts.load_ledger(self.d)
+        real = self.d / "sessions" / "real.bin"
+        real.write_text(MARKER)
+        os.chmod(real, 0o600)
+        (self.d / "sessions" / "A.json").unlink()
+        os.symlink(real, self.d / "sessions" / "A.json")
+        with self.assertRaises(accounts.LedgerError):
+            accounts.load_ledger(self.d)
+        (self.d / "sessions" / "A.json").unlink()
+        (self.d / "sessions" / "A.json").write_text(MARKER)
+        os.chmod(self.d / "sessions" / "A.json", 0o600)
         os.chmod(self.d / "sessions", 0o755)
         with self.assertRaises(accounts.LedgerError):
             accounts.load_ledger(self.d)
@@ -215,6 +225,65 @@ class ClaimTests(unittest.TestCase):
         self.assertIn('by="me"', line)
         self.assertIn('reason="stuck"', line)
         self.assertIn('holder="victim"', line)
+
+    def test_folders_created_0700_and_missing_data_folder_refused(self):
+        old = os.umask(0o002)
+        self.addCleanup(os.umask, old)
+        accounts.Claims(self.d, "A")
+        self.assertEqual(os.stat(self.d / "claims").st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(self.d / "claims" / "A").st_mode & 0o777, 0o700)
+        missing = Path(self.tmp.name) / "nope"
+        with self.assertRaises(accounts.LedgerError):
+            accounts.Claims(missing, "A")
+        self.assertFalse(missing.exists())
+        os.chmod(self.d, 0o755)
+        with self.assertRaises(accounts.LedgerError):
+            accounts.Claims(self.d, "B")
+        os.chmod(self.d, 0o700)
+
+    def test_symlinks_refused(self):
+        target = Path(self.tmp.name) / "elsewhere"
+        target.mkdir(mode=0o755)
+        os.chmod(target, 0o755)
+        os.symlink(target, self.d / "claims" / "B")
+        with self.assertRaises(accounts.LedgerError):
+            accounts.Claims(self.d, "B")
+        self.assertEqual(os.stat(target).st_mode & 0o777, 0o755)
+        self.assertEqual(os.listdir(target), [])
+        for name in ("lock", "log.txt", "state.json.tmp"):
+            d2 = Path(self.tmp.name) / ("d2" + name.replace(".", ""))
+            d2.mkdir(mode=0o700)
+            data = make_data(d2)
+            c = accounts.Claims(data, "A")
+            victim = d2 / "victim"
+            victim.write_text("keep")
+            os.symlink(victim, c.dir / name)
+            with self.assertRaises(OSError):
+                c.claim(1000, "t1", "h", "p", 60, 60)
+            self.assertEqual(victim.read_text(), "keep")
+
+    def test_failed_write_leaves_no_tmp(self):
+        from unittest import mock
+        with mock.patch.object(accounts.json, "dump", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.claim(1000, "t1")
+        self.assertFalse((self.c.dir / "state.json.tmp").exists())
+
+    def test_corrupt_state_is_ledger_error(self):
+        for bad in ("{oops", "[]"):
+            (self.c.dir / "state.json").write_text(bad)
+            with self.assertRaises(accounts.LedgerError) as cm:
+                self.c.status(1000)
+            self.assertIn("state.json", str(cm.exception))
+        (self.c.dir / "state.json").write_text('{"claim": 3, "queue": []}')
+        with self.assertRaises(accounts.LedgerError):
+            self.c.status(1000)
+
+    def test_ids_checked_everywhere(self):
+        for call in (lambda: self.c.renew(1, "bad id"), lambda: self.c.release(1, "../x"),
+                     lambda: self.c.leave(1, "")):
+            with self.assertRaises(ValueError):
+                call()
 
     def test_clock_read_inside_lock_when_now_none(self):
         a = self.c.claim(None, "t1", "h", "p", 60, 60)
