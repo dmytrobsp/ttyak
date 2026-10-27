@@ -237,6 +237,8 @@ def import_session(d: Path, account: str, source, replace: bool) -> Path:
     exists = "%s exists; --replace to overwrite it" % dst
     if not replace and os.path.lexists(dst):
         raise Refused(exists)
+    # A SIGKILL before the finally below leaves this temp file behind: 0600 in the 0700 sessions folder, never read
+    # (load_ledger names only sessions/<NAME>.json); remove it by hand.
     tmp = sdir / (".%s.json.%s.tmp" % (account, uuid.uuid4().hex))
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC, 0o600)
     try:
@@ -294,6 +296,24 @@ def real_ttyak_dirs() -> list:
     return sorted(out)
 
 
+REAL_HINT = ("(the real folders come from $HOME, $XDG_*_HOME and the password database: run accounts.py in your "
+             "normal environment and set HOME/XDG only on the ttyak command)")
+
+
+def real_dir_ids() -> set:
+    """(st_dev, st_ino) of each of ttyak's real folders that exists: the same folder reached by a path no string
+    compare matches (a case-insensitive disk, a bind mount) is still refused."""
+    ids = set()
+    for p in real_ttyak_dirs():
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            ids.add((st.st_dev, st.st_ino))
+    return ids
+
+
 def _inside(p: str, root: str) -> bool:
     return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
 
@@ -314,15 +334,16 @@ def resolve_home(home: str) -> str:
         raise Refused("--home %s: not an existing folder" % home)
     r = in_real_dirs(home) or in_real_dirs(real)
     if r:
-        raise Refused("--home %s is inside ttyak's real folder %s: use a fake home" % (home, r))
+        raise Refused("--home %s is inside ttyak's real folder %s: use a fake home %s" % (home, r, REAL_HINT))
     return real
 
 
 def _open_dir(path: str, below=(), create: bool = False) -> int:
     """A file descriptor of the folder path/below/..., every component opened from / down with O_NOFOLLOW, so no
     symlink is followed anywhere on the way (path must be resolved already). With create, missing folders below
-    `path` are made 0700, one level at a time. A missing component raises FileNotFoundError; a symlink or anything
-    not a folder raises Refused."""
+    `path` are made 0700, one level at a time. A missing component raises FileNotFoundError; a symlink, anything
+    not a folder, or one of ttyak's real folders (by device and inode) raises Refused."""
+    real = real_dir_ids()
     fd = os.open(os.sep, _DIR)
     shown = os.sep
     try:
@@ -343,6 +364,10 @@ def _open_dir(path: str, below=(), create: bool = False) -> int:
                 raise Refused("%s: not a plain folder (a symlink, or no access?): %s" % (shown, _err(e))) from None
             os.close(fd)
             fd = child
+            st = os.fstat(fd)
+            if (st.st_dev, st.st_ino) in real:
+                raise Refused("%s is ttyak's real folder (the same folder on disk): use a fake home %s"
+                              % (shown, REAL_HINT))
             if made:
                 os.fchmod(fd, 0o700)  # the umask may have taken bits off; the mode is never wider than 0700
         return fd
@@ -379,7 +404,8 @@ def remove_copy(path, sha) -> str:
                 return "refused"  # a symlink (ELOOP) or a FIFO we may not open
             h = hashlib.sha256()
             try:
-                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
                     return "refused"
                 while True:
                     b = os.read(fd, 65536)
@@ -389,6 +415,9 @@ def remove_copy(path, sha) -> str:
             finally:
                 os.close(fd)
             try:
+                now_st = os.stat("session.json", dir_fd=pfd, follow_symlinks=False)
+                if (now_st.st_dev, now_st.st_ino) != (st.st_dev, st.st_ino):
+                    return "refused"  # swapped since it was hashed: not the file we looked at
                 os.unlink("session.json", dir_fd=pfd)
             except FileNotFoundError:
                 return "gone"
@@ -398,6 +427,32 @@ def remove_copy(path, sha) -> str:
             os.close(pfd)
     except OSError:
         return "refused"
+
+
+def _read_state(d: Path) -> dict:
+    """The claim and queue in d/state.json (none yet: no claim, an empty queue)."""
+    path = d / "state.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)  # never block on a FIFO
+    except FileNotFoundError:
+        return {"claim": None, "queue": []}
+    except OSError as e:
+        raise LedgerError("%s: cannot open (not a regular file?): %s"
+                          % (path, errno.errorcode.get(e.errno, "error"))) from None
+    try:
+        with os.fdopen(fd, encoding="utf-8") as f:
+            s = json.load(f)
+    except ValueError:
+        s = None
+    except OSError as e:
+        raise LedgerError("%s: cannot read: %s" % (path, errno.errorcode.get(e.errno, "error"))) from None
+    if (not isinstance(s, dict) or not (s.get("claim") is None or _good_claim(s["claim"]))
+            or not isinstance(s.get("queue", []), list)
+            or not all(_good_ticket(t) for t in s.get("queue", []))):
+        raise LedgerError("%s: not a valid claim state" % path)
+    s.setdefault("claim", None)
+    s.setdefault("queue", [])
+    return s
 
 
 class Claims:
@@ -418,29 +473,20 @@ class Claims:
     def _locked(self):
         return _Lock(self.dir / "lock")
 
+    def _recorded_elsewhere(self, path: str) -> Optional[str]:
+        """The other account whose claim records an installed copy at `path`, or None. Read without that account's
+        lock (taking it while holding ours could deadlock); its state is replaced atomically, so the read is whole."""
+        for name in sorted(os.listdir(self.dir.parent)):
+            other = self.dir.parent / name
+            if other == self.dir or not NAME_RE.fullmatch(name) or not stat.S_ISDIR(os.lstat(other).st_mode):
+                continue
+            c = _read_state(other)["claim"]
+            if c is not None and path in [i["path"] for i in c["installs"]]:
+                return name
+        return None
+
     def _read(self) -> dict:
-        path = self.dir / "state.json"
-        try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)  # never block on a FIFO
-        except FileNotFoundError:
-            return {"claim": None, "queue": []}
-        except OSError as e:
-            raise LedgerError("%s: cannot open (not a regular file?): %s"
-                              % (path, errno.errorcode.get(e.errno, "error"))) from None
-        try:
-            with os.fdopen(fd, encoding="utf-8") as f:
-                s = json.load(f)
-        except ValueError:
-            s = None
-        except OSError as e:
-            raise LedgerError("%s: cannot read: %s" % (path, errno.errorcode.get(e.errno, "error"))) from None
-        if (not isinstance(s, dict) or not (s.get("claim") is None or _good_claim(s["claim"]))
-                or not isinstance(s.get("queue", []), list)
-                or not all(_good_ticket(t) for t in s.get("queue", []))):
-            raise LedgerError("%s: not a valid claim state" % path)
-        s.setdefault("claim", None)
-        s.setdefault("queue", [])
-        return s
+        return _read_state(self.dir)
 
     def _write(self, s: dict) -> None:
         tmp = self.dir / "state.json.tmp"
@@ -530,6 +576,7 @@ class Claims:
                 s["claim"] = {"id": ticket, "holder": holder, "purpose": purpose, "since": now,
                               "renewed": now, "lease": lease, "installs": []}
                 s["queue"] = [t for t in s["queue"] if t["ticket"] != ticket]
+                cleanup = self._cleanup(now, broken, False) if stale else None  # before the records go
                 self._write(s)
                 self._log_expired(now, gone)
                 if stale:
@@ -538,7 +585,7 @@ class Claims:
                 self._log(now, "claim", id=ticket, holder=holder, purpose=purpose)
                 ans = self._answer(s, now, "granted")
                 if stale:
-                    ans["cleanup"] = self._cleanup(now, broken, False)
+                    ans["cleanup"] = cleanup
                 return ans
             self._write(s)
             self._log_expired(now, gone)
@@ -560,8 +607,9 @@ class Claims:
             return self._answer(s, now, "renewed")
 
     def _cleanup(self, now: float, c: dict, keep: bool) -> list:
-        """The copies a claim installed, after the claim is gone (still under the lock, so a new holder's install
-        into the same place cannot be taken for one of them): removed unless keep, each logged."""
+        """The copies a claim installed, removed (unless keep) under the lock and before the claim's state is
+        saved without them: a kill in between leaves records of removed copies ("already gone" next time), never
+        copies nobody has a record of. Each is logged."""
         out = []
         for i in c["installs"]:
             outcome = "kept" if keep else remove_copy(i["path"], i["sha256"])
@@ -579,7 +627,7 @@ class Claims:
         path = os.path.join(home, ".config", "ttyak", profile, "session.json")
         r = in_real_dirs(path)
         if r:
-            raise Refused("%s is inside ttyak's real folder %s: use a fake home" % (path, r))
+            raise Refused("%s is inside ttyak's real folder %s: use a fake home %s" % (path, r, REAL_HINT))
         with self._locked():
             now = time.time() if now is None else now
             s = self._read()
@@ -591,6 +639,10 @@ class Claims:
             try:
                 if os.path.realpath(os.path.dirname(path)) != os.path.dirname(path):  # _open_dir makes it so
                     raise Refused("%s: not reached without a symlink" % path)
+                other = self._recorded_elsewhere(path)
+                if other:
+                    raise Refused("%s is recorded as an installed copy of account %s: release that claim first, or "
+                                  "use another --home or --profile" % (path, other))
                 try:
                     st = os.stat("session.json", dir_fd=pfd, follow_symlinks=False)
                 except FileNotFoundError:
@@ -636,11 +688,12 @@ class Claims:
             c = s["claim"]
             if c is None or c["id"] != id:
                 return self._answer(s, now, "not_holder")
+            cleanup = self._cleanup(now, c, keep)
             s["claim"] = None
             self._write(s)
             self._log(now, "release", id=id, holder=c["holder"])
             ans = self._answer(s, now, "released")
-            ans["cleanup"] = self._cleanup(now, c, keep)
+            ans["cleanup"] = cleanup
             return ans
 
     def force_release(self, now: Optional[float], by: str, reason: str, keep: bool = False) -> dict:
@@ -650,11 +703,12 @@ class Claims:
             c = s["claim"]
             if c is None:
                 return self._answer(s, now, "no_claim")
+            cleanup = self._cleanup(now, c, keep)
             s["claim"] = None
             self._write(s)
             self._log(now, "force", id=c["id"], holder=c["holder"], by=by, reason=reason)
             ans = self._answer(s, now, "released")
-            ans["cleanup"] = self._cleanup(now, c, keep)
+            ans["cleanup"] = cleanup
             return ans
 
     def leave(self, now: Optional[float], ticket: str, ttl: float = TICKET_TTL) -> dict:

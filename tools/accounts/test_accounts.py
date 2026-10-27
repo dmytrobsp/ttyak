@@ -220,6 +220,17 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(a["queue"], [])
         self.assertEqual(a["claim"]["id"], "t2")
 
+    def test_leave_keeps_untouched_grant_with_installs(self):
+        self.claim(1000, "t1")
+        home = Path(self.tmp.name) / "home"
+        home.mkdir(mode=0o700)
+        self.assertEqual(self.c.install(1000, "t1", os.path.realpath(home), "p", b"x")["state"], "installed")
+        self.assertEqual(self.c.status(1000)["claim"]["renewed"], 1000)  # untouched: renewed == since
+        self.c.leave(1001, "t1")
+        c = self.c.status(1002)["claim"]
+        self.assertEqual(c["id"], "t1")
+        self.assertEqual(len(c["installs"]), 1)
+
     def test_force_release_logged(self):
         self.assertEqual(self.c.force_release(1000, "me", "why")["state"], "no_claim")
         self.claim(1001, "t1", "victim")
@@ -873,7 +884,7 @@ class SessionTests(CliBase):
     def test_install_refuses_real_folder_behind_a_symlinked_config(self):
         # dotfiles: the real home's .config is a symlink to a folder that a --home can name directly
         dots = self.home("dotfiles")
-        (dots / ".config" / "ttyak").mkdir(parents=True)
+        (dots / ".config").mkdir()  # no ttyak folder yet: only the resolved path names it, no inode to compare
         real2 = self.home("realhome2")
         os.symlink(dots / ".config", real2 / ".config")
         self.env["TTYAK_ACCOUNTS_REAL_HOME"] = str(real2)
@@ -882,6 +893,15 @@ class SessionTests(CliBase):
         self.assertEqual(rc, 2, err)
         self.assertIn("real folder", err)
         self.assertEqual(files_under(dots), [])
+        self.assertFalse((dots / ".config" / "ttyak").exists())
+
+    def test_install_refuses_real_folders_not_made_yet(self):
+        fresh = self.home("fresh")  # a new machine: the real home has no .config yet
+        self.env["TTYAK_ACCOUNTS_REAL_HOME"] = str(fresh)
+        cid, _ = self.grant("A")
+        rc, _, err = self.run_cli("install", "A", cid, "--home", str(fresh))
+        self.assertEqual(rc, 2, err)
+        self.assertEqual(os.listdir(fresh), [])
 
     def test_odd_umask_still_private_modes(self):
         cid, _ = self.grant("A")  # before the umask: the claim folders are Task 1's (they refuse a 0500 folder)
@@ -902,7 +922,109 @@ class SessionTests(CliBase):
         self.assertEqual(stat.S_IMODE(os.lstat(self.target(h)).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.lstat(self.master).st_mode), 0o600)
 
+    def test_real_folder_by_identity_refused(self):
+        # a case-insensitive disk or a bind mount: a path no string compare matches is still the real folder
+        from unittest import mock
+        cid, _ = self.grant("A")
+        h = self.home()
+        (h / ".config" / "ttyak").mkdir(parents=True)
+        st = os.stat(h / ".config" / "ttyak")
+        same = {(st.st_dev, st.st_ino)}
+        with mock.patch.object(accounts, "real_dir_ids", return_value=same):
+            rc, _, err = self.inproc("install", "A", cid, "--home", str(h))
+        self.assertEqual(rc, 2, err)
+        self.assertIn("real folder", err)
+        self.assertEqual(files_under(h), [])
+        self.assertEqual(self.installs(), [])
+        # a recorded copy that turns out to be in a real folder is left alone at release
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        with mock.patch.object(accounts, "real_dir_ids", return_value=same):
+            rc, out, err = self.inproc("release", "A", cid)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(any(l.startswith("not removed %s:" % self.target(h)) for l in out.splitlines()), out)
+        self.assertEqual(self.target(h).read_text(), MARKER)
+
+    def test_real_folder_refusal_explains_the_environment(self):
+        cid, _ = self.grant("A")
+        hint = "set HOME/XDG only on the ttyak command"
+        for home in (self.real, self.real / ".config" / "ttyak"):  # the target check; the --home check
+            rc, _, err = self.run_cli("install", "A", cid, "--home", str(home))
+            self.assertEqual(rc, 2)
+            self.assertIn(hint, err)
+        from unittest import mock
+        with mock.patch.object(accounts, "resolve_home", side_effect=lambda x: os.path.realpath(x)):
+            rc, _, err = self.inproc("install", "A", cid, "--home", str(self.real))  # the target check in install
+        self.assertEqual(rc, 2)
+        self.assertIn(hint, err)
+
+    def test_install_refuses_path_recorded_by_another_account(self):
+        h = self.home()
+        cb, _ = self.grant("B")
+        self.assertEqual(self.run_cli("install", "B", cb, "--home", str(h), "--profile", "x")[0], 0)
+        self.target(h, "x").unlink()  # removed by hand: B's record stays
+        ca, _ = self.grant("A")
+        rc, _, err = self.run_cli("install", "A", ca, "--home", str(h), "--profile", "x")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("account B", err)
+        self.assertFalse(self.target(h, "x").exists())
+        self.assertEqual(self.installs("A"), [])
+
     # -- release -------------------------------------------------------------------------------------------------
+
+    def test_release_leaves_records_outside_its_rules_alone(self):
+        import hashlib
+        cid, _ = self.grant("A")
+        real_session = self.real / ".config" / "ttyak" / "p-A" / "session.json"
+        real_session.write_text("real")
+        keep = self.real / ".config" / "ttyak" / "p-A" / "keep.txt"
+        other = self.home() / "notes.txt"  # not in a real folder: only the name check stops it
+        other.write_text("notes")
+        st = self.state()
+        st["claim"]["installs"] = [{"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                                   for p in (real_session, keep, other)]
+        (self.d / "claims" / "A" / "state.json").write_text(json.dumps(st))
+        rc, out, err = self.run_cli("release", "A", cid)
+        self.assertEqual(rc, 0, err)
+        lines = out.splitlines()
+        for p in (real_session, keep, other):
+            self.assertTrue(any(l.startswith("not removed %s:" % p) for l in lines), (p, out))
+        self.assertEqual((real_session.read_text(), keep.read_text(), other.read_text()), ("real", "keep", "notes"))
+
+    def test_release_removes_copies_before_saving_the_release(self):
+        # a kill between the two must not leave copies nobody has a record of
+        from unittest import mock
+        cid, _ = self.grant("A")
+        h = self.home()
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        c = accounts.Claims(self.d, "A")
+        with mock.patch.dict(os.environ, self.env), \
+                mock.patch.object(accounts.Claims, "_write", side_effect=OSError("killed")):
+            with self.assertRaises(OSError):
+                c.release(None, cid)
+        self.assertFalse(self.target(h).exists())
+        self.assertEqual(self.state()["claim"]["id"], cid)  # the record stays: the next release says "already gone"
+        rc, out, _ = self.run_cli("release", "A", cid)
+        self.assertIn("already gone %s" % self.target(h), out.splitlines())
+
+    def test_remove_copy_refuses_a_file_swapped_while_hashed(self):
+        from unittest import mock
+        cid, _ = self.grant("A")
+        h = self.home()
+        self.assertEqual(self.run_cli("install", "A", cid, "--home", str(h))[0], 0)
+        t = self.target(h)
+        real_read = os.read
+        swapped = []
+
+        def read(fd, n):
+            if not swapped:
+                swapped.append(1)
+                t.unlink()
+                t.write_text("someone else's")
+            return real_read(fd, n)
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(accounts.os, "read", read):
+            self.assertEqual(accounts.remove_copy(str(t), "0" * 64), "refused")
+        self.assertEqual(t.read_text(), "someone else's")
+
 
     def test_release_removes_recorded_copies_only(self):
         cid, _ = self.grant("A")
