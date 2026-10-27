@@ -54,3 +54,19 @@ Start: 8295fba. Tasks: 1 ledger and claim rules, 2 the claim commands, 3 session
   order (copies go first, then the claim); a refused install leaves empty 0700 `.config/ttyak/<profile>` folders in
   the fake home — no secret, the fake home is removed by its owner.
 - Task 4: step 1 (docs) dispatched (base 3a881f4).
+- Task 4 step 1: docs by the implementer (0152e72), under review.
+- Task 4 step 2 (controller, the maintainer's word): the local ledger made with accounts A and B (profiles, roles,
+  rules from `AGENTS.local.md`); both sessions imported read-only from the real config folder (byte-identical copies,
+  0600 in a 0700 folder); `.accounts/` confirmed git-ignored; `AGENTS.local.md` points at the ledger.
+- Task 4 step 3: LIVE (2026-10-27, debug build): claim A; `install` into a fake home created the 0700 folders and the
+  0600 copy; ttyak run with that fake home (HOME and XDG on the command only) answered `auth.test` ok as A; a second
+  claimant with `--wait 0` exited 3 naming the holder; `release` removed the copy; both accounts free. NOT: B (same
+  path); a full TUI session; a two-workspace profile.
+- Outside event: deleting the fake home, the controller counted and removed it in one command and so did not look at
+  the one file it held (most likely ttyak's own cache or log from the run) before removing it.
+- Task 4 step 1: review: spec ✅, not approved — the podman recipe, the Windows/macOS recipes and setup.md still
+  taught hand-copied sessions; the recipe lacked the release command; 2 nits → fix round 1 with all of them.
+- Task 4 step 1: fix round 1/5 (6 addressed; 2fde28c..113ac89); two new nits (a relative tool path in setup.md, a
+  ragged rewrap) sent to the implementer to fix.
+- Task 4 step 1: the two nits fixed (60aa44d, 19d44d0). Complete (8e05561..19d44d0, review clean).
+- Final whole-plan review dispatched (aaace61..19d44d0).
