@@ -3,7 +3,7 @@
 The current state, in short. This page is rewritten when things change, never appended to; keep it near 100 lines.
 What happened before is in [history/](history/README.md), the plans' ledgers and `git log`.
 
-Last rewritten: 2026-10-27.
+Last rewritten: 2026-10-28.
 
 ## Latest release
 
@@ -40,8 +40,10 @@ Last rewritten: 2026-10-27.
   [2026-10-27-linux-instances.md](superpowers/ledgers/2026-10-27-linux-instances.md): throwaway sway and GNOME
   desktops in rootless podman; ttyak's Linux live checks run there (docs/agents/live-testing.md, "A Linux
   instance"); a Slack notification reached ttyak in one, live.
-- **Next: VM clones** — one plan for a Hyprland VM and the Windows evaluation base on the same clone machinery
-  (the design's Part 3), then macOS.
+- **Now: VM clones** — plan [2026-10-28-vm-clones.md](superpowers/plans/2026-10-28-vm-clones.md), ledger
+  [2026-10-28-vm-clones.md](superpowers/ledgers/2026-10-28-vm-clones.md): a Hyprland VM and a Windows 11 evaluation
+  base as throwaway linked clones in user-mode libvirt, through the same instance commands and slots (a spike on
+  2026-10-28 showed both work with no root and nothing on screen). macOS comes after.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
