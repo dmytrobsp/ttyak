@@ -30,7 +30,9 @@ entry per event, in order, short lines:
   was not tried; never round it up.
 - **Rulings**: a decision the controller made without the maintainer, with what it costs if wrong.
 - **The maintainer's decisions**, with the date and their words where they matter.
-- **Deferred items**: what a review left for later, and the issue filed for it (`#N`) once filed.
+- **Findings not fixed**: a nit dropped (and why), or an item filed as an issue because it is outside the plan's
+  scope or needs the maintainer's decision (`#N`). Every other review finding is fixed before the plan ends
+  ([workflow](../../agents/workflow.md#executing-a-plan-with-subagents)).
 - **Outside events**: a CI run that went red and its fix, a refused action, a machine that was busy.
 
 Nothing private: no workspace, account, machine or person names, no emails or ids (`AGENTS.local.md` holds those).
@@ -48,7 +50,7 @@ Tasks: 1 the F6 row, 2 the help page, 3 final review.
 - Task 1: 5d6e7f8; review: 2 minors fixed in 9a0b1c2; complete (1a2b3c4..9a0b1c2).
   LIVE: the new row in F6, toggled as A, read back as B. UNIT: settings round-trip. NOT: macOS (no Mac session).
 - Ruling: kept the old key as an alias — if wrong, one line to drop.
-- Deferred: the help page wording → #70.
+- Dropped (nit): a double space in a code comment. Filed: the help page's wording needs the maintainer's call → #70.
 - Task 2: dispatched (base 9a0b1c2)
 ```
 

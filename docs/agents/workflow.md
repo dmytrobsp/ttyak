@@ -39,9 +39,10 @@ Everything to do is an [issue](https://github.com/dmytrobsp/ttyak/issues); nothi
   looked at yet — the issue forms set it; blank issues are off). `-label:triage` is the curated queue. Only
   collaborators can set labels and milestones.
 - **Commits that fix an issue** say `Fixes #N` in the message.
-- **New items** — a review's deferred minors, a bug found on the way, a wish the maintainer adds mid-task — become
-  issues with public wording. If the current step is still open, a small addition is folded into it instead. Filing
-  issues publishes them: for a batch, show the maintainer the drafts first.
+- **New items** — a review finding outside the plan's scope or waiting for the maintainer's decision, a bug found on
+  the way, a wish the maintainer adds mid-task — become issues with public wording (in-scope review findings are
+  fixed, not filed: [Reviews](#executing-a-plan-with-subagents)). If the current step is still open, a small addition
+  is folded into it instead. Filing issues publishes them: for a batch, show the maintainer the drafts first.
 - **Security findings** are not issues: open a private security advisory (the Security tab → Advisories → New draft
   security advisory) and tell the maintainer.
 - **Registry submissions** (winget pull requests, Chocolatey moderation) are tracked in issue #40, updated at each
@@ -81,8 +82,8 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 - **Ledger.** The plan's decisions are committed in
   [`docs/superpowers/ledgers/<plan>.md`](../superpowers/ledgers/README.md): its head (plan, design, start commit, the
   task list) as soon as the plan starts, so a plan in flight always has one, then at every task boundary: each task's
-  status and commit, what was checked LIVE/UNIT/NOT, the controller's rulings, deferred items (with the issues filed
-  for them).
+  status and commit, what was checked LIVE/UNIT/NOT, the controller's rulings, findings dropped as nits (with why) and
+  items filed as issues (out of scope or the maintainer's decision, with their numbers).
   Bulky scratch — the rules file, task briefs, review packages, reports — stays git-ignored in
   `.superpowers/sdd/<plan>/` (never `git add -f` it). After a crash or a lost session, the ledger and `git log` are how
   work resumes; an implementer's transcript survives and can be resumed.
@@ -96,7 +97,12 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 - **Reviews.** A review per task (the diff against the plan and the rules), fix rounds sent to the same implementer
   (resume it, it keeps its context), then a final whole-branch review. Reviewers find real things in most rounds; one
   implementer per batch of issues keeps that cheap.
-- **Deferred items** from reviews become issues (public wording) when the plan ends.
+- **Review findings are fixed, not filed.** Every real finding that is in scope is fixed before the plan ends — the
+  minors too, in the task's fix round or one fix wave after the final review, each fix reviewed in turn. The
+  maintainer (2026-10-27): "reviews have found issues that you've decided to just file away instead of fixing?" Only
+  three kinds of finding leave the plan unfixed: true nits (cosmetic or negligible), dropped with a one-line reason in
+  the ledger; work outside the plan's scope; and anything that needs the maintainer's decision. Only the last two
+  become issues (public wording). The final report says plainly what was fixed, dropped and filed.
 - **Machines.** Before a session where the maintainer works on a test machine, stop every subagent using it.
 - **Cleanup.** Reviewers' scratch copies and target directories fill the disk quickly (tens of GB): remove them, by
   literal path, when the plan ends.
