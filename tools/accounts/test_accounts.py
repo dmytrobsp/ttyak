@@ -262,6 +262,39 @@ class ClaimTests(unittest.TestCase):
                 c.claim(1000, "t1", "h", "p", 60, 60)
             self.assertEqual(victim.read_text(), "keep")
 
+    def test_state_json_symlink_refused_and_not_read(self):
+        fake = Path(self.tmp.name) / "fake-session"
+        body = json.dumps({"claim": None, "queue": [], "m": MARKER})  # parses as a state, so only O_NOFOLLOW saves it
+        fake.write_text(body)
+        os.chmod(fake, 0o600)
+        os.symlink(fake, self.c.dir / "state.json")
+        with self.assertRaises(accounts.LedgerError) as cm:
+            self.c.status(1000)
+        self.assertNotIn(MARKER, str(cm.exception))
+        self.assertEqual(fake.read_text(), body)
+        self.assertNotIn(MARKER, (self.c.dir / "log.txt").read_text() if (self.c.dir / "log.txt").exists() else "")
+
+    def test_bad_queue_entries_are_ledger_error(self):
+        good = {"ticket": "t", "holder": "h", "purpose": "p", "enqueued": 1, "seen": 1}
+        for q in (["x"], [{"ticket": "t"}], [dict(good, seen="no")], [dict(good, ticket="bad id")]):
+            (self.c.dir / "state.json").write_text(json.dumps({"claim": None, "queue": q}))
+            with self.assertRaises(accounts.LedgerError):
+                self.c.status(1000)
+
+    def test_folder_fsync_failure_still_logs(self):
+        from unittest import mock
+        real = os.fsync
+        calls = []
+
+        def flaky(fd):
+            calls.append(fd)
+            if os.path.isdir("/proc/self/fd/%d" % fd):
+                raise OSError("no fsync on dirs")
+            return real(fd)
+        with mock.patch.object(accounts.os, "fsync", flaky):
+            self.assertEqual(self.claim(1000, "t1")["state"], "granted")
+        self.assertIn("claim", (self.c.dir / "log.txt").read_text())
+
     def test_failed_write_leaves_no_tmp(self):
         from unittest import mock
         with mock.patch.object(accounts.json, "dump", side_effect=RuntimeError("boom")):

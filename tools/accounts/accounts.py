@@ -111,6 +111,13 @@ def _check_id(what: str, v: str) -> None:
         raise ValueError("%s must match [A-Za-z0-9_-]{1,64}" % what)
 
 
+def _good_ticket(t: object) -> bool:
+    return (isinstance(t, dict) and isinstance(t.get("ticket"), str) and NAME_RE.fullmatch(t["ticket"]) is not None
+            and isinstance(t.get("holder"), str) and isinstance(t.get("purpose"), str)
+            and all(isinstance(t.get(k), (int, float)) and not isinstance(t.get(k), bool)
+                    for k in ("enqueued", "seen")))
+
+
 class Claims:
     """The claim of one account: state.json (claim + queue) and log.txt, under a flock on `lock`."""
 
@@ -129,16 +136,22 @@ class Claims:
         return _Lock(self.dir / "lock")
 
     def _read(self) -> dict:
+        path = self.dir / "state.json"
         try:
-            with open(self.dir / "state.json", encoding="utf-8") as f:
-                s = json.load(f)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         except FileNotFoundError:
             return {"claim": None, "queue": []}
+        except OSError:
+            raise LedgerError("%s: not a regular file" % path) from None
+        try:
+            with os.fdopen(fd, encoding="utf-8") as f:
+                s = json.load(f)
         except ValueError:
             s = None
         if (not isinstance(s, dict) or not isinstance(s.get("claim"), (dict, type(None)))
-                or not isinstance(s.get("queue", []), list)):
-            raise LedgerError("%s: not a valid claim state" % (self.dir / "state.json"))
+                or not isinstance(s.get("queue", []), list)
+                or not all(_good_ticket(t) for t in s.get("queue", []))):
+            raise LedgerError("%s: not a valid claim state" % path)
         s.setdefault("claim", None)
         s.setdefault("queue", [])
         return s
@@ -158,11 +171,14 @@ class Claims:
             except OSError:
                 pass
             raise
-        dfd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
+        try:  # best effort: the state is saved, so the log lines must still follow
+            dfd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
 
     def _log(self, now: float, event: str, **fields) -> None:
         t = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
