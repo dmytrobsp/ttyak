@@ -70,3 +70,14 @@ first), 5 ttyak's live checks in an instance, final review. Tasks 1–4 are in t
 - Task 4: fix round 2/5 (451a93b). Complete (ac5be70..451a93b, review clean). UNIT: 219; opt-in real gnome: 3
   (notifications, a focused window, screenshots, failed start). Dropped (nit): the Containerfile's redundant doc/locale
   `rm` (pacman.conf already NoExtracts them; the README says so).
+- Task 5 step 2 (controller, live, 2026-10-27 21:4x): A and B claimed and installed into fake homes; both were inside
+  their scheduled DND (17:00–09:00), read with `dnd.info`. LIVE: a sway instance with A's fake home and the debug
+  binary mounted; ttyak started in kitty through `instance exec`, signed in as A, its window listed focused by
+  `instance windows`; `instance shot` showed the sidebar, the channel and the DND pause in the status bar; `instance
+  rm`, both accounts released (copies removed), nothing on the maintainer's screen, no container left. NOT: a Slack
+  notification reaching the instance (both accounts in quiet hours; changing their schedules needs an exact restore —
+  to run in the day, or with the maintainer's word); window raise on a mention; sound.
+- Findings from the live run (fixed in a follow-up round, not filed): some ttyak icons render as empty boxes (the
+  image has no symbol font); ttyak, kitty, fontconfig and Mesa write caches into the host-mounted fake home (on disk),
+  against "instance scratch in RAM" — the instance's `~/.cache` (and `~/.local/state`) become tmpfs when a home is
+  mounted.
