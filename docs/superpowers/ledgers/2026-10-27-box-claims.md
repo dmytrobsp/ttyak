@@ -70,3 +70,23 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   serving (cannot pass falsely, may miss a regression).
 - Task 3: fix round 1/5 (1 addressed, 0 open; c884314). Complete (d4ada83..c884314, review clean). UNIT: 38 tests.
 - Task 4: dispatched (<tool> base c884314).
+- Ruling: Task 4's open points settled in the dispatch — a busy answer retries like unreachable; a corrupt state
+  answer exits 2 (a human must look); ssh timeout ~30 s; `$<TOOL>_SSH` split with shlex; the fake ssh injects
+  failures through a counter file — costs small changes in Task 5 if wrong.
+- Task 4: f261d92 (implementer). Ruling: `release --force` on a box with no claim should exit 0 ("no claim"), not 6
+  — nothing was refused — goes to the fix round with the review's findings. Ruling: LocalTransport raising
+  Unreachable on a busy mutex is accepted (busy retries like unreachable, by the earlier ruling) — costs a clearer
+  message if wrong.
+- Task 4: review: spec ✅, not approved — 2 important (`--wait` restarted on every resume, so an agent following its
+  resume lines never reaches the limit; `--ticket` unchecked into a box-side file name and the resume line) → fix
+  round 1 with the `release --force` no-claim ruling.
+- Task 4: minor (deferred): request sent with `ensure_ascii=False`; stderr dropped when the answer is not JSON (a
+  wrong `remote` path waits forever as "unreachable"); corrupt state shown as unreachable, `status BOX` unreachable
+  exits 0; a grant lost to a timed-out last poll leaves an orphan claim until its lease lapses; Ctrl-C while waiting
+  leaves the ticket to its TTL; `--lease 0` accepted; a non-object `boxes.json` raises AttributeError; no test for
+  busy retries or corrupt → 2; the transport-error test starts failing before the waiter queued.
+- Task 4: fix round 1/5 (3 addressed, 0 open; 4d69af7). Complete (c884314..4d69af7, review clean). UNIT: 55 tests.
+- Task 4: minor (deferred): `--ticket ""` silently makes a new ticket (an empty shell variable loses the agent its
+  place); `_SAFE_ID` uses `$`, so a trailing newline passes (use `re.fullmatch`); a malformed id now exits 2, not 6
+  (README); the remaining-wait test's 6 s bound may be tight on a slow machine.
+- Task 5: dispatched (<tool> base 4d69af7).
