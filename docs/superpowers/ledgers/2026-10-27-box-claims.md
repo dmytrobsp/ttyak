@@ -131,3 +131,16 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   the Mac's Python 3.9 under a claim via `run`; both boxes end free with empty queues. NOT: the suite on Windows (the
   tests use POSIX shell helpers); a stale-claim break live (unit-tested).
 - Task 6: minor (deferred): a `renew_failed` log line names the current holder, not the caller that failed.
+- Task 7: the maintainer's word (2026-10-27) for the other project; it had no git-ignored local file, and the
+  maintainer chose an untracked `CLAUDE.local.md` there (kept out of git by `.git/info/exclude`; nothing tracked
+  changed). `AGENTS.local.md` points at the claim tool and the box names. Public docs dispatched (ttyak base fed8b50).
+- Task 7: e5318bb; review: not approved — 3 important (the Windows and macOS recipes still ssh around the tool; the
+  10-minute live-wait cap vs claim waits is left unclear) + a line over 120 columns.
+- Ruling: `run --tty` added to the claim tool (ssh `-t` with a command), because ttyak's Windows TUI recipe needs a
+  terminal and `run` only did `-T` — a plan gap found by the docs review — costs one flag if wrong.
+- `run --tty`: 82c3efd; review approved. UNIT: 67 tests, pristine. Minor (deferred): the ssh run line in
+  transport.py is over 120 columns; with a pty, stderr merges into stdout (README note).
+- Task 7: fix round 1/5 (3 addressed + wrapping; 16501c6). Complete (fed8b50..16501c6, review clean). LIVE: stdin
+  passes through `run` (piped two lines to the Mac under a claim, counted there), as the macOS recipe relies on.
+- Task 7: minor (deferred): the tool's README does not say `run` forwards stdin; lines over 120 columns that predate
+  this plan in AGENTS.md and live-testing.md.
