@@ -18,7 +18,8 @@ case $profile in
 esac
 
 fake=${TTYAK_FAKE_HOME:-}
-hint="claim the account and install it first: python3 tools/accounts/accounts.py claim ... ; ... install ACCOUNT ID --home DIR"
+hint="claim the account, then install it first:
+  python3 tools/accounts/accounts.py claim ACCOUNT ...; python3 tools/accounts/accounts.py install ACCOUNT ID --home DIR"
 if [ -z "$fake" ]; then
     echo "TTYAK_FAKE_HOME is not set: $hint" >&2
     exit 2

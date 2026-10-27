@@ -3,8 +3,10 @@
 Helpers used while developing and testing; none of them is needed to build or run ttyak. The
 live-test helpers assume Linux with Hyprland, kitty and PipeWire.
 
-- `launch.sh PROFILE [DM_NAME]` — start the debug build on PROFILE, a test profile from `AGENTS.local.md` (it refuses
-  to start without one), in the `ttyak-test` kitty window (abstract socket `unix:@ttyak-test`), and with DM_NAME open
+- `launch.sh PROFILE [DM_NAME]` — start the debug build on PROFILE, a test profile from `AGENTS.local.md`, in a fake
+  home: `TTYAK_FAKE_HOME` must hold `.config/ttyak/PROFILE/session.json` (claim the account, then
+  `accounts.py install`; see `docs/agents/live-testing.md`), or it refuses to start (as it does without a
+  profile), in the `ttyak-test` kitty window (abstract socket `unix:@ttyak-test`), and with DM_NAME open
   that DM. The window is **visible**: only while the maintainer watches (the hidden recipe is in
   `docs/agents/live-testing.md`).
   Drive it with `kitty @ --to unix:@ttyak-test send-key …/send-text …`; quit with `send-key ctrl+q`.

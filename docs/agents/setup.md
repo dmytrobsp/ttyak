@@ -132,8 +132,9 @@ The template ([local-template.md](local-template.md)) says what each section is 
 - **Test profiles**: the profile names chosen when signing A and B in ([section 5](#5-the-test-workspace)); the
   machine's default profile and any other profiles: `ttyak profile list` (local files only, nothing is sent). Ask the
   maintainer which profiles are theirs and what may be done with them; if they run their own ttyak, from where.
-- **Test workspace**: its name and id, A's and B's user ids (`ttyak --profile <A> ctl api auth.test` prints `team_id`
-  and `user_id`), standing state such as a do-not-disturb schedule (`ctl api dnd.info`), and the permissions the
+- **Test workspace**: its name and id, A's and B's user ids (`ctl api auth.test` on A's profile prints `team_id`
+  and `user_id`), standing state such as a do-not-disturb schedule (`ctl api dnd.info`), both run in a fake home
+  after `claim` and `install`, as in the check at the end of section 5), and the permissions the
   maintainer gave.
 - **Test machines**: the ssh aliases (`ssh -G <alias>` shows host and user), the libvirt domain of a VM
   (`virsh -c qemu:///system list --all`), the work folder, what each machine has (sound, camera, ffmpeg) and who else
@@ -165,14 +166,20 @@ local file. Two ways:
 
    ```sh
    REPO=<the clone>      # its absolute path
+   FAKE=<scratch>/signin-home    # a fake home: this sign-in must not write the maintainer's real folders
+   mkdir -p "$FAKE"/.config "$FAKE"/.local/share "$FAKE"/.cache && chmod 700 "$FAKE" "$FAKE"/.config
    cargo build --manifest-path "$REPO/Cargo.toml"
-   "$REPO/target/debug/ttyak" --profile <A> auth login --email <A's address>
+   HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share" XDG_CACHE_HOME="$FAKE/.cache" \
+     "$REPO/target/debug/ttyak" --profile <A> auth login --email <A's address>
    ```
-
    ttyak shows a QR code and a link; on the phone (or any browser) Slack asks for a captcha and emails a code; the
    maintainer types it at ttyak's `Code: ___-___` prompt — never on the phone. ttyak lists the workspaces of that
-   address: mark **only the test workspace**. Then the same for B with `--profile <B>`. Every sign-in adds one more
-   session on Slack's side; that is harmless, and the test accounts are never signed out.
+   address: mark **only the test workspace**. Then the same for B with `--profile <B>`, in the same fake home.
+   Every sign-in adds one more session on Slack's side; that is harmless, and the test accounts are never signed out.
+
+   The session is made in this fake home, then imported into the ledger (below, after the ledger is made as in way 2)
+   with `import A --from "$FAKE/.config/ttyak/<profile>/session.json"`; delete the fake home after. This is the one
+   place a session is created; nothing writes a test profile in the real config folder.
 2. **Copying the sessions** from a machine where A and B are signed in: each profile's `session.json` (Linux:
    `~/.config/ttyak/<profile>/session.json`; other systems: [Profiles and sessions](../wiki/Profiles-and-sessions.md))
    into the same place here, mode 0600, piped through ssh and never printed — it holds the tokens. Then
@@ -189,13 +196,18 @@ local file. Two ways:
    (`$REPO` is as above; `<config folder>` is where the sessions were copied to, as above; `--replace` renews an
    existing master.) The tool writes the master as `.accounts/sessions/A.json` (0600) and never prints it.
 
-Then check, without posting anything:
+Then check, without posting anything: claim A and B and `install` them into a fake home
+([A fake home](live-testing.md#a-fake-home)), and run ttyak with the four variables set on its command only:
 
 ```sh
-"$REPO/target/debug/ttyak" --profile <A> auth status      # the test workspace, "works"
-"$REPO/target/debug/ttyak" --profile <B> auth status
-"$REPO/target/debug/ttyak" --profile <A> ctl api dnd.info # A's do-not-disturb state, for the local file
+ttyak_fake() { HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share" \
+  XDG_CACHE_HOME="$FAKE/.cache" "$REPO/target/debug/ttyak" "$@"; }
+ttyak_fake --profile <A> auth status      # the test workspace, "works"
+ttyak_fake --profile <B> auth status
+ttyak_fake --profile <A> ctl api dnd.info # A's do-not-disturb state, for the local file
 ```
+
+Release the claims after.
 
 *Checked*: the email-code sign-in was verified LIVE on account B (2026-10-20) and is the wiki's documented way; the
 `team.plan = "std"` reading is from the live workspace. For this page nothing was signed in, out or checked against

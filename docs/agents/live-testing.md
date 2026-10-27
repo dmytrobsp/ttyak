@@ -24,7 +24,10 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
-   (`--profile <A> ctl api dnd.info`; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
+   (`ctl api dnd.info` on A's profile, with the claimed copy in the fake home of [A fake home](#a-fake-home), the four
+   variables set on that command only; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
+   For example, after `install`: `HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share"
+   XDG_CACHE_HOME="$FAKE/.cache" "$REPO/target/debug/ttyak" --profile <A> ctl api dnd.info`.
 5. Decide what the check must show and cap its waits (not a wait for a claim) at about
    10 minutes. Only run experiments whose answer changes what gets built; report interim status rather than sit in a
    long wait.
@@ -37,11 +40,14 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
   `AGENTS.local.md`; the accounts, their profile names, roles and rules are in the account ledger (`.accounts/`,
   git-ignored): `python3 "$REPO/tools/accounts/accounts.py" list` shows them (rules such as the DND restore and never
   signing out). B plays the other person: posts, reacts, rings, sends test video
-  (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
+  (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`, run with B's claimed copy in a fake home, the same four
+  variables on the command: [A fake home](#a-fake-home)).
 - **Its plan**: the current one is on Slack's **free** plan, but Slack reports `team.plan = "std"` for it, so ttyak's
   paid-plan check — like Slack's own client — treats paid features (VIPs, for one) as available there. A check that
   depends on the plan says so in its record.
-- **Every ttyak command names a test profile** with `--profile`. A bare `ttyak` (or a bare `ctl`) uses the machine's
+- **Every ttyak command names a test profile** with `--profile` and runs in a fake home with a claimed account
+  ([A fake home](#a-fake-home)); no recipe uses a test profile in the real config folder (those copies are the
+  maintainer's own). A bare `ttyak` (or a bare `ctl`) uses the machine's
   default profile, which may be the maintainer's real work account. Never use a profile you were not given.
 - **The maintainer's own workspaces**: never post, react, upload, sign in or out there. Read-only use only where
   `AGENTS.local.md` allows it, with the test window unfocused (focus marks things read), and their names and ids never
@@ -57,7 +63,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 
 DND settings may be written on the test accounts only, never on another account. Snapshot first
 (`ctl api users.prefs.get`, the `dnd_*` keys; `ctl api dnd.info`), then restore exactly: lift with `dnd.endDnd` /
-`dnd.endSnooze`, restore a snooze with `dnd.setSnooze num_minutes=<to the old end>`.
+`dnd.endSnooze`, restore a snooze with `dnd.setSnooze num_minutes=<to the old end>`. Every `ctl` call runs under the
+claim, in the fake home, with the four variables of [A fake home](#a-fake-home) on the command.
 
 ## A fake home
 
@@ -130,8 +137,10 @@ hyprctl dispatch exec "[workspace special:<name> silent] kitty --class <class> -
   messages. Read the screen before destructive keys (`d`, `y`) and before every Enter in F6 (it opens on Availability,
   where Enter edits the real Slack status).
 - Another size: `kitty @ set-font-size 6` gives about 170×44 cells (`0` restores); the default is a "narrow" ~95 columns.
-- `tools/launch.sh <A> [<B's name>]` opens a *visible* `ttyak-test` window on your A profile (it refuses without a
-  profile) and opens the DM with B: use it only while the maintainer is watching.
+- `TTYAK_FAKE_HOME="$FAKE" sh tools/launch.sh <A> [<B's name>]` opens a *visible* `ttyak-test` window on your A
+  profile and opens the DM with B: use it only while the maintainer is watching. It refuses without a profile and
+  without `TTYAK_FAKE_HOME`, a fake home that holds the profile's `session.json` (claim the account and `install` it
+  first, [A fake home](#a-fake-home)); the window's ttyak runs with the four variables pointing into it.
 - **No screenshots of the real screen** (grim, `tools/shot.sh` grab a screen region and have captured the maintainer's
   own windows). Use `get-text`. If a picture is truly needed, focus the test window, check it is the active one, look
   at the picture before relying on it, and delete any capture that shows something else.
@@ -273,7 +282,8 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   `mouse_event`, `keybd_event`; the screen capture of that desktop, never the maintainer's):
   [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the maintainer to sit at the
   console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test, in
-  a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the box name).
+  a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the box
+  name; the session there is the claimed copy `install` put on the box, not a profile in the user's real folder).
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.

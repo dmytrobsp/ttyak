@@ -126,10 +126,10 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
   `cargo build --target x86_64-pc-windows-gnu` and `cargo test --no-run --target x86_64-pc-windows-gnu`.
 - **No `cargo fmt`**, never `target/release` (AGENTS.md). Unit tests do not mutate global singletons (the theme
   palette, the clock zone, the translation table): they run in parallel; test pure helpers instead.
-- **Real data before parsers**: probe an endpoint with `ttyak --profile <test> ctl api …` and capture real-time
-  events with `ctl listen` before writing a parser; use the captured shapes (keys and types, not private values) in
-  the unit tests. A made-up fixture for a reply nobody has seen hid a real bug. What is learned goes into
-  `docs/protocol/`.
+- **Real data before parsers**: probe an endpoint with `ttyak --profile <test> ctl api …` (in a fake home with a
+  claimed account, [live-testing.md](live-testing.md#a-fake-home)) and capture real-time events with `ctl listen`
+  before writing a parser; use the captured shapes (keys and types, not private values) in the unit tests. A made-up
+  fixture for a reply nobody has seen hid a real bug. What is learned goes into `docs/protocol/`.
 - **Validation of outside data** (a feed, a reply) is checked against the live data before pushing: a check that is too
   strict breaks every user at once.
 - **Links meant for a phone** (a sign-in link, a link sent by email) are checked with a phone's user agent too, not
