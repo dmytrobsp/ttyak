@@ -14,8 +14,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 2. Close your old test windows and wait until none remain (an open one keeps its kitty socket; a new window then fails
    with "Invalid listen_on" and keys go to the wrong window).
 3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
-   them meanwhile: `python3 tools/accounts/accounts.py claim A --purpose "<what>"` (the same for B); keep each claim
-   id. Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
+   them meanwhile: `python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"` (the same for B; `$REPO` is
+   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id. Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
@@ -30,8 +30,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 
 - **A Slack workspace with two test accounts, A and B**, exists only for developing ttyak. Its name is in
   `AGENTS.local.md`; the accounts, their profile names, roles and rules are in the account ledger (`.accounts/`,
-  git-ignored): `python3 tools/accounts/accounts.py list` shows them (the DND restore, never sign out). B plays the
-  other person: posts, reacts, rings, sends test video (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
+  git-ignored): `python3 "$REPO/tools/accounts/accounts.py" list` shows them (rules such as the DND restore and never
+  signing out). B plays the other person: posts, reacts, rings, sends test video (`ttyak --profile <B> ctl post …`, `ctl huddle-media …`).
 - **Its plan**: the current one is on Slack's **free** plan, but Slack reports `team.plan = "std"` for it, so ttyak's
   paid-plan check — like Slack's own client — treats paid features (VIPs, for one) as available there. A check that
   depends on the plan says so in its record.
@@ -85,7 +85,8 @@ tool counts `$HOME` and `$XDG_*_HOME` as the real folders and refuses them.
 
 - The claim's `install` copies the session of an account you hold into the fake home (0600), and `release` removes
   the copies it installed (`release --keep` keeps them). Never print a session file — it holds tokens.
-  Delete the fake home after, only once it is checked to lie in your scratch folder:
+  End the check with `python3 "$REPO/tools/accounts/accounts.py" release A ID` (then B), which also hands the
+  account over to the next claim. Delete the fake home after, only once it is checked to lie in your scratch folder:
   `case "$FAKE" in <scratch>/?*) rm -rf -- "${FAKE:?}" ;; *) echo "not in the scratch folder" >&2 ;; esac`.
 - A profile with two workspaces = the `workspaces` lists of two `session.json` files combined (in Python, never
   printed) from the installed copies inside the fake home into a temporary profile with a name of its own.
@@ -141,8 +142,8 @@ flatpak run --socket=x11 org.wezfurlong.wezterm --config enable_wayland=false st
 xterm -ti vt340 …     # sixel only as a VT340; X resources with -xrm '*res: v'
 ```
 
-A bare system: run the binary in a podman Debian container with only `libasound2t64`, sessions mounted read-only,
-the cache folder from the scratch folder.
+A bare system: run the binary in a podman Debian container with only `libasound2t64`, the fake home (with the sessions
+`install` put there) mounted read-only, the cache folder from the scratch folder.
 
 ## Other desktops
 
@@ -247,6 +248,8 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   user's home). The tool never starts or stops a VM: a stopped VM is started first (from the desktop), then claimed.
   Before claiming, still check whether the box is running and whether someone is on it (its state, logged-in users,
   others' processes), and never shut down, restart or revert it while someone else uses it.
+- **Sessions for a box** come from `accounts.py install` into a local fake home under your account claim, then
+  `push` or `run` them over; never from `~/.config/ttyak`.
 - **Restore it as found**: leave the box as you found it unless the goal was to change it (if it was running, leave
   it running; if you started it, shut it down after). Delete copied sessions, binaries, recordings and caches there;
   check each path is gone (one path per check). Delete the local cross-build directory

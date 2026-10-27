@@ -175,7 +175,9 @@ local file. Two ways:
    session on Slack's side; that is harmless, and the test accounts are never signed out.
 2. **Copying the sessions** from a machine where A and B are signed in: each profile's `session.json` (Linux:
    `~/.config/ttyak/<profile>/session.json`; other systems: [Profiles and sessions](../wiki/Profiles-and-sessions.md))
-   into the same place here, mode 0600, piped through ssh and never printed — it holds the tokens.
+   into the same place here, mode 0600, piped through ssh and never printed — it holds the tokens. Then
+   `python3 tools/accounts/accounts.py import …` them into the ledger here; live checks take sessions from the ledger
+   with `install`.
 
 Then check, without posting anything:
 
@@ -188,7 +190,7 @@ Then check, without posting anything:
 *Checked*: the email-code sign-in was verified LIVE on account B (2026-10-20) and is the wiki's documented way; the
 `team.plan = "std"` reading is from the live workspace. For this page nothing was signed in, out or checked against
 Slack: both ways on a new machine are NOT tried here. Copying sessions to the test machines is how their checks ran
-(LIVE).
+(LIVE); they now go from the ledger with `install`.
 
 ## 6. The private lists
 
