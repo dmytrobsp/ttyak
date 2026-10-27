@@ -31,3 +31,26 @@ Start: 8295fba. Tasks: 1 ledger and claim rules, 2 the claim commands, 3 session
   file. Three remaining nits (an inaccurate "not a regular file" for any open error; the claim record's keys
   unchecked; the folder-fsync test detects folders through /proc only) go into Task 2's brief, not dropped.
 - Task 2: dispatched (base 6f753d4).
+- Task 2: 508cbb8; review: spec ✅, not approved — a FIFO at a state, temp or log file blocks the open forever inside
+  the lock; no real-SIGINT test; 4 nits (a "-x" purpose in the resume line, sub-second lease shown as 0s, a key
+  whitelist for status output, control characters on display) → fix round 1 with all of them.
+- Task 2: fix round 1/5 (6 addressed; a727ab9). Complete (7c60978..a727ab9, review clean). UNIT: 43 tests in the
+  file. Ruling: the `resume:` line stays raw (shlex-quoted) — it echoes only the caller's own text and must run as
+  printed — costs nothing.
+- Task 3: dispatched (base a727ab9).
+- CI on 7c60978 (Task 1): success on Linux, macOS and the Windows cross-build.
+- Task 3: ea811fb (implementer; 54 tests in the file, a mutation pass). Ruling: `install --home FAKE` writes
+  FAKE/.config/ttyak/<profile>, which matches ttyak on Linux run with HOME=FAKE or XDG_CONFIG_HOME=FAKE/.config (the
+  `directories` crate); the macOS layout waits for the macOS instance plan — costs a `--config-dir` flag later.
+- Task 3: review: spec ✅, not approved — the real-folder guard compared path strings only (case-insensitive disks,
+  bind mounts); untested guards (`leave` keeping a grant with installs; `remove_copy`'s checks); a misleading refusal
+  under an exported HOME; 3 nits → fix round 1 with all of them. Kept, by the review's judgement: the head waiter's
+  break removes the dead claim's copies; `install` refuses a lapsed claim (exit 6); `leave` keeps a grant with
+  installs; $HOME/XDG count as real folders. Dropped (with a code comment): a SIGKILL mid-import leaves a 0600 temp
+  file in the 0700 sessions folder.
+- Task 3: fix round 1/5 (all addressed; 3a881f4). Complete (a727ab9..3a881f4, review clean). UNIT: 62 tests in the
+  file; mutation pass 21/23 killed (the two survivors are redundant behind the no-symlink walk).
+- Task 3: dropped (nits): "uninstall" log lines now precede the release line of the same event — that is the true
+  order (copies go first, then the claim); a refused install leaves empty 0700 `.config/ttyak/<profile>` folders in
+  the fake home — no secret, the fake home is removed by its owner.
+- Task 4: step 1 (docs) dispatched (base 3a881f4).
