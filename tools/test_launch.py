@@ -35,7 +35,7 @@ class Launch(unittest.TestCase):
 
     def run_script(self, shell, *args, **env):
         return subprocess.run([shell, SCRIPT, *args], capture_output=True, text=True, timeout=30,
-                              env={**self.env, **env})
+                              env={**self.env, **env}, cwd=self.dir)
 
     def calls(self):
         if not os.path.exists(self.log):
@@ -76,6 +76,15 @@ class Launch(unittest.TestCase):
                     self.assertIn("accounts.py", r.stderr)
                     self.assertIn("install", r.stderr)
                     self.assertEqual(self.calls(), "")
+
+    def test_refuses_a_relative_fake_home(self):
+        self.fake_home()
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                r = self.run_script(shell, "test-a", TTYAK_FAKE_HOME="fake", PWD=self.dir)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("absolute", r.stderr)
+                self.assertEqual(self.calls(), "")
 
     def test_refuses_a_fake_home_that_is_not_a_directory(self):
         for shell in SHELLS:
