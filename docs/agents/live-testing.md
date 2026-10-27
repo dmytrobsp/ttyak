@@ -15,7 +15,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    with "Invalid listen_on" and keys go to the wrong window).
 3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
    them meanwhile: `python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"` (the same for B; `$REPO` is
-   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id. Waiting for a claim is not a live observation, so the 10-minute cap does not
+   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id.
+   Waiting for a claim is not a live observation, so the 10-minute cap does not
    apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
