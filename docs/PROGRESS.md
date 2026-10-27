@@ -30,10 +30,13 @@ Last rewritten: 2026-10-27.
   ledger [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md): the shared test boxes are used
   only under a claim, through the claim tool named in `AGENTS.local.md` (a private repository of its own); live on
   both boxes.
-- **Plan in flight: account claims** — plan
+- **Done: account claims** (2026-10-27) — plan
   [2026-10-27-account-claims.md](superpowers/plans/2026-10-27-account-claims.md), ledger
-  [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): a ledger of the Slack test
-  accounts and a claim per account (`tools/accounts/`). Then Linux, Windows and macOS instances.
+  [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): the Slack test accounts
+  are claimed with `tools/accounts/accounts.py`, and live checks get their sessions through `install` into a fake
+  home; no agent recipe uses the real config folder any more.
+- **Next: Linux instances** (the design's Part 3, third in its order) — a plan of its own, then Windows and
+  macOS instances.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits

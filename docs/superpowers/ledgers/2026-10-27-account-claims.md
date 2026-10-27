@@ -85,3 +85,12 @@ Start: 8295fba. Tasks: 1 ledger and claim rules, 2 the claim commands, 3 session
 - Final fix wave: scoped re-review — all findings addressed. One wording nit (the template calls the A/B lines
   "machine-specific notes") goes into Task 5.
 - Task 5: dispatched (base 99f6ec9).
+- Task 5: d9f8690, 629cc35; review: spec ✅, not approved — launch.sh lines over 120 columns; a relative
+  TTYAK_FAKE_HOME resolved differently after the script's `cd`; a tangled README sentence → fix round 1.
+- Task 5: fix round 1/5 (3 addressed; ab53003). Complete (743b538..ab53003, review clean). UNIT: 8 launch tests under
+  dash and bash. LIVE: launch.sh's inner command line run under dash with a fake home whose path has a space — ttyak
+  answered `auth.test` ok as A from the installed copy; release removed the copy; the only other file left was
+  ttyak's own log (empty, no token-like strings — and the unseen file of the earlier live check). NOT: launch.sh
+  itself (it opens a visible window, which only runs while the maintainer watches).
+- Plan complete (2026-10-27): aaace61..ab53003. Every review finding fixed, except the dropped nits listed above
+  with their reasons; nothing filed as an issue.
