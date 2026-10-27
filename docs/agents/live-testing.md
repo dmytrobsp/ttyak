@@ -22,7 +22,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    shell timeout does not kill it while it is queued.
    Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
-   work on the box goes through the claim tool.
+   work on the box goes through the claim tool. A Linux check in an instance needs a slot, which `instance new`
+   claims itself ([A Linux instance](#a-linux-instance)); keep that id too.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
    (`ctl api dnd.info` on A's profile, with the claimed copy in the fake home of [A fake home](#a-fake-home), the four
    variables set on that command only; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
@@ -114,10 +115,58 @@ tool counts `$HOME` and `$XDG_*_HOME` as the real folders and refuses them.
   remove a folder, and never open the maintainer's own drafts. Quit ttyak with Ctrl+Q before closing its window, or a
   cleared composer leaves a stale draft.
 
+## A Linux instance
+
+The default place for a Linux live check: a throwaway desktop in a rootless podman container, with a headless sway
+(or GNOME), a notification daemon and a null audio sink, none of which the maintainer sees or hears. It is made and
+driven with the claim tool named in `AGENTS.local.md` (`<tool>` below; its README has every option). ttyak runs in it
+with the fake home of [A fake home](#a-fake-home) as its home, so the maintainer's screen, sound and clipboard are
+never involved.
+
+```sh
+set -euo pipefail
+REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home": folders made, settings.toml written
+ACC_ID=$(python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>")   # claim id (see the step above)
+python3 "$REPO/tools/accounts/accounts.py" install A "$ACC_ID" --home "$FAKE"
+# the instance: the fake home is its home, the debug binary is mounted read-only
+<tool> instance new --desktop sway --purpose "ttyak: <what>" --home "$FAKE" \
+    --mount "$REPO/target/debug/ttyak:/opt/ttyak/ttyak"           # prints `instance NAME id=ID slot=N`
+<tool> instance exec NAME ID -- "setsid kitty --class ttyak-test /opt/ttyak/ttyak --profile <A> \
+    >/dev/null 2>&1 < /dev/null &"
+<tool> instance windows NAME ID               # the ttyak-test window, focused
+<tool> instance shot NAME ID out.png          # what the window shows (look at it before relying on it)
+<tool> instance notifications NAME ID         # the notifications ttyak raised
+<tool> instance record NAME ID 5 out.wav      # what it played, from the null sink (at most 300 s)
+<tool> instance exec NAME ID -- "cat ~/.cache/ttyak/<A>/ttyak.log"     # the log, before the instance goes
+<tool> instance rm NAME ID
+python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
+```
+
+- **Home.** Inside the instance `HOME` is the mounted fake home (read-write), so ttyak finds
+  `.config/ttyak/<profile>/session.json` there with no extra environment; do not set the four variables. The
+  instance's `~/.cache` and `~/.local/state` live in RAM and vanish with it: read the log (above) before `rm`.
+  The binary is mounted from the clone's `target/debug` (`cargo build` first) and never from a release folder.
+- **Slot.** An instance needs a slot, granted by free RAM, and queues like a box claim (`--wait`, default forever;
+  `--report-every 5m` and re-run its `resume:` line, or run `new` in the background). Waiting for a slot is not a live
+  observation: the 10-minute cap does not apply. A slot lapses after 30 minutes without use, then the instance is
+  reaped; `exec`, `shot` and the others renew it. Remove the instance when done (`rm`), then release the accounts;
+  `<tool> instance ls` must show none of yours.
+- **GNOME.** `--desktop gnome` gives GNOME instead of sway; `windows`, `shot`, `notifications` and `record` work there
+  too. Use it when a check depends on how GNOME shows or raises things.
+- **Keys.** `instance exec --tty` runs a command with a terminal. Driving the window with `kitty @` through `exec`
+  (start kitty with `-o allow_remote_control=yes --listen-on unix:@<socket>`) is the same as on the desktop below, but
+  has not been tried in an instance yet (NOT).
+- **What it cannot do.** An instance cannot run Hyprland (that comes later as a virtual machine), has no real
+  microphone, camera or screen, and no clipboard of the desktop. Checks that need Hyprland itself or the maintainer's
+  own desktop use the hidden workspace of [Test windows](#test-windows).
+- **Do-not-disturb** schedules of the test accounts still apply: check `dnd.info` first, as in
+  [Before every live check](#before-every-live-check).
+
 ## Test windows
 
-Test windows never appear on the maintainer's screen. Start them on a hidden special workspace with a class and a
-kitty socket of your own:
+On Linux a live check runs in [an instance](#a-linux-instance) by default; the hidden workspace below is for what an
+instance cannot do (Hyprland-specific behaviour, the maintainer's own desktop). Test windows never appear on the
+maintainer's screen. Start them on a hidden special workspace with a class and a kitty socket of your own:
 
 ```sh
 hyprctl dispatch exec "[workspace special:<name> silent] kitty --class <class> -o allow_remote_control=yes \
