@@ -108,3 +108,26 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
 - Refused action: the Windows VM's setup (registering its deploy key, the ssh alias, the clone) was refused by the
   permission check as weakening security. Nothing of it was applied except the VM's new key pair (created by the
   step before, not registered on GitHub). Waiting for the maintainer.
+- Task 6 docs: review: not approved — 3 important (printed `<tool> …` lines are not runnable as printed; the
+  shorthand does not work on Windows; README promises a stale marker the `status` table lacks) → fix round 1.
+- Ruling: the README's wording minors (a number for `--report-every`, giving up with `--wait 0`, the clones-first
+  rule, two exit-code rows) go into the same round — same file, only correcting what it says — costs nothing.
+- Outside event: the reviewer ran `tb.py status` once (read-only `op status` over ssh to both boxes; nothing written).
+- Task 6 docs: fix round 1/5 (3 addressed + wording minors; 12e06a2); new important: POSIX quoting of the printed
+  lines breaks them on a Windows box → fix round 2 (one quoting helper: shlex on POSIX, list2cmdline on Windows).
+- Windows deploy key registered by the maintainer (read-only), 2026-10-27.
+- Task 6 docs: fix round 2/5 (1 addressed, 0 open; bd91628). Review clean (303963c..bd91628). UNIT: 66 tests.
+- Task 6: minor (deferred): a `--purpose` with `%`, `&`, `|`, `^` and no space breaks a resume line pasted into
+  cmd.exe on the Windows box (README sentence wanted); cosmetic import order in cli.py.
+- Task 6: the Windows VM's alias, clone and `self` set up by the maintainer running the script (the stdin form of
+  PowerShell ran nothing; a copied script with `-File` under the VM's RemoteSigned policy worked); the Mac's clone
+  pulled to bd91628.
+- Task 6: complete (303963c..bd91628). LIVE (2026-10-27, from the desktop and on the Mac): claim of the Windows VM;
+  a second claimant with `--wait 20s` exits 3 naming the holder; a third with `--report-every 10s` exits 10 and its
+  printed resume line, run as printed, is granted after the release; `run` under the claim runs on the VM (cmd.exe
+  semantics, exit code 7 passed through); `run` with a wrong id exits 6 and runs nothing; push/pull round trip with
+  non-ASCII content; a local claim on the Mac while a desktop client waits for it, hand-over on release (FIFO across
+  hosts); withdraw → a new claim exits 4 → reinstate; the box logs record every step; the 66-test suite passes on
+  the Mac's Python 3.9 under a claim via `run`; both boxes end free with empty queues. NOT: the suite on Windows (the
+  tests use POSIX shell helpers); a stale-claim break live (unit-tested).
+- Task 6: minor (deferred): a `renew_failed` log line names the current holder, not the caller that failed.
