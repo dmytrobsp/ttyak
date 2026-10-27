@@ -14,6 +14,8 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
 2. Close your old test windows and wait until none remain (an open one keeps its kitty socket; a new window then fails
    with "Invalid listen_on" and keys go to the wrong window).
 3. Make sure nobody else — another agent, on this machine or a test machine — is using the Slack account you need.
+   If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
+   work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
    (`--profile <A> ctl api dnd.info`; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
 5. Decide what the check must show and cap its waits at about 10 minutes. Only run experiments whose answer changes
@@ -224,15 +226,22 @@ Some checks need the maintainer: a real notification click, the Mac's prompts, a
 A Windows machine and a Mac are used for platform checks; their host aliases, users and paths are in
 `AGENTS.local.md`, and how to set one up is in [setup.md](setup.md#7-the-test-machines).
 
-- **Shared machines.** Another agent may be using a test machine. Before using it check whether it is running and
-  whether someone is on it (its state, logged-in users, others' processes); never shut down, restart or revert it while
-  someone else uses it; work only in your own folder (`ttyak-test` in the user's home); if it is busy, wait or ask.
-- **Restore it as found**: if it was running, leave it running; if you started it, shut it down after. Delete copied
+- **Claim first.** Another agent, or the maintainer, may be using a test machine, so every use goes through a claim
+  (holder and purpose; a queue in arrival order; the lock lives on the box) made with the claim tool named in
+  `AGENTS.local.md`; its README, located through that file, has the commands. No claim, no use: `run`, `push`, `pull`
+  and `shell` refuse without your live claim id, and the maintainer claims too. Wait with a limit, or with
+  `--report-every` to be woken up at intervals; release when done. Work only in your own folder (`ttyak-test` in the
+  user's home). The tool never starts or stops a VM: a stopped VM is started first (from the desktop), then claimed.
+  Before claiming, still check whether the box is running and whether someone is on it (its state, logged-in users,
+  others' processes), and never shut down, restart or revert it while someone else uses it.
+- **Restore it as found**: leave the box as you found it unless the goal was to change it (if it was running, leave
+  it running; if you started it, shut it down after). Delete copied
   sessions, binaries, recordings and caches there; check each path is gone (one path per check). Delete the local
   cross-build directory (`target/x86_64-pc-windows-gnu` grows past 10 GB).
-- **Windows**: `ssh -T -o BatchMode=yes <host> "…" < /dev/null` (without closing stdin ssh hangs); the default shell
-  is cmd — use `powershell -NoProfile -Command "& …"`, and run anything multi-step from a `.ps1` file copied over, not
-  through nested quotes. An SSH session runs in a services session (no desktop, no notifications, no screen capture):
+- **Windows**: the commands below run under a claim, through the tool's `run` and `push`.
+  Inside: `ssh -T -o BatchMode=yes <host> "…" < /dev/null` (without closing stdin ssh hangs); the default shell is cmd — use
+  `powershell -NoProfile -Command "& …"`, and run anything multi-step from a `.ps1` file copied over, not through
+  nested quotes. An SSH session runs in a services session (no desktop, no notifications, no screen capture):
   to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on user;
   inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys, `mouse_event`,
   `keybd_event`; the screen capture of that desktop, never the maintainer's): [tools/vm/](../../tools/vm/README.md).
@@ -242,7 +251,8 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.
-- **macOS**: copy the source with `git archive HEAD | ssh <host> 'mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test'`;
+- **macOS**: also under a claim (the tool's `run` and `push`; the commands below are what runs inside).
+  Copy the source with `git archive HEAD | ssh <host> 'mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test'`;
   a non-interactive ssh shell lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake comes from
   Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files through
   `ssh … 'cat > …'`). ttyak's notifications appear as Terminal's (or the host terminal's): that app's notifications

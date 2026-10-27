@@ -40,6 +40,8 @@ What it is for: reaching the Windows and macOS machines, and the rules for shari
 - Windows: VM `win-test` (libvirt: `virsh -c qemu:///system domstate win-test`), SSH alias `wintest`, user
   `tester`, key auth. Auto-logon: yes (console session 1). Shared with: another project's agent — check first.
   Work folder: `%USERPROFILE%\ttyak-test`. No sound card, no camera.
+- The claim tool for the test machines: its clone at `<path to the claim tool's clone>`, its README there has the
+  commands; the box names it uses: `<windows box name>`, `<mac box name>`.
 - The tools that drive its desktop (interactive scheduled task, injected keys/clicks, desktop captures):
   `tools/vm/` in this repository, copied to `%USERPROFILE%\ttyak-test\vm` there.
 - Mac: SSH alias `mactest` (`mactest.local`, user `tester`), Apple Silicon, macOS 26, Rust via rustup, Homebrew.

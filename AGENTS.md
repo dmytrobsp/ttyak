@@ -67,6 +67,8 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
 - **No capture**: never the real microphone, camera or screen. Sound only when agreed; by default a test's settings
   switch sounds off.
 - **One test per Slack account at a time**, across all agents and machines.
+- **Shared test boxes** (the Windows and macOS test machines) are used only under a claim, through the claim tool
+  named in `AGENTS.local.md`: no claim, no use — the maintainer claims too.
 - **Clipboard**: anything that copies saves the maintainer's clipboard first and restores it after.
 - **Bounded live waits**: cap any live wait or observation at about 10 minutes; run only experiments whose answer
   changes what gets built.

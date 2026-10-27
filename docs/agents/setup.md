@@ -225,6 +225,8 @@ check on this page exited 0. Making them from scratch is NOT tried.
 
 What they are for and how they are used safely (shared machines, restoring them, ttyak's folders there) is in
 [live-testing.md](live-testing.md#test-machines). Their aliases, users and folders go into the local file.
+A new machine also gets the claim tool's clone and a read-only deploy key (details in the tool's README, found
+through `AGENTS.local.md`).
 
 ### A Windows machine
 
