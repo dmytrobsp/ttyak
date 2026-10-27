@@ -26,10 +26,12 @@ Last rewritten: 2026-10-27.
 - **Test machines and shared resources** ([#30](https://github.com/dmytrobsp/ttyak/issues/30)): design
   [2026-10-27-test-machines-design.md](superpowers/specs/2026-10-27-test-machines-design.md) — box claims, throwaway
   Linux/Windows/macOS instances, claims for the Slack test accounts — built in five parts, one plan each.
-- **Plan in flight: part 1–2, box claims** — plan
-  [2026-10-27-box-claims.md](superpowers/plans/2026-10-27-box-claims.md), ledger
-  [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md). The code lives in a private repository
-  of its own (named in the local file).
+- **Done: box claims** (2026-10-27) — plan [2026-10-27-box-claims.md](superpowers/plans/2026-10-27-box-claims.md),
+  ledger [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md): the shared test boxes are used
+  only under a claim, through the claim tool named in `AGENTS.local.md` (a private repository of its own); live on
+  both boxes.
+- **Next: the Slack test-account ledger and claims** (the design's part 4, second in its order) — a plan of its own,
+  then Linux, Windows and macOS instances.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits

@@ -144,3 +144,17 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   passes through `run` (piped two lines to the Mac under a claim, counted there), as the macOS recipe relies on.
 - Task 7: minor (deferred): the tool's README does not say `run` forwards stdin; lines over 120 columns that predate
   this plan in AGENTS.md and live-testing.md.
+- Final review (<tool> 82c3efd, ttyak 554a26a): seams hold; 3 important — a claim on an unreachable box waited
+  silently forever; `status --json` printed claim ids and tickets (anyone could act under another's claim); the lock
+  is per OS user (README) — plus five small fix-now items (empty `--ticket`, `$` in the id check, ASCII requests,
+  stderr on a non-JSON answer, the transport-error test). One fix wave dispatched. The other minors triaged into
+  follow-up issues (in the private repository) or dropped.
+- The local files now advise `--report-every 5m` and the resume line instead of `--wait 10m` (which leaves the queue).
+- Final fix wave: 89ccb85 (<tool>); scoped re-review: all findings addressed. UNIT: 73 tests, pristine. LIVE: a
+  claim on an unreachable box exits 5 at once with ssh's reason (default `--wait forever`); both boxes' clones at
+  89ccb85, both boxes free.
+- Deferred items filed in the private repository's issues (#1 store robustness, #2 diagnosing corrupt state,
+  #3 bounded orphans and Ctrl-C, #4 lease/TTL validation, #5 test gaps, #6 cmd.exe metacharacters); the rest dropped
+  by the final review's triage.
+- Plan complete (2026-10-27): <tool> 14 commits from the empty tree to 89ccb85; ttyak docs fed8b50..16501c6.
+  Next in the design's order: part 2 — ttyak's Slack test-account ledger and claims (its own plan).
