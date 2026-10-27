@@ -262,12 +262,96 @@ the same machinery).
   once at the base's final shutdown — disabled again at clone start or in a second build boot. The 90 days run from
   the base's install; `slmgr /dlv` over ssh reads what is left. Not tried: notifications and ttyak in a clone.
 
+**VM clones — decided (2026-10-28):**
+
+- The maintainer: **Microsoft Defender off in the Windows base** (faster, quieter clones; tests do not see what
+  Defender does to ttyak). Windows 11's tamper protection ignores the old policy switch, so the Windows task starts
+  with a short check of how the setup script switches it off for good.
+- My calls (the maintainer saw them and did not object):
+  - **One tool**: the VMs are instances of the same claim tool — `instance new --desktop hyprland|windows`, the
+    same slots, and the same `exec`, `shot`, `notifications`, `windows`, `rm`, `ls`, `reap` commands as the
+    containers; only the machinery under them differs (user-mode libvirt, ssh over vsock or a localhost port,
+    `virsh screenshot`).
+  - **Slots sized per desktop**: a Windows clone holds its whole RAM, so it charges more of the pool than a
+    container (about 5 GB with its overlay, Hyprland about 2 GB) instead of one fixed size for every instance.
+  - **Overlays in RAM** (tmpfs), charged to the slot: up to ~1 GB per test never reaches the SSD (the anti-goal).
+  - **Bases built by script**: the Hyprland base rebuilt on command, the tool warning once it is 30 days old; the
+    Windows base downloaded and rebuilt fully by script, the tool warning 14 days before the evaluation ends. Each
+    base gets its own ssh key pair, made at build time and kept owner-only beside it.
+  - **ttyak's docs**: Windows live checks run in a clone by default; the shared Windows VM is claimed only when a
+    test needs that VM itself.
+
+**VM clones — answers for the builder (2026-10-28, from a builder's read; my calls unless marked):**
+
+- **Pool.** Each desktop has a size in the configuration (`instances.sizes_gb`; to start: sway and gnome 1.5,
+  hyprland 2.5, windows 5.5 — guest RAM plus QEMU's overhead plus the RAM overlay). The head waiter is granted when
+  free memory minus the pending charges minus the reserve covers its size; `max_slots` stays a cap on the count.
+  Ticket, slot record and `resume:` line carry the desktop (hence the size). A started VM is still charged what it
+  has not taken yet (its size minus its resident memory and overlay bytes), read before the pool lock like the
+  stopped-VM reserve; containers stay as they are. FIFO stays strict: a waiting Windows clone holds up smaller
+  requests behind it (documented). A base build holds a slot of its desktop's size. Only `qemu:///system` VMs
+  count in the reserve; the tool's own VMs live in `qemu:///session` and never do — one URI constant per use.
+- **Backends.** `instances.py` is first split behind a backend interface (list, create, remove, exec, ready,
+  desktop) with the existing tests unchanged; podman and libvirt are two backends. `new` checks only the chosen
+  backend's programs; `ls` and `reap` ask every backend, and one failing does not stop the other.
+- **Ownership.** Every VM is a **transient** libvirt domain (`virsh create`: nothing stays defined after a stop or
+  a host reboot) carrying the tool's metadata element (pool, claim, desktop, slot, holder, purpose, created, base
+  build). `rm`, `ls` and `reap` touch only `qemu:///session` domains with that metadata and this pool; the tool
+  never writes to `qemu:///system` (a test asserts it). `reap` also removes per-clone folders without a live claim
+  (name `tb-<id>` under the tool's root, checked) and the domain's libvirt logs.
+- **Where things live.** Bases: `~/.local/share/<tool>/bases/<desktop>/<build>/` — the base qcow2 (read-only),
+  the ssh key pair and the test user's password (made per build, owner-only), `known_hosts`, `meta.json` (built,
+  evaluation end, guest uid, sources and checksums); a `current` pointer switched atomically. A rebuild never
+  touches a base in use: it goes into a new build folder; an old build is removed only when no clone uses it
+  (under a base lock; a build lock stops two builds at once). Per clone: `/dev/shm/<tool>-<uid>/tb-<id>/` (0700)
+  — overlay, NVRAM, console log, domain XML. Not `/run/user` (6 GB, the maintainer's session lives there).
+  `new` refuses when that tmpfs lacks the overlay cap plus a margin; renewals check the overlay against its cap
+  and remove a clone past it. Firmware paths come from the configuration (they differ per distribution).
+- **Per-clone values from the claim id, never the slot number**: MAC (a hash), the ssh port (QEMU picks a free
+  one, read back), the vsock CID (read from the live domain).
+- **ssh.** Our own config only (`-F`, `IdentitiesOnly`, no agent, `BatchMode`); the host key recorded at build
+  time and pinned with `HostKeyAlias`; clones share it. Hyprland over vsock through `socat` (a checked
+  dependency). cloud-init is disabled at the end of the Hyprland build, which writes the any-ethernet network file
+  itself.
+- **Ready.** Hyprland: the guest's ready file, at the guest uid recorded in `meta.json`. Windows: a logon task in
+  the test user's session writes a ready file once the desktop is up, after checking Update off, Defender off and
+  the days left. A per-desktop start timeout (Windows longer than 60 s).
+- **Commands.** Hyprland: `exec` over ssh, `windows` from `hyprctl clients -j`, `notifications` from
+  `makoctl list -j`, `shot` with grim, `record` from the null sink, as in the containers. Windows: `exec` runs
+  through ssh (session 0: files, `ttyak ctl`), `exec --desktop` runs in the logged-on user's session through a
+  scheduled task (output and exit code back through files) — the tool's own helper, baked into the base, not
+  ttyak's; `shot` with `virsh screenshot`; `windows` and `notifications` through that helper (window list; the
+  toast history of ttyak's app id, checked against the code). No VNC listener: no `<graphics>` at all, as on
+  Linux. A sound device with a null backend (so ttyak finds an output); `record` on Windows exits 2 for now.
+- **Mounts.** Hyprland: `--home` and `--mount` over 9p, mounted by the host over ssh before the session starts
+  (the autologin shell waits for a go file; Hyprland's config lives in `/etc`, so a mounted home does not hide
+  it; `~/.cache` and `~/.local/state` tmpfs in the guest); the guest user's uid equals the host user's (recorded).
+  Windows: `--home`/`--mount` exit 2; new `instance push`/`pull` (scp) copy files in and out — also the account
+  session (Part 4). How fast a debug `ttyak.exe` goes over scp is measured; a read-only ISO is the fallback.
+- **Windows base build.** The ISO downloaded on command and kept (a reinstall restarts the 90 days without a new
+  download); OpenSSH, the virtio drivers and the guest agent pinned by version and checksum. The firmware prompt
+  avoided or answered reliably (the builder picks). Defender "off for good" means: after a reboot and in a clone,
+  real-time protection and the service are off and its engine does not run; Update stays off across reboots (a
+  boot task re-disables it if needed). The build ends with a check pass over ssh (edition, encryption, ssh, the
+  guest agent, Defender, Update, log-on, days left) and fails on any miss. The evaluation's end is written at
+  build time; the tool warns 14 days ahead and `new` refuses in the last day.
+- **Hyprland base build.** The image's signature checked with `gpgv` against a pinned key (no agent prompts); the
+  tool warns when the base is 30 days old.
+- **Failures.** Undone in reverse (domain if ours, clone folder, logs, slot). No base built: exit 2 with the build
+  command; libvirt, QEMU, swtpm, the firmware or socat missing: exit 5.
+- **Tests.** Fake `virsh`, `qemu-img` and ssh (as `fake_podman`), the fake refusing any `qemu:///system` write and
+  listing foreign domains the tool must ignore; opt-in real-VM tests (`<TOOL>_VM=1`) once bases exist; the base
+  builds tested by their generated arguments and files, then built for real.
+- **Wording.** The README's "the tool never starts or stops a VM" is about box VMs; the help's "rootless podman"
+  becomes "containers or VMs".
+
 ## Order (my call)
 
 1. `<tool>` repository and box claims — the collisions hurt today.
 2. ttyak account ledger and claims.
-3. Linux instances (Hyprland first), then ttyak's live-testing docs switch to them.
-4. Windows base and clones.
+3. Linux instances (containers: sway, then GNOME; Hyprland moved to the VMs after the spike), then ttyak's
+   live-testing docs switch to them.
+4. VM clones: the Hyprland VM and the Windows evaluation base.
 5. macOS base and VM on the Mac.
 
 Each step is usable on its own. The multi-agent workflow ([#29](https://github.com/dmytrobsp/ttyak/issues/29)) builds
