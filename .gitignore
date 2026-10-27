@@ -7,3 +7,5 @@ __pycache__/
 /AGENTS.local.md
 # Plan scratch (briefs, review packages, reports); a plan's ledger is committed in docs/superpowers/ledgers/.
 /.superpowers/
+# The test accounts: ledger, session masters and claims (private; never committed).
+/.accounts/
