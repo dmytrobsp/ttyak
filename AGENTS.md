@@ -70,8 +70,8 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
 - **Shared test boxes** (the Windows and macOS test machines) are used only under a claim, through the claim tool
   named in `AGENTS.local.md`: no claim, no use — the maintainer claims too.
 - **Clipboard**: anything that copies saves the maintainer's clipboard first and restores it after.
-- **Bounded live waits**: cap any live wait or observation at about 10 minutes; run only experiments whose answer
-  changes what gets built.
+- **Bounded live waits**: cap any live wait or observation (not a wait for a claim) at
+  about 10 minutes; run only experiments whose answer changes what gets built.
 - **Git identity**: every clone and every new repository (wiki, tap, bucket, scratch) commits with this repository's
   own identity, set repo-locally — never a machine's global one (it may be someone's work identity).
 - **Public wording** in commits, issues, docs, release notes: no test-account names, emails or Slack ids, no

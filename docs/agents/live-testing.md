@@ -18,8 +18,9 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    work on the box goes through the claim tool.
 4. Check the account's state before blaming the code: a do-not-disturb schedule or snooze silences notifications
    (`--profile <A> ctl api dnd.info`; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
-5. Decide what the check must show and cap its waits at about 10 minutes. Only run experiments whose answer changes
-   what gets built; report interim status rather than sit in a long wait.
+5. Decide what the check must show and cap its waits (not a wait for a claim) at about
+   10 minutes. Only run experiments whose answer changes what gets built; report interim status rather than sit in a
+   long wait.
 6. Use absolute paths in every command (an agent shell's working directory resets between commands), and keep the
    fake home, recordings and captures in the scratch folder — a reboot wipes it, so record results elsewhere.
 
@@ -228,37 +229,42 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
 
 - **Claim first.** Another agent, or the maintainer, may be using a test machine, so every use goes through a claim
   (holder and purpose; a queue in arrival order; the lock lives on the box) made with the claim tool named in
-  `AGENTS.local.md`; its README, located through that file, has the commands. No claim, no use: `run`, `push`, `pull`
-  and `shell` refuse without your live claim id, and the maintainer claims too. Wait with a limit, or with
-  `--report-every` to be woken up at intervals; release when done. Work only in your own folder (`ttyak-test` in the
+  `AGENTS.local.md`; its README, located through that file, has the commands. Below, `<tool>` stands for that tool's
+  command and `BOX` and `ID` for the box name and your claim id. No claim, no use: `run`, `push`, `pull` and `shell`
+  refuse without your live claim id, and the maintainer claims too. A claim lasts 30 minutes unless renewed (`run`,
+  `push`, `pull` and `shell` renew while they work; `renew` for anything else); exit 4 means the box is withdrawn.
+  Waiting for a claim is not a live observation, so the 10-minute cap does not apply: wait as long as needed
+  (`--wait forever` is the default); run the `claim` in the background, or use `--report-every 5m` and re-run its
+  `resume:` line, so your shell is not blocked. Release when done. Work only in your own folder (`ttyak-test` in the
   user's home). The tool never starts or stops a VM: a stopped VM is started first (from the desktop), then claimed.
   Before claiming, still check whether the box is running and whether someone is on it (its state, logged-in users,
   others' processes), and never shut down, restart or revert it while someone else uses it.
 - **Restore it as found**: leave the box as you found it unless the goal was to change it (if it was running, leave
-  it running; if you started it, shut it down after). Delete copied
-  sessions, binaries, recordings and caches there; check each path is gone (one path per check). Delete the local
-  cross-build directory (`target/x86_64-pc-windows-gnu` grows past 10 GB).
-- **Windows**: the commands below run under a claim, through the tool's `run` and `push`.
-  Inside: `ssh -T -o BatchMode=yes <host> "…" < /dev/null` (without closing stdin ssh hangs); the default shell is cmd — use
-  `powershell -NoProfile -Command "& …"`, and run anything multi-step from a `.ps1` file copied over, not through
-  nested quotes. An SSH session runs in a services session (no desktop, no notifications, no screen capture):
-  to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on user;
-  inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys, `mouse_event`,
-  `keybd_event`; the screen capture of that desktop, never the maintainer's): [tools/vm/](../../tools/vm/README.md).
-  Run Windows checks this way, without asking the maintainer to sit at the console. ttyak's folders there:
-  `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test: a kitty window running
-  `ssh -t <host> "<folder>\ttyak.exe --profile <B>"`.
+  it running; if you started it, shut it down after). Delete copied sessions, binaries, recordings and caches there;
+  check each path is gone (one path per check). Delete the local cross-build directory
+  (`target/x86_64-pc-windows-gnu` grows past 10 GB).
+- **Windows**: copy a file with `<tool> push BOX ID …`, run a command with `<tool> run BOX ID -- "<command>"` (the
+  arguments are joined and run by the box's shell, cmd.exe; for PowerShell:
+  `<tool> run BOX ID -- "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed
+  over, not through nested quotes. A `run` executes in a services session (no desktop, no notifications, no screen
+  capture): to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on
+  user; inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys,
+  `mouse_event`, `keybd_event`; the screen capture of that desktop, never the maintainer's):
+  [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the maintainer to sit at the
+  console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test, in
+  a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the box name).
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.
-- **macOS**: also under a claim (the tool's `run` and `push`; the commands below are what runs inside).
-  Copy the source with `git archive HEAD | ssh <host> 'mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test'`;
-  a non-interactive ssh shell lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake comes from
-  Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files through
-  `ssh … 'cat > …'`). ttyak's notifications appear as Terminal's (or the host terminal's): that app's notifications
-  must be allowed in System Settings; screen sharing mutes banners (Notification Centre still has them); read macOS's
-  view with `log show` for usernoted / NotificationCenter. Real speakers, microphone, camera and screen there: ask the
-  maintainer first; their prompts and clicks need the maintainer at the Mac.
+- **macOS**: copy the source with
+  `git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test"` (`run` passes stdin
+  through); a non-interactive shell there lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake
+  comes from Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files
+  in through `<tool> run BOX ID -- "cat > …"`, and bring files back with `<tool> pull`). ttyak's notifications appear
+  as Terminal's (or the host terminal's): that app's notifications must be allowed in System Settings; screen sharing
+  mutes banners (Notification Centre still has them); read macOS's view with `log show` for usernoted /
+  NotificationCenter. Real speakers, microphone, camera and screen there: ask the maintainer first; their prompts and
+  clicks need the maintainer at the Mac.
 
 ## After the check
 
