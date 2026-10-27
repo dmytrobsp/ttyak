@@ -126,13 +126,15 @@ never involved.
 ```sh
 set -euo pipefail
 REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home": folders made, settings.toml written
-ACC_ID=$(python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>")   # claim id (see the step above)
+python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"   # prints `claimed A id=ID lease=…`, more lines
+ACC_ID=<the ID from its "claimed A id=ID" line>
 python3 "$REPO/tools/accounts/accounts.py" install A "$ACC_ID" --home "$FAKE"
 # the instance: the fake home is its home, the debug binary is mounted read-only
 <tool> instance new --desktop sway --purpose "ttyak: <what>" --home "$FAKE" \
     --mount "$REPO/target/debug/ttyak:/opt/ttyak/ttyak"
 # it prints `instance NAME id=ID slot=N`: ID is the slot id, not `$ACC_ID`
-<tool> instance exec NAME ID -- "setsid kitty --class ttyak-test /opt/ttyak/ttyak --profile <A> \
+python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"            # right before ttyak starts
+<tool> instance exec NAME ID -- "setsid kitty --class ttyak-test timeout 25m /opt/ttyak/ttyak --profile <A> \
     >/dev/null 2>&1 < /dev/null &"
 <tool> instance windows NAME ID               # the ttyak-test window, focused
 <tool> instance shot NAME ID out.png          # what the window shows (look at it before relying on it)
@@ -142,6 +144,7 @@ python3 "$REPO/tools/accounts/accounts.py" install A "$ACC_ID" --home "$FAKE"
 <tool> instance exec NAME ID -- "cat ~/.cache/ttyak/<A>/ttyak.log"     # the log, before the instance goes
 <tool> instance rm NAME ID
 python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
+# then delete the fake home as in "A fake home"
 ```
 
 Not tried yet (NOT): a Slack notification reaching the instance's `notifications`, a raise on a mention, a sound in
@@ -154,9 +157,10 @@ Not tried yet (NOT): a Slack notification reaching the instance's `notifications
 - **Slot.** An instance needs a slot, granted by free RAM, and queues like a box claim (`--wait`, default forever;
   `--report-every 5m` and re-run its `resume:` line, or run `new` in the background). Waiting for a slot is not a live
   observation: the 10-minute cap does not apply. A slot lapses after 30 minutes without use, then the next `new` or
-  `reap` removes the instance; `exec`, `shot` and the others renew it. Remove the instance when done (`rm`), then
-  release the accounts;
-  `<tool> instance ls` must show none of yours.
+  `reap` removes the instance; `exec`, `shot` and the others renew it, but only the slot, not the account claim
+  (30 minutes): ttyak therefore starts under `timeout 25m` after a fresh `renew`, so a dead agent's ttyak cannot
+  outlive the claim; for a check longer than 25 minutes renew the account and start it again. Remove the instance
+  when done (`rm`), then release the accounts and delete the fake home; `<tool> instance ls` must show none of yours.
 - **GNOME.** `--desktop gnome` gives GNOME instead of sway; `windows`, `shot`, `notifications` and `record` work there
   too. Use it when a check depends on how GNOME shows or raises things.
 - **Keys.** `instance exec --tty` runs a command with a terminal. Driving the window with `kitty @` through `exec`
