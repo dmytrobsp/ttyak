@@ -60,8 +60,8 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
   and their macOS/Windows twins): live checks run under a fake home. Never kill a ttyak you did not start (no
   `pkill` by name, never `pkill -f`): kill by the PID you started.
 - **Profiles.** Never use a ttyak profile you were not given. Every ttyak command in a test names one of the test
-  profiles from `AGENTS.local.md` with `--profile`; a bare `ttyak` uses the machine's default profile, which can be
-  the maintainer's real work account.
+  profiles (`tools/accounts/accounts.py list`) with `--profile`; a bare `ttyak` uses the machine's default
+  profile, which can be the maintainer's real work account.
 - **Nothing on the maintainer's screen.** Test windows open hidden (a special workspace); no screenshots of the real
   screen; no prompts (gpg, keyring, polkit, sudo) popping up on their desktop.
 - **No capture**: never the real microphone, camera or screen. Sound only when agreed; by default a test's settings

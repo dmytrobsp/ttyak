@@ -15,7 +15,11 @@ this machine has; on any other desktop see [Other desktops](#other-desktops).
    with "Invalid listen_on" and keys go to the wrong window).
 3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
    them meanwhile: `python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"` (the same for B; `$REPO` is
-   the clone's absolute path, as in [A fake home](#a-fake-home)); keep each claim id.
+   the main clone holding `.accounts/`, also when you work in a worktree; its absolute path, as in
+   [A fake home](#a-fake-home)); keep each claim id. A claim lasts 30 minutes: `renew A ID` during longer checks, or
+   claim with `--lease 2h` (a lapsed claim is broken by the next waiter, which also removes the installed copy while
+   ttyak still runs). Run `claim` in the background, or with `--report-every 5m` and re-run its `resume:` line, so a
+   shell timeout does not kill it while it is queued.
    Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool.
@@ -87,11 +91,14 @@ tool counts `$HOME` and `$XDG_*_HOME` as the real folders and refuses them.
 
 - The claim's `install` copies the session of an account you hold into the fake home (0600), and `release` removes
   the copies it installed (`release --keep` keeps them). Never print a session file — it holds tokens.
-  End the check with `python3 "$REPO/tools/accounts/accounts.py" release A ID` (then B), which also hands the
-  account over to the next claim. Delete the fake home after, only once it is checked to lie in your scratch folder:
+  A claim lasts 30 minutes: `renew A ID` during longer checks, or claim with `--lease 2h`.
+  Quit ttyak (Ctrl+Q), then end the check with `python3 "$REPO/tools/accounts/accounts.py" release A ID` (then B),
+  which also hands the account over to the next claim; never release while ttyak still runs with the copy.
+  Delete the fake home after, only once it is checked to lie in your scratch folder:
   `case "$FAKE" in <scratch>/?*) rm -rf -- "${FAKE:?}" ;; *) echo "not in the scratch folder" >&2 ;; esac`.
 - A profile with two workspaces = the `workspaces` lists of two `session.json` files combined (in Python, never
-  printed) from the installed copies inside the fake home into a temporary profile with a name of its own.
+  printed) from the installed copies inside the fake home into a temporary profile with a name of its own
+  (it goes with the fake home: delete it with it).
 - The log is `<cache>/ttyak/<profile>/ttyak.log`; `TTYAK_LOG=ttyak=debug` for detail (exactly that, not `debug`).
 - Debug builds read test variables: `TTYAK_FAIL=<method>,…` (those Web API calls fail), `TTYAK_DAYS_LATER=N`,
   `TTYAK_HUDDLE_DROP=N` (see [CONTRIBUTING.md](../../CONTRIBUTING.md)); any build reads `TTYAK_NOTIFY_ROUTE=system`
@@ -251,7 +258,8 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   Before claiming, still check whether the box is running and whether someone is on it (its state, logged-in users,
   others' processes), and never shut down, restart or revert it while someone else uses it.
 - **Sessions for a box** come from `accounts.py install` into a local fake home under your account claim, then
-  `push` or `run` them over; never from `~/.config/ttyak`.
+  `push` or `run` them over; never from `~/.config/ttyak`. The claim does not track copies pushed to a box: delete
+  them there (and check) before you release the account.
 - **Restore it as found**: leave the box as you found it unless the goal was to change it (if it was running, leave
   it running; if you started it, shut it down after). Delete copied sessions, binaries, recordings and caches there;
   check each path is gone (one path per check). Delete the local cross-build directory
