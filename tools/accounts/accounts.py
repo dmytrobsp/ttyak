@@ -156,7 +156,7 @@ class Claims:
     def _read(self) -> dict:
         path = self.dir / "state.json"
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)  # never block on a FIFO
         except FileNotFoundError:
             return {"claim": None, "queue": []}
         except OSError as e:
@@ -167,6 +167,8 @@ class Claims:
                 s = json.load(f)
         except ValueError:
             s = None
+        except OSError as e:
+            raise LedgerError("%s: cannot read: %s" % (path, errno.errorcode.get(e.errno, "error"))) from None
         if (not isinstance(s, dict) or not (s.get("claim") is None or _good_claim(s["claim"]))
                 or not isinstance(s.get("queue", []), list)
                 or not all(_good_ticket(t) for t in s.get("queue", []))):
@@ -177,7 +179,7 @@ class Claims:
 
     def _write(self, s: dict) -> None:
         tmp = self.dir / "state.json.tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(s, f)
@@ -202,7 +204,7 @@ class Claims:
     def _log(self, now: float, event: str, **fields) -> None:
         t = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         line = " ".join([t, event] + ["%s=%s" % (k, json.dumps(v)) for k, v in fields.items()])
-        fd = os.open(self.dir / "log.txt", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        fd = os.open(self.dir / "log.txt", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -386,7 +388,14 @@ def parse_lease(text: str) -> float:
     return sec
 
 
+def _clean(text: str) -> str:
+    """Text from a claimant, safe to print: control characters (an ANSI escape) become '?'."""
+    return re.sub(r"[\x00-\x1f\x7f]", "?", text)
+
+
 def fmt(sec: Optional[float]) -> str:
+    if sec and 0 < sec < 1:
+        return "%gs" % round(sec, 2)
     sec = int(round(sec or 0))
     if sec < 60:
         return "%ds" % sec
@@ -447,7 +456,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         if c is None:
             st = "free"
         else:
-            st = "held by %s for %s" % (c["holder"], c["purpose"]) + (" (stale)" if c["stale"] else "")
+            st = "held by %s for %s" % (_clean(c["holder"]), _clean(c["purpose"])) + (" (stale)" if c["stale"] else "")
         rows.append((name, a["profile"], a["role"], st, a["rules"]))
     w = [max([len(r[i]) for r in rows] + [1]) for i in range(3)]
     for r in rows:
@@ -457,13 +466,15 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+_SHOWN_CLAIM = {"holder", "purpose", "since", "renewed", "lease", "held_for", "since_renewal", "stale"}
+_SHOWN_TICKET = {"holder", "purpose", "waited"}
+
+
 def _hide_keys(ans: dict) -> dict:
     """The claim id and the tickets are the keys to a claim: never shown. Neither are the recorded installs."""
     if ans.get("claim"):
-        ans["claim"].pop("id", None)
-        ans["claim"].pop("installs", None)
-    for t in ans.get("queue", []):
-        t.pop("ticket", None)
+        ans["claim"] = {k: v for k, v in ans["claim"].items() if k in _SHOWN_CLAIM}
+    ans["queue"] = [{k: v for k, v in t.items() if k in _SHOWN_TICKET} for t in ans.get("queue", [])]
     return ans
 
 
@@ -480,7 +491,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     for n in names:
         a = answers[n]
         c = a["claim"]
-        rows.append((n, _state_word(c), c["holder"] if c else "-", c["purpose"] if c else "-",
+        rows.append((n, _state_word(c), _clean(c["holder"]) if c else "-", _clean(c["purpose"]) if c else "-",
                      fmt(c["held_for"]) if c else "-",
                      (fmt(c["since_renewal"]) + " ago" + (" (stale)" if c["stale"] else "")) if c else "-",
                      str(len(a["queue"]))))
@@ -494,8 +505,8 @@ def _status_lines(answer: dict, ticket: str) -> list:
     out = []
     c = answer.get("claim")
     if c:
-        out.append("holder: %s" % c["holder"])
-        out.append("purpose: %s" % c["purpose"])
+        out.append("holder: %s" % _clean(c["holder"]))
+        out.append("purpose: %s" % _clean(c["purpose"]))
         out.append("held for: %s" % fmt(c["held_for"]))
         out.append("since last renewal: %s%s" % (fmt(c["since_renewal"]), " (stale)" if c.get("stale") else ""))
     else:
@@ -551,11 +562,12 @@ def cmd_claim(args: argparse.Namespace) -> int:
                 if limit:
                     leave()
                     return 3
-                argv = _self_argv() + ["claim", args.account, "--ticket", ticket, "--purpose", args.purpose]
+                argv = _self_argv() + ["claim", args.account, "--ticket", ticket,
+                                           "--purpose=" + args.purpose]
                 for flag, val in (("--holder", args.holder), ("--wait", left()),
                                   ("--report-every", args.report_every), ("--lease", args.lease)):
                     if val and not (flag == "--wait" and val == "forever"):
-                        argv += [flag, val]
+                        argv += [flag + "=" + val] if flag == "--holder" else [flag, val]
                 print("resume: " + _line(argv))
                 return 10
             nxt = wait if report is None else (report if wait is None else min(wait, report))

@@ -444,7 +444,7 @@ class CliTests(unittest.TestCase):
         resume = [l for l in out.splitlines() if l.startswith("resume: ")][0][len("resume: "):]
         argv = shlex.split(resume)
         self.assertEqual((argv[0], argv[1]), (sys.executable, str(TOOL)))
-        self.assertIn("later one", argv)
+        self.assertIn("--purpose=later one", argv)
         self.assertEqual(self.queue_len(), 1)
         self.assertEqual(subprocess.run(shlex.split(release), env=self.env, capture_output=True).returncode, 0)
         p = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=60)
@@ -461,7 +461,7 @@ class CliTests(unittest.TestCase):
         left = float(argv[argv.index("--wait") + 1].rstrip("s"))
         self.assertTrue(0 < left < 60, left)
         self.assertEqual(argv[argv.index("--lease") + 1], "5m")
-        self.assertEqual(argv[argv.index("--holder") + 1], "me")
+        self.assertIn("--holder=me", argv)
         self.assertEqual(argv[argv.index("--report-every") + 1], "0.2")
         self.run_cli("claim", "A", "--purpose", "x", "--wait", "0", "--ticket", argv[argv.index("--ticket") + 1])
 
@@ -549,6 +549,94 @@ class CliTests(unittest.TestCase):
         log = (self.d / "claims" / "A" / "log.txt").read_text()
         self.assertIn('by="boss"', log)
         self.assertIn('reason="stuck"', log)
+
+    def cli_dir(self):
+        self.run_cli("status", "A")  # creates claims/A
+        return self.d / "claims" / "A"
+
+    def test_fifo_or_folder_at_state_files_exit_2_without_hanging(self):
+        d = self.cli_dir()
+        (d / "state.json").unlink()
+        os.mkfifo(d / "state.json")
+        for args in (("status", "A"), ("claim", "A", "--purpose", "x", "--wait", "0")):
+            self.assertEqual(self.run_cli(*args, timeout=20)[0], 2, args)
+        os.unlink(d / "state.json")
+        os.mkdir(d / "state.json")
+        rc, _, err = self.run_cli("status", "A", timeout=20)
+        self.assertEqual(rc, 2)
+        self.assertIn("state.json", err)
+        os.rmdir(d / "state.json")
+        for name in ("state.json.tmp", "log.txt"):
+            os.mkfifo(d / name)
+            rc, _, err = self.run_cli("claim", "A", "--purpose", "x", "--wait", "0", timeout=20)
+            self.assertEqual(rc, 2, name)
+            self.assertNotIn("Traceback", err)
+            if (d / name).exists():
+                os.unlink(d / name)
+            self.run_cli("release", "A", "--force", "--reason", "cleanup")
+
+    @unittest.skipIf(os.name == "nt", "POSIX signals")
+    def test_real_sigint_while_waiting(self):
+        import signal
+        import time
+        self.grant("A")
+        p = subprocess.Popen([sys.executable, str(TOOL), "claim", "A", "--purpose", "x", "--ticket", "w1"],
+                             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        deadline = time.monotonic() + 30
+        while self.queue_len() != 1:
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        p.send_signal(signal.SIGINT)
+        _, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 130)
+        self.assertIn("interrupted", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.queue_len(), 0)
+
+    def test_resume_line_survives_dash_values(self):
+        self.grant("A")
+        rc, out, _ = self.run_cli("claim", "A", "--purpose=-x y", "--holder=-me", "--report-every", "0.1")
+        self.assertEqual(rc, 10)
+        argv = shlex.split([l for l in out.splitlines() if l.startswith("resume: ")][0][len("resume: "):])
+        self.assertIn("--purpose=-x y", argv)
+        self.assertIn("--holder=-me", argv)
+        p = subprocess.run(argv[:argv.index("--report-every")] + ["--wait", "0"], env=self.env,
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 3, p.stderr)
+
+    def test_subsecond_lease_shown(self):
+        rc, out, _ = self.run_cli("claim", "A", "--purpose", "x", "--lease", "0.2s")
+        self.assertEqual(rc, 0)
+        self.assertIn("lease=0.2s", out)
+        self.assertEqual(accounts.fmt(0.5), "0.5s")
+        self.assertEqual(accounts.fmt(0), "0s")
+        self.assertEqual(accounts.fmt(1800), "30m")
+
+    def test_hide_keys_whitelists(self):
+        ans = {"claim": {"id": "i", "holder": "h", "purpose": "p", "since": 1, "renewed": 1, "lease": 5,
+                         "installs": [1], "future": "x", "held_for": 1, "since_renewal": 1, "stale": False},
+               "queue": [{"ticket": "t", "holder": "h", "purpose": "p", "waited": 1, "other": 2}],
+               "position": None, "state": "status", "now": 3}
+        out = accounts._hide_keys(ans)
+        self.assertEqual(sorted(out["claim"]), ["held_for", "holder", "lease", "purpose", "renewed", "since",
+                                                 "since_renewal", "stale"])
+        self.assertEqual(sorted(out["queue"][0]), ["holder", "purpose", "waited"])
+
+    def test_control_characters_replaced_on_display(self):
+        esc = "\x1b[31mred\x1b[0m\nline"
+        self.run_cli("claim", "A", "--purpose", esc, "--holder", esc)
+        for args in (("list",), ("status",), ("status", "A")):
+            out = self.run_cli(*args)[1]
+            self.assertNotIn("\x1b", out, args)
+            self.assertIn("?[31mred", out)
+        rc, out, _ = self.run_cli("claim", "B", "--purpose", esc)
+        self.assertNotIn("\x1b", out)
+        self.run_cli("claim", "A", "--purpose", esc, "--wait", "0")
+        self.assertNotIn("\x1b", self.run_cli("claim", "A", "--purpose", esc, "--wait", "0")[1])
+        js = json.loads(self.run_cli("status", "--json")[1])
+        self.assertIn("\x1b", js["A"]["claim"]["purpose"])  # raw data stays raw in JSON
 
     def test_default_holder_without_env(self):
         del self.env["TTYAK_ACCOUNTS_HOLDER"]
