@@ -45,7 +45,10 @@ Last rewritten: 2026-10-28.
   evaluation clones, throwaway linked clones of bases built by script, through the same instance commands and slots;
   Windows live checks run in a clone by default (docs/agents/live-testing.md). ttyak ran in both and a Slack message
   reached each, live. Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise).
-- **Next: macOS** — a throwaway macOS VM on the Mac (the design's Part 3), one plan.
+- **Now: macOS VM** — plan [2026-10-28-macos-vm.md](superpowers/plans/2026-10-28-macos-vm.md), ledger
+  [2026-10-28-macos-vm.md](superpowers/ledgers/2026-10-28-macos-vm.md): a throwaway macOS VM on the Mac (Tart, a
+  base from Apple's restore image), driven from the desktop through the same instance commands (a spike showed it
+  works headless with no click).
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
