@@ -345,6 +345,44 @@ the same machinery).
 - **Wording.** The README's "the tool never starts or stops a VM" is about box VMs; the help's "rootless podman"
   becomes "containers or VMs".
 
+**Spike, 2026-10-28 (macOS VM on the Mac; works headless, no click, nothing on the Mac's screen):**
+
+- **Tart** 2.41 (from its signed, notarized release tarball, pinned by checksum: the Homebrew tap's formula is stale
+  and refused by Homebrew 7). Every run needs `--no-graphics` (and `CI=true` with VNC, or Tart opens Screen Sharing on
+  the host), `--no-audio` (else the guest is wired to the host's real microphone and speakers) and `--no-clipboard`.
+  Tart runs as a background process with no window or Dock icon. The lid-closed Mac sleeps between sessions and a
+  sleep killed the first install: every VM process runs under `caffeinate -s -i` (an assertion held only while it
+  runs; no setting changed).
+- **Base**: `tart create --from-ipsw latest` (macOS 26.6.2; a 19.8 GB restore image, cached; install 3 min). Setup
+  Assistant is driven headless over VNC by cirruslabs' Packer template's keystrokes, unchanged for 26.6 (account,
+  no Apple ID, desktop). Its System Settings route to Remote Login no longer works; keystrokes in the open Terminal
+  start sshd instead (persists into clones). Packer's own ssh is blocked by macOS's Local Network privacy (a non-Apple
+  binary, refused silently): provisioning runs over Apple's `/usr/bin/ssh` (passwordless sudo, autologin, no sleep or
+  screen lock, the key). Terminal's notification permission is granted once in the base by clicks over VNC, so
+  clones inherit it. Build from an empty cache ~25 min; base 26 GB on disk.
+- **Clones**: `tart clone` (APFS copy-on-write) 0.05 s, 16 KB; ssh ~10 s after start, the desktop session ~10 s;
+  4 GB is the image's minimum and the VM holds ~4.1 GB; growth ~0.5 GB per run, all given back by `tart delete`.
+  Two at once push the 18 GB Mac into heavy compression; macOS refuses a third. One at a time.
+- **Inside**: `open -a Terminal x.command` over ssh runs a program in the logged-on session; a notification posted as
+  Terminal (as ttyak's library does) shows as a banner — not when Terminal is the frontmost app (a test brings
+  another app forward first); `log show` for usernoted reads what was delivered and presented (its database is
+  privacy-protected); the screen is read by VNC screenshots on the Mac (in-VM `screencapture` lacks permission).
+  An arm64 binary copied in by scp runs with Gatekeeper on; a read-only `--dir` share also works.
+- **From the desktop**: the VM sits behind Tart's NAT on the Mac, not reachable from the desktop; everything goes
+  through the Mac (piping through the claim tool moved 100 MB in 2.2 s). Helpers on the Mac that connect to the VM
+  must be Apple binaries (`/usr/bin/ssh`, `nc`) because of Local Network privacy.
+
+**macOS VM — my calls (2026-10-28, for the maintainer's approval):**
+
+- The Mac holds its own slot pool (one slot, ~4.5 GB) and its own bases; `instance … --desktop macos` on the desktop
+  runs the claim tool on the Mac over ssh, as box claims do. Using the VM takes the Mac's VM slot, not the Mac box
+  claim (as decided above).
+- ttyak for the VM is built on the Mac (in the agents' work folder, not in the VM) and shared read-only with `--dir`;
+  the session goes in by `push`.
+- The base build: Packer with only the keystrokes, then our own provisioning over `/usr/bin/ssh`; the notification
+  grant by Packer's text-recognition click, coordinates as the fallback; Tart pinned by version and checksum.
+- A running VM keeps the Mac awake (`caffeinate`), only while it runs.
+
 ## Order (my call)
 
 1. `<tool>` repository and box claims — the collisions hurt today.
