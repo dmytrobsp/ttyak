@@ -118,7 +118,8 @@ tool counts `$HOME` and `$XDG_*_HOME` as the real folders and refuses them.
 ## A Linux instance
 
 The default place for a Linux live check: a throwaway desktop in a rootless podman container, with a headless sway
-(or GNOME), a notification daemon and a null audio sink, none of which the maintainer sees or hears. It is made and
+(or GNOME), a notification daemon and a null audio sink, none of which the maintainer sees or hears. A check that
+needs Hyprland itself runs in a Hyprland VM instead ([below](#the-hyprland-vm)). It is made and
 driven with the claim tool named in `AGENTS.local.md` (`<tool>` below; its README has every option). ttyak runs in it
 with the fake home of [A fake home](#a-fake-home) as its home, so the maintainer's screen, sound and clipboard are
 never involved.
@@ -166,16 +167,39 @@ Not tried yet (NOT): a Slack notification reaching the instance's `notifications
 - **Keys.** `instance exec --tty` runs a command with a terminal. Driving the window with `kitty @` through `exec`
   (start kitty with `-o allow_remote_control=yes --listen-on unix:@<socket>`) is the same as on the desktop below, but
   has not been tried in an instance yet (NOT).
-- **What it cannot do.** An instance cannot run Hyprland (that comes later as a virtual machine), has no real
-  microphone, camera or screen, and no clipboard of the desktop. Checks that need Hyprland itself or the maintainer's
-  own desktop use the hidden workspace of [Test windows](#test-windows).
+- **What it cannot do.** A container cannot run Hyprland (use [the Hyprland VM](#the-hyprland-vm)), and an instance
+  has no real microphone, camera or screen, and no clipboard of the desktop. Checks that need the maintainer's own
+  desktop use the hidden workspace of [Test windows](#test-windows).
 - **Do-not-disturb** schedules of the test accounts still apply: check `dnd.info` first, as in
   [Before every live check](#before-every-live-check).
+
+### The Hyprland VM
+
+`--desktop hyprland` makes a small Arch Linux VM with Hyprland (2 GiB, 1280x800) in place of the container: use it for
+what depends on Hyprland (how ttyak raises or focuses its window there). Same recipe as above with these differences:
+
+- `instance new --desktop hyprland …` takes the same `--home` and `--mount` (over 9p) and is ready about 10 s after
+  `new`. It needs a built base: if `new` exits 2 with a build command, the base is missing (see
+  [The bases](#the-bases)).
+- `exec`, `shot`, `windows`, `notifications` and `record` work as on sway. `push` and `pull` copy a file in or out
+  (`<tool> instance push NAME ID SRC DST`), useful for the log. Open the window with
+  `<tool> instance exec NAME ID -- hyprctl dispatch exec kitty …`, or the `setsid kitty …` line above.
+- Not tried yet (NOT): ttyak raising its window there. Say so in the record until a run shows it.
+- A VM holds its memory (about 2.5 GB with overhead), so it queues for a slot like any instance; `rm` it when done.
+
+### The bases
+
+A VM instance starts from a frozen base, built once on the machine and rebuilt on command, never by `new`:
+`<tool> instance base build hyprland` (or `windows`, which downloads an 8 GB evaluation image the first time),
+`<tool> instance base ls` (age, size, which is current), `<tool> instance base gc <desktop>` (removes builds no clone
+uses). A build holds a slot and takes minutes; do not build while the maintainer is busy on the machine without
+asking. Where the bases live is in `AGENTS.local.md` (field "bases"). A Windows base is an evaluation image: `new`
+warns 14 days before its end and refuses in its last day; the fix is a rebuild.
 
 ## Test windows
 
 On Linux a live check runs in [an instance](#a-linux-instance) by default; the hidden workspace below is for what an
-instance cannot do (Hyprland-specific behaviour, the maintainer's own desktop). Test windows never appear on the
+instance cannot do (the maintainer's own desktop). Test windows never appear on the
 maintainer's screen. Start them on a hidden special workspace with a class and a kitty socket of your own:
 
 ```sh
@@ -333,8 +357,12 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   it running; if you started it, shut it down after). Delete copied sessions, binaries, recordings and caches there;
   check each path is gone (one path per check). Delete the local cross-build directory
   (`target/x86_64-pc-windows-gnu` grows past 10 GB).
-- **Windows**: copy a file with `<tool> push BOX ID …`, run a command with `<tool> run BOX ID -- "<command>"` (the
-  arguments are joined and run by the box's shell, cmd.exe; for PowerShell:
+- **Windows, in a clone by default.** A Windows live check runs in a throwaway clone made by the claim tool
+  ([Windows in a clone](#windows-in-a-clone)), not on the shared Windows VM. The shared VM is claimed only for what
+  needs that VM itself (the maintainer's work machine, its real setup); `AGENTS.local.md` names it. The rest of this
+  bullet is that shared VM.
+- **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, run a command with
+  `<tool> run BOX ID -- "<command>"` (the arguments are joined and run by the box's shell, cmd.exe; for PowerShell:
   `<tool> run BOX ID -- "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed
   over, not through nested quotes. A `run` executes in a services session (no desktop, no notifications, no screen
   capture): to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on
@@ -356,6 +384,54 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   mutes banners (Notification Centre still has them); read macOS's view with `log show` for usernoted /
   NotificationCenter. Real speakers, microphone, camera and screen there: ask the maintainer first; their prompts and
   clicks need the maintainer at the Mac.
+
+### Windows in a clone
+
+`<tool> instance new --desktop windows` makes a Windows 11 evaluation VM (4 GiB, 1280x800) on a frozen base, ready
+about 15 s after `new`. Defender and Windows Update are off in it, and so is do-not-disturb (the ready file,
+`C:\<tool>\ready`, records `notifications=`: read it rather than assume). It takes a slot like any instance, and
+`instance rm` throws it away; `<tool> instance ls` must show none of yours at the end. Windows' default foreground lock
+is kept, so a new window may not take the focus: `windows` says which window has it.
+
+```sh
+set -euo pipefail
+REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
+EXE="$REPO/target/x86_64-pc-windows-gnu/debug/ttyak.exe"        # cargo build --target x86_64-pc-windows-gnu first
+<tool> instance new --desktop windows --purpose "ttyak: <what>"   # prints `instance NAME id=ID slot=N`
+CFG='C:\Users\tbuser\AppData\Roaming\ttyak\config'
+<tool> instance exec NAME ID -- "mkdir $CFG\<A>"
+<tool> instance push NAME ID "$EXE" 'C:\Users\tbuser\ttyak.exe'         # about 615 MiB, about 2 s, no extra DLLs
+<tool> instance push NAME ID "$FAKE/.config/ttyak/<A>/session.json" "$CFG\<A>\session.json"
+<tool> instance push NAME ID "$FAKE/.config/ttyak/settings.toml" "$CFG\settings.toml"   # sounds off
+python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"                              # right before ttyak starts
+<tool> instance exec --desktop --timeout 25m NAME ID -- start '""' 'C:\Users\tbuser\ttyak.exe' --profile <A>
+<tool> instance windows NAME ID               # the ttyak window, and which has the focus
+<tool> instance shot NAME ID out.png          # what the screen shows (look at it before relying on it)
+<tool> instance notifications NAME ID         # ttyak's toasts (the toast history of its app id)
+<tool> instance pull NAME ID "C:\Users\tbuser\AppData\Local\ttyak\cache\<A>\ttyak.log" ./ttyak.log
+<tool> instance rm NAME ID
+```
+
+- **Files go in with `push`.** `--home`, `--mount` and `record` are refused (exit 2). The session reaches the clone as
+  a file: ttyak's folders on Windows are the system's (`%APPDATA%\ttyak\config\<profile>`, as in
+  [Test machines](#test-machines)), so there is no fake home to point it at: `push` the account's `session.json`
+  (and `settings.toml`) there. The clone is throwaway, so this is not the maintainer's folder.
+- **`exec` and `exec --desktop`.** `exec` runs in session 0: no desktop, so files and `ttyak ctl` only. `exec
+  --desktop` runs in the logged-on user's session, where windows and toasts are; its `--timeout` (default 25m) ends the
+  command and replaces `timeout 25m`, so a dead agent's ttyak cannot outlive the account claim: renew the account
+  right before it starts, as for Linux. A program that must stay is started with `start '""' PROGRAM`. Both pass
+  one command line to cmd.exe: quote for it; run anything multi-step from a `.ps1` file pushed over.
+- **`notifications`** lists the toast history of ttyak's app id, which is Windows PowerShell's (ttyak's toasts use it
+  as a fallback), and that is the default; `--app APPID` reads another. A banner check first reads `notifications=` in
+  `C:\<tool>\ready`.
+- **Space.** A clone's files are capped at 2 GB; deleting a file gives its space back. The debug `ttyak.exe` is about
+  615 MiB: push it once.
+- **Log and cleanup.** Pull the log before `rm`; the clone and its files vanish with it, so no sessions are left on
+  it. Release the accounts after ttyak is gone, then delete the fake home and the local cross-build directory
+  (`target/x86_64-pc-windows-gnu` grows past 10 GB).
+- Not tried yet (NOT): ttyak itself against Slack in a clone. No environment variable moves ttyak's folders on
+  Windows (the `directories` crate asks the system for them), hence the pushes above; that this lands where ttyak
+  reads is from its code, not yet from a run. The commands are the tool's documented behaviour.
 
 ## After the check
 

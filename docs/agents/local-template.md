@@ -48,6 +48,9 @@ What it is for: reaching the Windows and macOS machines, and the rules for shari
   commands; the box names it uses: `<windows box name>`, `<mac box name>`.
 - The tools that drive its desktop (interactive scheduled task, injected keys/clicks, desktop captures):
   `tools/vm/` in this repository, copied to `%USERPROFILE%\ttyak-test\vm` there.
+- VM instances (Hyprland, Windows clones): the bases live in `~/.local/share/<tool>/bases` (`$<TOOL>_BASES`
+  overrides), built with the claim tool's `instance base build`; the shared Windows VM above is claimed only for what
+  needs that VM itself.
 - Mac: SSH alias `mactest` (`mactest.local`, user `tester`), Apple Silicon, macOS 26, Rust via rustup, Homebrew.
   Real speakers, microphone, camera: ask first.
 
