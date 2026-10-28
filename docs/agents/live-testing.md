@@ -189,7 +189,8 @@ REPO=<the clone>; FAKE=<scratch>/home              # as above; `new` needs a bui
 - **Ready** about 10 s after `new` (LIVE: 10.4 s). `--home` is the same as in the container: read-write as `HOME`,
   ttyak finds its session there, and `~/.cache` and `~/.local/state` are in RAM (read the log before `rm`).
 - **`--mount` takes a folder, never a file.** The VM shares folders over 9p, so a file mount (as for sway,
-  `target/debug/ttyak:/opt/ttyak/ttyak`) fails at `virsh create`. Mount `target/debug` and run `/opt/ttyak/ttyak`.
+  `target/debug/ttyak:/opt/ttyak/ttyak`) is refused (exit 2): mount the folder, `target/debug`, and run
+  `/opt/ttyak/ttyak`.
 - `exec`, `shot`, `windows`, `notifications` and `record` work as on sway. `push` and `pull` copy a file in or out
   (`<tool> instance push NAME ID SRC DST`), useful for the log.
 - **A notification click** is `<tool> instance exec NAME ID -- makoctl invoke`. LIVE: ttyak ran in kitty and B's DM
@@ -410,6 +411,7 @@ may not take the focus: `windows` says which window has it.
 ```sh
 set -euo pipefail
 REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
+ACC_ID=<the ID from its "claimed A id=ID" line>
 EXE="$REPO/target/x86_64-pc-windows-gnu/debug/ttyak.exe"        # cargo build --target x86_64-pc-windows-gnu first
 <tool> instance new --desktop windows --purpose "ttyak: <what>"   # prints `instance NAME id=ID slot=N`
 CFG='C:\Users\tbuser\AppData\Roaming\ttyak\config'
@@ -424,6 +426,7 @@ python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"                    
 <tool> instance notifications NAME ID         # ttyak's toasts (the toast history of its app id)
 <tool> instance pull NAME ID "C:\Users\tbuser\AppData\Local\ttyak\cache\<A>\ttyak.log" ./ttyak.log
 <tool> instance rm NAME ID
+python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
 ```
 
 - **Files go in with `push`.** `--home`, `--mount` and `record` are refused (exit 2). The session reaches the clone as
