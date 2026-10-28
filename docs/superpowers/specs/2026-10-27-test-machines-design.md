@@ -382,6 +382,64 @@ the same machinery).
 - The base build: Packer with only the keystrokes, then our own provisioning over `/usr/bin/ssh`; the notification
   grant by Packer's text-recognition click, coordinates as the fallback; Tart pinned by version and checksum.
 - A running VM keeps the Mac awake (`caffeinate`), only while it runs.
+- The maintainer approved these (2026-10-28) and set the Mac's reserve: **6 GB** always free for them.
+
+**macOS VM — answers for the builder (2026-10-28, from a builder's read; my calls unless marked):**
+
+- **Routing.** The box list says which desktops a box hosts (`"desktops": ["macos"]` on the Mac). A macOS ticket and
+  claim id start with the box's name (`mac-…`), and every instance command routes on that prefix: the desktop keeps
+  no state. `new` refuses a local ticket that starts with a box's name.
+- **Relay.** The desktop runs the Mac's tool (the box's `remote`) over `ssh -T` with a relay flag and a protocol
+  version (an outdated Mac clone refuses with "git pull on the Mac"); the Mac sends `resume:`/`rm:` lines as data and
+  the desktop renders them for its own shell. Ctrl-C or a killed desktop agent closes ssh; on the Mac a thread sees
+  stdin end and runs the existing Ctrl-C cleanup (leave the queue, remove the VM, release the slot); `ServerAlive`
+  covers a silent network. Exit 255 on the desktop always means the Mac is unreachable (reported as 5); the Mac maps
+  its own inner 255s to 5.
+- **Files.** push/pull checks run on the desktop; files travel as a tar stream desktop → Mac → VM (pull extracts by
+  hand: regular files and folders only, no links, no `..`, no absolute names); `shot` streams the PNG back and the
+  desktop writes it 0600.
+- **Box and slot.** A withdrawn Mac refuses new macOS slots (exit 4; running VMs finish); an unreachable or asleep
+  Mac is exit 5. `ls` on the desktop adds the Mac's rows or an "unreachable" note; `reap` is local to each host.
+- **Pool on the Mac.** Per-host settings in the box list (`instances.hosts.<self>`): reserve 6 GB (the maintainer),
+  `max_slots` 1, `macos` 4.5 GB. Memory on macOS from `sysctl hw.memsize` and `vm_stat` (available ≈ total − (internal
+  − purgeable + wired + compressed)), and no grant while macOS reports memory pressure; the Mac counts no libvirt
+  VMs. A started VM is charged nothing more (resident at ~4.1 GB once ready).
+- **Tart.** The release bundle pinned by version and SHA-256, fetched with Apple's `/usr/bin/curl`, kept whole (its
+  entitlements) under the tool's own folder; `TART_HOME` the tool's own (never `~/.tart`); auto-prune off (it would
+  drop the restore image). Every run: `--no-graphics --no-audio --no-clipboard`, VNC on 127.0.0.1 with `CI=true`.
+  Refused on battery (exit 5): `caffeinate -s` holds only on AC.
+- **Keeper.** A detached keeper process per VM (its own session) runs `caffeinate -s -i tart run …`, records the PIDs
+  and the VNC address (0600), and every minute stops and deletes the VM once its slot claim is not live — no launchd
+  job in the maintainer's account. `reap` also runs at every Mac-side `new` and `ls`.
+- **Ownership.** Everything in the tool's `TART_HOME` is the tool's; clones `tb-<id>`, bases `base-macos-<build>`; a
+  record per clone (pool, claim, slot, holder, purpose, created, build); before every ssh the record, the running VM
+  and the keeper are checked. Apple's two-VM limit counts any VM of the maintainer's: mapped to a clear failure.
+- **Inside.** `exec` through Apple's `/usr/bin/ssh` with the base's key and pinned host key (the tool itself never
+  opens a socket to the VM: Local Network privacy). `exec --desktop` writes a `.command` in a run folder and starts
+  it with `open -g -a Terminal` (in the background, so banners show), output and exit code through files, as on
+  Windows. `shot` by a small stdlib VNC client on the Mac (VNC auth with a pure-Python DES, known-answer tests), not
+  in-guest capture (its permission expires monthly). `windows` from `lsappinfo` (apps and the front one; no titles,
+  documented). `notifications` from `log show` for usernoted (delivered/presented and the app; title and body if the
+  log shows them). `record` exits 2 (no audio device with `--no-audio`; sound checks are out of scope on macOS).
+  Ready: a LaunchAgent in the base writes a ready file after log-on (sshd, the session, the Focus state); 90 s.
+- **Base build.** Runs on the Mac only, under the Mac box claim and a slot of the macOS size, started through the box
+  tool (not relayed). Packer pinned by checksum, its plugin pinned, checkpoint off, its folders the tool's own,
+  communicator none, the keystroke template vendored from cirruslabs at a pinned commit (licence checked); the
+  Terminal notification grant by Packer's text-recognition click, coordinates as fallback. A user `tb` with a random
+  password per build (0600), automatic log-on, passwordless sudo; Software Update, Spotlight indexing, sleep, screen
+  lock and assistant prompts off. A check pass on a clone made as `new` makes it, before publish. Restore image
+  cached; rebuilt from a fresh download when Apple no longer signs the cached one. Only the current build is kept;
+  a build refuses below a free-disk floor.
+- **ttyak in the VM.** Built on the Mac under a Mac box claim; `--mount SRC:NAME` snapshots SRC with an APFS clone
+  (`cp -c`, free) into the clone's record folder and shares it read-only at `/Volumes/My Shared Files/NAME`. The
+  session is pushed to ttyak's folder in the VM (`~/Library/Application Support/ttyak/<profile>`); the VM is the
+  fake home. Whether ttyak touches the Keychain is checked (a prompt would hang unseen).
+- **SSD.** A clone writes ~0.5 GB per run to the Mac's SSD (APFS clones cannot live in RAM), removed with it; the
+  anti-goal is met by size, not by RAM.
+- **Tests.** Fakes on the desktop for tart, caffeinate, `vm_stat`/`sysctl`/`pmset`, and the Mac hop (a local tool
+  run as the Mac with its own folders); the macOS modules import on Linux. Real tests opt-in on the Mac under a box
+  claim, using the real one-slot pool.
+- **Generalised from the VM code:** bases' `build|ls|gc` per backend; the reap timer is the desktop's (systemd).
 
 ## Order (my call)
 
