@@ -403,9 +403,10 @@ the same machinery).
 - **Box and slot.** A withdrawn Mac refuses new macOS slots (exit 4; running VMs finish); an unreachable or asleep
   Mac is exit 5. `ls` on the desktop adds the Mac's rows or an "unreachable" note; `reap` is local to each host.
 - **Pool on the Mac.** Per-host settings in the box list (`instances.hosts.<self>`): reserve 6 GB (the maintainer),
-  `max_slots` 1, `macos` 4.5 GB. Memory on macOS from `sysctl hw.memsize` and `vm_stat` (available ≈ total − (internal
-  − purgeable + wired + compressed)), and no grant while macOS reports memory pressure; the Mac counts no libvirt
-  VMs. A started VM is charged nothing more (resident at ~4.1 GB once ready).
+  `max_slots` 1, `macos` 4.5 GB. Memory on macOS: available = `hw.memsize` × macOS's own free percentage
+  (`kern.memorystatus_level`, what `memory_pressure` shows), and no grant while macOS reports memory pressure; the
+  Mac counts no libvirt VMs. (The maintainer, 2026-10-28: a stricter count from `vm_stat` — compressible app memory
+  and the compressor as used — left a VM never fitting beside a browser while macOS reported 82% free.) A started VM is charged nothing more (resident at ~4.1 GB once ready).
 - **Tart.** The release bundle pinned by version and SHA-256, fetched with Apple's `/usr/bin/curl`, kept whole (its
   entitlements) under the tool's own folder; `TART_HOME` the tool's own (never `~/.tart`); auto-prune off (it would
   drop the restore image). Every run: `--no-graphics --no-audio --no-clipboard`, VNC on 127.0.0.1 with `CI=true`.
