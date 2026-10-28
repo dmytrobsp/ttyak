@@ -40,10 +40,12 @@ Last rewritten: 2026-10-28.
   [2026-10-27-linux-instances.md](superpowers/ledgers/2026-10-27-linux-instances.md): throwaway sway and GNOME
   desktops in rootless podman; ttyak's Linux live checks run there (docs/agents/live-testing.md, "A Linux
   instance"); a Slack notification reached ttyak in one, live.
-- **Now: VM clones** — plan [2026-10-28-vm-clones.md](superpowers/plans/2026-10-28-vm-clones.md), ledger
-  [2026-10-28-vm-clones.md](superpowers/ledgers/2026-10-28-vm-clones.md): a Hyprland VM and a Windows 11 evaluation
-  base as throwaway linked clones in user-mode libvirt, through the same instance commands and slots (a spike on
-  2026-10-28 showed both work with no root and nothing on screen). macOS comes after.
+- **Done: VM clones** (2026-10-28) — plan [2026-10-28-vm-clones.md](superpowers/plans/2026-10-28-vm-clones.md),
+  ledger [2026-10-28-vm-clones.md](superpowers/ledgers/2026-10-28-vm-clones.md): a Hyprland VM and Windows 11
+  evaluation clones, throwaway linked clones of bases built by script, through the same instance commands and slots;
+  Windows live checks run in a clone by default (docs/agents/live-testing.md). ttyak ran in both and a Slack message
+  reached each, live. Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise).
+- **Next: macOS** — a throwaway macOS VM on the Mac (the design's Part 3), one plan.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
