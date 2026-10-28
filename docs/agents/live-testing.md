@@ -404,8 +404,8 @@ about 15 s after `new` (LIVE: 14.6 s). Defender and Windows Update are off in it
 the base, and the clone's ready file (its path is in the claim tool's README) records the mode as `notifications=`:
 a banner check reads it rather than assumes. A clone is charged 6.5 GB of the pool (its RAM plus its 2 GB of clone
 files), so `new` may wait longer for a slot than for a Linux instance. `instance rm` throws it away;
-`<tool> instance ls` must show none of yours at the end. Windows' default foreground lock is kept, so a new window may not take the focus: `windows` says
-which window has it.
+`<tool> instance ls` must show none of yours at the end. Windows' default foreground lock is kept, so a new window
+may not take the focus: `windows` says which window has it.
 
 ```sh
 set -euo pipefail
