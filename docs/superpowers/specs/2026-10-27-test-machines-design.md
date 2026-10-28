@@ -210,11 +210,13 @@ Common rules:
   (Enterprise and evaluation editions among them) and installs unattended. The builder checks whether its download
   and unattended-install pieces (or a similar downloader) can build the evaluation base and remove the manual ISO
   step; the clones themselves stay plain libvirt linked clones.
-- **macOS base**: [Tart](https://github.com/cirruslabs/tart) plus its
+- **macOS base**: [Tart](https://github.com/openai/tart) plus its
   [Packer builder](https://developer.hashicorp.com/packer/integrations/cirruslabs/tart) (`from_ipsw`: a VM from
   Apple's restore image) replace hand-written base scripts. Orchard (Tart's orchestrator) needs a controller: not
-  used. Tart's licence (Fair Source: free for personal use, paid for larger organisations) fits: the macOS VMs serve
-  the maintainer's personal projects.
+  used. Tart's licence fits: the macOS VMs serve the maintainer's personal projects. (Checked again 2026-10-28: the
+  project moved from cirruslabs to OpenAI and is now under the Functional Source License 1.1 with an Apache-2.0
+  future licence — any use but offering a competing product is permitted, each version turns Apache-2.0 after two
+  years; the earlier Fair Source terms are gone.)
 - **Reuse or write** is the builder's decision per piece (the maintainer's word): reuse where a tool fits as it is,
   write our own where fitting a tool would cost more than the piece itself.
 - **Hyprland**: its developers say it is [not meant to run headless](https://forum.hypr.land/t/headless-hyprland-in-github-actions/1361)
