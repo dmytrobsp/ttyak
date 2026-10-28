@@ -406,7 +406,8 @@ the same machinery).
   `max_slots` 1, `macos` 4.5 GB. Memory on macOS: available = `hw.memsize` × macOS's own free percentage
   (`kern.memorystatus_level`, what `memory_pressure` shows), and no grant while macOS reports memory pressure; the
   Mac counts no libvirt VMs. (The maintainer, 2026-10-28: a stricter count from `vm_stat` — compressible app memory
-  and the compressor as used — left a VM never fitting beside a browser while macOS reported 82% free.) A started VM is charged nothing more (resident at ~4.1 GB once ready).
+  and the compressor as used — left a VM never fitting beside a browser while macOS reported 82% free.) A started
+  VM is charged nothing more (resident at ~4.1 GB once ready).
 - **Tart.** The release bundle pinned by version and SHA-256, fetched with Apple's `/usr/bin/curl`, kept whole (its
   entitlements) under the tool's own folder; `TART_HOME` the tool's own (never `~/.tart`); auto-prune off (it would
   drop the restore image). Every run: `--no-graphics --no-audio --no-clipboard`, VNC on 127.0.0.1 with `CI=true`.
