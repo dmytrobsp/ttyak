@@ -77,7 +77,9 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
   own identity, set repo-locally — never a machine's global one (it may be someone's work identity).
 - **Public wording** in commits, issues, docs, release notes: no test-account names, emails or Slack ids, no
   workspace names, no host names or addresses, no one's work identity, no one's real or legal name (the maintainer
-  appears only as their GitHub handle), nothing from the private lists.
+  appears only as their GitHub handle), nothing from the private lists, and not the name of the private claim tool or
+  its paths and variables (it is "the claim tool named in `AGENTS.local.md`", `<tool>` in recipes; the maintainer,
+  2026-10-28, with the history rewritten — [history-rewrite-2026-10-28.md](docs/superpowers/ledgers/history-rewrite-2026-10-28.md)).
 - **A refused action** (a permission prompt, a safety check): stop, check `git status` for partial writes, explain,
   and give the maintainer the exact command. Never reword or retry it to get around the refusal.
 - **Security findings** never go into a public file, issue or commit message: open a **GitHub private security
