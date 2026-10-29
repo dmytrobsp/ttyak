@@ -401,7 +401,7 @@ const WEB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// [`web_client`] waiting `connect` for a connection and `total` for a request.
 fn web_client_within(connect: std::time::Duration, total: std::time::Duration) -> Result<reqwest::Client> {
-    crate::api::http_client(|| reqwest::Client::builder().user_agent(USER_AGENT).connect_timeout(connect).timeout(total))
+    crate::api::http_client(|| reqwest::Client::builder().user_agent(USER_AGENT).redirect(crate::api::redirect_policy()).connect_timeout(connect).timeout(total))
 }
 
 /// [`session_from_cookie`] with the client `http`.
