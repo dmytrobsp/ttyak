@@ -386,6 +386,24 @@ class MilestoneTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("m/trial/fix-1", self.branches())
 
+    def test_delete_branch_refuses_checked_out_and_drops_config(self):
+        self.start()
+        self.add("fix-1")
+        self.assertEqual(self.run_cli("rm", "trial", "fix-1")[0], 0)
+        git(self.repo, "worktree", "add", "-q", str(self.tmp / "elsewhere"), "m/trial/fix-1")
+        code, _, err = self.run_cli("rm", "trial", "fix-1", "--delete-branch")
+        self.assertEqual(code, 2)
+        self.assertIn("checked out", err)
+        self.assertIn("m/trial/fix-1", self.branches())
+        git(self.repo, "worktree", "remove", "--force", str(self.tmp / "elsewhere"))
+        git(self.repo, "config", "branch.m/trial/fix-1.remote", "origin")
+        code, _, _ = self.run_cli("rm", "trial", "fix-1", "--delete-branch")
+        self.assertEqual(code, 0)
+        self.assertNotIn("m/trial/fix-1", self.branches())
+        r = subprocess.run(["git", "-C", str(self.repo), "config", "--get-regexp", r"^branch\.m/trial"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout, "")
+
     def test_check_name_and_root(self):
         self.assertEqual(milestone.check_name("a.b-1"), "a.b-1")
         self.assertEqual(milestone.check_name("a" * 41), "a" * 41)

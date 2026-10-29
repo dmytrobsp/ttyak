@@ -190,6 +190,9 @@ def cmd_rm(repo: Path, rt: Path, a) -> int:
             print(f"branch {branch} does not exist", file=sys.stderr)
             return 2
         # merged means into the milestone branch (`git branch -d` would compare with master)
+        if any(w["branch"] == branch for w in worktrees(repo)):
+            print(f"{branch} is checked out in a worktree; branch kept", file=sys.stderr)
+            return 2
         sha = git(repo, "rev-parse", f"refs/heads/{branch}").stdout.strip()
         if git(repo, "merge-base", "--is-ancestor", sha, base, check=False).returncode != 0:
             print(f"{branch} is not merged into {base}; branch kept", file=sys.stderr)
@@ -199,6 +202,8 @@ def cmd_rm(repo: Path, rt: Path, a) -> int:
         if r.returncode != 0:
             print(f"{branch} changed while it was checked; branch kept ({r.stderr.strip()})", file=sys.stderr)
             return 2
+        # what `git branch -D` also did: drop the branch's config section (absent is fine)
+        git(repo, "config", "--remove-section", f"branch.{branch}", check=False)
     return 0
 
 
