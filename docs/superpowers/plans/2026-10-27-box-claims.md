@@ -59,7 +59,7 @@ claim. Python 3.9+ standard library only, so the same files run on Linux, macOS 
 
 **Files:**
 - Create (in a new clone `~/projects/<tool>`): `README.md` (a stub: what it is; Task 6 fills it), `.gitignore`
-  (`__pycache__/`), `tb.py` (entry: puts the repo folder on `sys.path`, calls `<tool>.cli.main()`),
+  (`__pycache__/`), `<tool>.py` (entry: puts the repo folder on `sys.path`, calls `<tool>.cli.main()`),
   `<tool>/__init__.py`, `<tool>/store.py`, `tests/test_store.py`
 
 **Interfaces:**
@@ -124,11 +124,11 @@ reinstate is logged.
 
 **Interfaces:**
 - Consumes: `claims.*`, `Store`, `default_state_path()`.
-- Produces: `python3 tb.py op` — reads one JSON request `{"op": "claim"|"renew"|"release"|"force_release"|"leave"|
+- Produces: `python3 <tool>.py op` — reads one JSON request `{"op": "claim"|"renew"|"release"|"force_release"|"leave"|
   "status"|"withdraw"|"reinstate", ...args}` from stdin, writes one JSON line `{"ok": true, ...response}` or
   `{"ok": false, "error": str}`; exit 0 unless the request is malformed (2). `now` = `$<TOOL>_NOW` or `time.time()`.
 
-- [ ] **Step 1: Failing tests** (run `tb.py op` as a subprocess with `<TOOL>_STATE` in a temp folder):
+- [ ] **Step 1: Failing tests** (run `<tool>.py op` as a subprocess with `<TOOL>_STATE` in a temp folder):
   `test_op_claim_and_status`, `test_op_bad_request_exit_2`, `test_op_roundtrip_hostile_text` (holder
   `"агент \"q\" & | ^ %PATH%"` comes back identical in `status`; the raw output is pure ASCII),
   `test_concurrent_processes_one_winner` (8 subprocesses claim at once with distinct tickets → exactly one
@@ -142,7 +142,7 @@ reinstate is logged.
 
 **Interfaces:**
 - `boxes.json` (in the repo, private): `{"boxes": {"<name>": {"ssh": "<alias>", "os": "linux"|"macos"|"windows",
-  "remote": "<command that runs tb.py on the box>", "about": "<one line>", "libvirt": "<domain>" (optional)}}}`.
+  "remote": "<command that runs <tool>.py on the box>", "about": "<one line>", "libvirt": "<domain>" (optional)}}}`.
   Task 1–5 tests use their own `boxes.json` via `$<TOOL>_BOXES`; the real entries are written in Task 6.
 - `config.load() -> dict`, `config.self_name() -> str | None` (`$<TOOL>_SELF`, else
   `~/.config/<tool>/self`, one line).

@@ -10,7 +10,7 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
 | Rows | Produces → consumes | Found |
 |---|---|---|
 | 1 ↔ 2 | `Store` methods → claim rules | agree |
-| 1 ↔ 3 | `tb.py` (Task 1) calls `<tool>.cli.main()`, which Task 3 creates | `tb.py` would be dead for two tasks — ruling 1 |
+| 1 ↔ 3 | `<tool>.py` (Task 1) calls `<tool>.cli.main()`, which Task 3 creates | `<tool>.py` would be dead for two tasks — ruling 1 |
 | 2 ↔ 3 | `claims.*(store, now, …)` → `op` dispatch | agree; `op` names match the function names |
 | 2 ↔ 4 | `claims.*` → `LocalTransport` | agree |
 | 3 ↔ 4 | `op` JSON over stdin → `SshTransport` | agree |
@@ -22,7 +22,7 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
 | 4 (self) | `--wait` has no "none" value but a test is named `test_wait_none_…` | ruling 4 |
 | 1, 2, 3, 5 (self) | tests match the code they specify | agree |
 
-- Ruling: `tb.py` is created in Task 3 with `cli.py`, not in Task 1 — avoids an entry point that fails for two tasks
+- Ruling: `<tool>.py` is created in Task 3 with `cli.py`, not in Task 1 — avoids an entry point that fails for two tasks
   — costs nothing if wrong.
 - Ruling: implementers commit only; the controller pushes `<tool>` after each task's review — the project's rule
   that implementers never push — costs nothing if wrong.
@@ -112,7 +112,7 @@ Tasks: 1 repository and state store, 2 claim rules, 3 box-side `op`, 4 box list,
   shorthand does not work on Windows; README promises a stale marker the `status` table lacks) → fix round 1.
 - Ruling: the README's wording minors (a number for `--report-every`, giving up with `--wait 0`, the clones-first
   rule, two exit-code rows) go into the same round — same file, only correcting what it says — costs nothing.
-- Outside event: the reviewer ran `tb.py status` once (read-only `op status` over ssh to both boxes; nothing written).
+- Outside event: the reviewer ran `<tool>.py status` once (read-only `op status` over ssh to both boxes; nothing written).
 - Task 6 docs: fix round 1/5 (3 addressed + wording minors; 12e06a2); new important: POSIX quoting of the printed
   lines breaks them on a Windows box → fix round 2 (one quoting helper: shlex on POSIX, list2cmdline on Windows).
 - Windows deploy key registered by the maintainer (read-only), 2026-10-27.
