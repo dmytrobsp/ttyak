@@ -410,14 +410,18 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   ([Windows in a clone](#windows-in-a-clone)), not on the shared Windows VM. The shared VM is claimed only for what
   needs that VM itself (the maintainer's work machine, its real setup); `AGENTS.local.md` names it. The rest of this
   bullet is that shared VM.
-- **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, run a command with `<tool> run BOX ID --
-  "<command>"` (the arguments are joined and run by the box's shell, cmd.exe; for PowerShell: `<tool> run BOX ID --
-  "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed over, not through nested
-  quotes. Everything you push goes into `C:\Users\<user>\ttyak-test\<unit>` (`<user>` from `AGENTS.local.md`; `<unit>`
-  is never empty). When done, remove that one folder with `<tool> run BOX ID -- "rmdir /s /q
-  C:\Users\<user>\ttyak-test\<unit>"`, the whole path written out with the unit's name in it, never built from a
-  variable, and check it with `<tool> run BOX ID -- "if exist C:\Users\<user>\ttyak-test\<unit> echo left"`. The
-  `tools/vm` scripts are copied into `<unit>\vm` there, and `cleanup.ps1` is always called with `-Dir` set to that
+- **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, and run a command with this line (the
+  arguments are joined and run by the box's shell, cmd.exe):
+  `<tool> run BOX ID -- "<command>"`
+  For PowerShell:
+  `<tool> run BOX ID -- "powershell -NoProfile -File <script>"`
+  Run anything multi-step from a `.ps1` file pushed over, not through nested quotes. Everything you push goes into
+  `C:\Users\<user>\ttyak-test\<unit>` (`<user>` from `AGENTS.local.md`; `<unit>` is never empty). When done, remove
+  that one folder with this line, the whole path written out with the unit's name in it, never built from a variable:
+  `<tool> run BOX ID -- "rmdir /s /q C:\Users\<user>\ttyak-test\<unit>"`
+  Then check it:
+  `<tool> run BOX ID -- "if exist C:\Users\<user>\ttyak-test\<unit> echo left"`
+  The `tools/vm` scripts are copied into `<unit>\vm` there, and `cleanup.ps1` is always called with `-Dir` set to that
   literal unit folder ([tools/vm/](../../tools/vm/README.md)). A `run` executes in a services session (no desktop, no
   notifications, no screen capture): to run something on the desktop, register a scheduled task with `-LogonType
   Interactive` for the logged-on user; inject keys and clicks and capture **the machine's own desktop** with
