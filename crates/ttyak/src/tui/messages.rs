@@ -199,7 +199,17 @@ pub struct MessagePane {
     pub new_since: Option<String>,
     /// Bring the "— new —" line into view at the next draw (set when a conversation opens).
     pub jump_to_new: bool,
+    /// `new_since` is the read mark the conversation was opened with (not one set here by marking unread): the unread
+    /// part may start above what is loaded. While it does, there is no line: older pages are on their way to it (the
+    /// jump waits for them), or a note at the top ([`MORE_NEW_ABOVE`]) says so, until scrolling up loads it.
+    pub new_above: bool,
 }
+
+/// The note at the top of the loaded messages when the unread part starts further up.
+pub const MORE_NEW_ABOVE: &str = "— more new messages above —";
+
+/// The pane's words shown through `tr`.
+pub const WORDS: &[&str] = &[MORE_NEW_ABOVE];
 
 impl MessagePane {
     /// A pane in thread mode.
@@ -236,6 +246,11 @@ impl MessagePane {
     /// Back to the newest message, following new ones (a selection it leaves off screen goes onto the newest).
     pub fn to_bottom(&mut self) {
         (self.anchor, self.scroll, self.down, self.put, self.newest) = (None, 0, 0, false, true);
+    }
+
+    /// Still as opened: following the newest, not scrolled, nothing selected.
+    pub fn untouched(&self) -> bool {
+        self.anchor.is_none() && self.scroll == 0 && self.selected.is_none()
     }
 
     /// True once the top of the loaded history is on screen.
@@ -362,13 +377,18 @@ impl MessagePane {
             Avatars::Initials
         };
         let order: Vec<&str> = timeline.map(|t| shown_messages(t, self.thread).map(|m| m.ts.as_str()).collect()).unwrap_or_default();
+        let since = self.new_since.as_deref().filter(|_| !self.thread);
+        // The unread part starts above what is loaded (see `new_above`): no line; the jump waits while older pages
+        // come, else it goes to the note at the top.
+        let above = self.new_above && since.is_some_and(|s| timeline.is_some_and(|t| t.has_more && t.messages.first().is_some_and(|m| ts_after(&m.ts, s))));
+        let held = above && timeline.is_some_and(|t| t.loading);
         // The first newer message from someone else: the "— new —" line goes above it.
-        let first_new: Option<String> = match (timeline, self.new_since.as_deref().filter(|_| !self.thread)) {
-            (Some(t), Some(since)) => shown_messages(t, false).find(|m| ts_after(&m.ts, since) && m.user.as_deref() != Some(ws.self_id.as_str())).map(|m| m.ts.clone()),
+        let first_new: Option<String> = match (timeline, since) {
+            (Some(t), Some(since)) if !above => shown_messages(t, false).find(|m| ts_after(&m.ts, since) && m.user.as_deref() != Some(ws.self_id.as_str())).map(|m| m.ts.clone()),
             _ => None,
         };
         // Nothing new once the history is in: nothing to jump to.
-        if first_new.is_none() && timeline.is_some_and(|t| t.loaded) {
+        if first_new.is_none() && !above && timeline.is_some_and(|t| t.loaded) {
             self.jump_to_new = false;
         }
         let height = inner.height as usize;
@@ -388,8 +408,8 @@ impl MessagePane {
                 to = anchored.map_or(last, |i| i + 1);
                 // The view's bottom edge: the build reaches up from here.
                 let edge = to;
-                let jump = first_new.as_ref().filter(|_| self.jump_to_new);
-                let kept: Vec<usize> = [&self.selected, &self.editing, &jump.cloned()].into_iter().flatten().filter_map(|ts| order.iter().rposition(|s| *s == ts.as_str())).collect();
+                let jump = if above { order.first().map(|o| o.to_string()) } else { first_new.clone() }.filter(|_| self.jump_to_new && !held);
+                let kept: Vec<usize> = [&self.selected, &self.editing, &jump].into_iter().flatten().filter_map(|ts| order.iter().rposition(|s| *s == ts.as_str())).collect();
                 if let Some(&k) = kept.iter().max() {
                     to = to.max(k + 1);
                 }
@@ -429,23 +449,27 @@ impl MessagePane {
             None => (vec![], vec![], vec![]),
         };
         let partial = from > 0;
+        let mut new_line = None;
         if let Some(t) = timeline.filter(|_| !self.thread && !partial) {
             let note = if t.loading && t.loaded {
-                Some("Loading older messages…")
+                Some(std::borrow::Cow::Borrowed("Loading older messages…"))
             } else if t.loaded && !t.has_more && !t.messages.is_empty() {
-                Some("— beginning of conversation —")
+                Some(std::borrow::Cow::Borrowed("— beginning of conversation —"))
+            } else if above {
+                // (The jump to the unread part goes here.)
+                new_line = Some(0);
+                Some(super::i18n::tr(MORE_NEW_ABOVE))
             } else {
                 None
             };
             if let Some(note) = note {
-                lines.insert(0, Line::styled(note, Style::default().fg(super::theme::p().dim)));
+                lines.insert(0, Line::styled(note.into_owned(), Style::default().fg(super::theme::p().dim)));
                 owners.insert(0, None);
                 for slot in &mut slots {
                     slot.line += 1;
                 }
             }
         }
-        let mut new_line = None;
         if let Some(first) = &first_new {
             if let Some(at) = owners.iter().position(|o| o.as_ref() == Some(first)) {
                 new_line = Some(at);
@@ -2492,6 +2516,47 @@ mod tests {
         let below = 29 - (0..30).position(|i| ts(i) == last).unwrap();
         assert!(below > 0);
         assert!(screen(&terminal)[13].contains(&format!("↓ {below} newer")), "{:?}", screen(&terminal)[13]);
+    }
+
+    #[test]
+    fn unread_starting_above_what_is_loaded_is_a_note_not_a_line() {
+        let mut ws = Workspace { self_id: "UME".into(), ..Default::default() };
+        ws.users.insert("U1".into(), slack_core::types::User { id: "U1".into(), name: "ann".into(), ..Default::default() });
+        let ts = |i: usize| format!("{}.000100", 1_700_000_000 + i * 60);
+        // Messages 10 to 29 loaded, more before them; read up to message 5.
+        let mut t = Timeline { loaded: true, has_more: true, ..Default::default() };
+        for i in 10..30 {
+            t.upsert(msg(&ts(i), "U1", &format!("message {i}")));
+        }
+        let media = Media::with(ratatui_image::picker::Picker::halfblocks());
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 14)).unwrap();
+        let screen = |terminal: &ratatui::Terminal<ratatui::backend::TestBackend>| -> Vec<String> {
+            let buf = terminal.backend().buffer();
+            (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()).collect()
+        };
+        let note = super::super::i18n::tr(MORE_NEW_ABOVE).into_owned();
+        // Older pages on their way: no line, no note, the view waits at the newest.
+        t.loading = true;
+        let mut pane = MessagePane { new_since: Some(ts(5)), new_above: true, jump_to_new: true, ..Default::default() };
+        terminal.draw(|f| pane.draw(f, f.area(), &Here::alone(&ws), "t", Some(&t), false, &media)).unwrap();
+        let rows = screen(&terminal);
+        assert!(!rows.iter().any(|r| r.contains("─ new ─") || r.contains(&note)), "{rows:#?}");
+        assert!(rows.iter().any(|r| r.contains("message 29")), "{rows:#?}");
+        assert!(pane.jump_to_new, "the jump waits");
+        // Not paged further: the note at the top, jumped to, the oldest loaded below it.
+        t.loading = false;
+        terminal.draw(|f| pane.draw(f, f.area(), &Here::alone(&ws), "t", Some(&t), false, &media)).unwrap();
+        let rows = screen(&terminal);
+        let at = rows.iter().position(|r| r.contains(&note)).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1..].iter().any(|r| r.contains("message 10")), "{rows:#?}");
+        assert!(!rows.iter().any(|r| r.contains("─ new ─")), "{rows:#?}");
+        assert!(!pane.jump_to_new);
+        // Marked unread here from the oldest loaded message: the line, as ever.
+        let mut pane = MessagePane { new_since: Some(format!("{}.000099", 1_700_000_000 + 10 * 60)), ..Default::default() };
+        pane.scroll_up(10_000);
+        terminal.draw(|f| pane.draw(f, f.area(), &Here::alone(&ws), "t", Some(&t), false, &media)).unwrap();
+        let rows = screen(&terminal);
+        assert!(rows.iter().any(|r| r.contains("─ new ─")) && !rows.iter().any(|r| r.contains(&note)), "{rows:#?}");
     }
 
     #[test]
