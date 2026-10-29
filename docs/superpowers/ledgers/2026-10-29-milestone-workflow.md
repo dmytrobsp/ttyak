@@ -56,3 +56,14 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
   checked-out refusal misses it — the commit is checked to be in the milestone branch, nothing is lost.
 - Task 1: complete (commits 73e9eeb..e13ad2f, review clean). UNIT: 26 helper tests, the Tool tests line 272 OK
   (pristine, rerun by the controller). NOT: run against this repository (Task 2 is the first real use).
+- Task 2 (controller, 2026-10-29, this desktop: 32 threads, 60 GB RAM; nothing else building; worktrees from
+  e36c6ba): `cargo test --no-run` from fresh worktrees — 1 at once 37 s, 3 at once 65 s (slowest), 4 at once 78 s;
+  each `target/` 4.6 GiB (4.9 GiB after a full `cargo test`); peak used RAM 25.5 / 32.3 / 36.7 GB, lowest available
+  36.4 / 29.6 / 25.3 GB. Warm (one file touched), the whole `cargo test` in 3 at once: 13 s, all green.
+  CAP = 3 (4 at once is 2.1× the single build; 3 is 1.8×). FLOOR_GB = 40 (twice 5.3 GB plus 20, rounded up to 10;
+  the helper counts decimal GB) — the helper's default already, no code change. All measurement worktrees and
+  branches removed; free space back to its start.
+- Ruling: the plan's Step 2 "`rm` and a new `add`" re-adds a unit whose branch `rm` keeps — the helper rightly
+  refuses; new unit names were used. Task 3's docs say a unit name is used once per milestone — costs one line if
+  wrong.
+- Task 2: complete. LIVE (on this machine): the helper's `start`, `add`, `ls`, `rm`, `end` on this repository.
