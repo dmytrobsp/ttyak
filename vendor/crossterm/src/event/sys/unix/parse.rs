@@ -892,11 +892,16 @@ fn parse_cb(cb: u8) -> io::Result<(MouseEventKind, KeyModifiers)> {
         (5, false) => MouseEventKind::ScrollDown,
         (6, false) => MouseEventKind::ScrollLeft,
         (7, false) => MouseEventKind::ScrollRight,
-        // ttyak: the side buttons (SGR 128 and 129; a drag adds 32).
+        // ttyak: the side buttons (SGR 128 and 129; a drag adds 32), then buttons 10 and 11.
         (8, false) => MouseEventKind::Down(MouseButton::Back),
         (9, false) => MouseEventKind::Down(MouseButton::Forward),
         (8, true) => MouseEventKind::Drag(MouseButton::Back),
         (9, true) => MouseEventKind::Drag(MouseButton::Forward),
+        // ttyak: buttons 10 and 11 (SGR 130 and 131; a drag adds 32).
+        (10, false) => MouseEventKind::Down(MouseButton::Button10),
+        (11, false) => MouseEventKind::Down(MouseButton::Button11),
+        (10, true) => MouseEventKind::Drag(MouseButton::Button10),
+        (11, true) => MouseEventKind::Drag(MouseButton::Button11),
         // We do not support other buttons.
         _ => return Err(could_not_parse_event_error()),
     };
@@ -1333,7 +1338,7 @@ mod tests {
         assert!(!got.iter().any(|e| matches!(e, InternalEvent::Event(Event::Osc(_)))), "{got:?}");
     }
 
-    // ttyak: the side buttons (SGR 8 and 9) decode as Back and Forward.
+    // ttyak: the side buttons (SGR 8 to 11) decode as Back, Forward, Button10 and Button11.
     #[test]
     fn test_parse_csi_sgr_mouse_side_buttons() {
         let ev = |kind, column, row| {
@@ -1369,9 +1374,34 @@ mod tests {
             parse_csi_sgr_mouse(b"\x1B[<161;10;5M").unwrap(),
             ev(MouseEventKind::Drag(MouseButton::Forward), 9, 4)
         );
-        // Buttons 10 and 11 stay unsupported.
-        assert!(parse_csi_sgr_mouse(b"\x1B[<130;10;5M").is_err());
-        assert!(parse_csi_sgr_mouse(b"\x1B[<131;10;5M").is_err());
+        // Buttons 10 and 11 (SGR 130 and 131): down, release, drag.
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<130;10;5M").unwrap(),
+            ev(MouseEventKind::Down(MouseButton::Button10), 9, 4)
+        );
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<130;10;5m").unwrap(),
+            ev(MouseEventKind::Up(MouseButton::Button10), 9, 4)
+        );
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<131;10;5M").unwrap(),
+            ev(MouseEventKind::Down(MouseButton::Button11), 9, 4)
+        );
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<131;10;5m").unwrap(),
+            ev(MouseEventKind::Up(MouseButton::Button11), 9, 4)
+        );
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<162;10;5M").unwrap(),
+            ev(MouseEventKind::Drag(MouseButton::Button10), 9, 4)
+        );
+        assert_eq!(
+            parse_csi_sgr_mouse(b"\x1B[<163;10;5M").unwrap(),
+            ev(MouseEventKind::Drag(MouseButton::Button11), 9, 4)
+        );
+        // Button 12 (SGR 192; 132 is Back with Shift) and up stay unsupported.
+        assert!(parse_csi_sgr_mouse(b"\x1B[<192;10;5M").is_err());
+        assert!(parse_csi_sgr_mouse(b"\x1B[<224;10;5M").is_err());
     }
 
     #[test]
