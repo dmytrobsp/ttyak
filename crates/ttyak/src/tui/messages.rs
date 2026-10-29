@@ -177,6 +177,9 @@ pub struct MessagePane {
     newest: bool,
     /// Scrolled by the keys or the wheel since the last draw.
     scrolled: bool,
+    /// Scrolled, or the selection put or moved, since the pane was last back at the newest ([`MessagePane::to_bottom`]):
+    /// by you (or a link), not by landing on the messages.
+    moved: bool,
     /// The selection was clicked since the last draw: one taller than the view stays where it is (you look at it).
     clicked: bool,
     /// Message ts owning each visible row of the last draw (for clicks).
@@ -227,7 +230,7 @@ impl MessagePane {
         let back = n.min(self.down);
         self.down -= back;
         self.scroll = self.scroll.saturating_add(n - back);
-        self.scrolled = true;
+        (self.scrolled, self.moved) = (true, true);
     }
 
     /// Scroll `n` lines down (newer), as [`MessagePane::scroll_up`].
@@ -235,7 +238,7 @@ impl MessagePane {
         let here = n.min(self.scroll);
         self.scroll -= here;
         self.down += n - here;
-        self.scrolled = true;
+        (self.scrolled, self.moved) = (true, true);
     }
 
     /// How many different messages the last draw showed.
@@ -245,13 +248,13 @@ impl MessagePane {
 
     /// Back to the newest message, following new ones (a selection it leaves off screen goes onto the newest).
     pub fn to_bottom(&mut self) {
-        (self.anchor, self.scroll, self.down, self.put, self.newest) = (None, 0, 0, false, true);
+        (self.anchor, self.scroll, self.down, self.put, self.newest, self.moved) = (None, 0, 0, false, true, false);
     }
 
-    /// Still as opened: following the newest, not scrolled, nothing selected but the `newest` message (as landing on a
-    /// conversation's messages selects it).
-    pub fn untouched(&self, newest: Option<&str>) -> bool {
-        self.anchor.is_none() && self.scroll == 0 && self.selected.as_deref().is_none_or(|s| Some(s) == newest)
+    /// Still as opened: following the newest, neither scrolled nor the selection moved (landing on the messages
+    /// selects the newest: that is not moving).
+    pub fn untouched(&self) -> bool {
+        self.anchor.is_none() && self.scroll == 0 && !self.moved
     }
 
     /// True once the top of the loaded history is on screen.
@@ -269,12 +272,13 @@ impl MessagePane {
 
     /// Select message `ts`, brought into view at the next draw (even when it was the one last brought into view).
     pub fn select(&mut self, ts: Option<String>) {
-        (self.selected, self.shown, self.put) = (ts, None, true);
+        (self.selected, self.shown, self.put, self.moved) = (ts, None, true, true);
     }
 
     /// Move the selection by `delta` messages among the shown ones (`order` = ts list).
     pub fn move_selection(&mut self, order: &[String], delta: isize) {
         self.put = false;
+        self.moved |= delta != 0;
         if order.is_empty() {
             self.selected = None;
             return;
@@ -351,7 +355,7 @@ impl MessagePane {
     pub fn click(&mut self, column: u16, row: u16) -> bool {
         match self.message_at(column, row) {
             Some(ts) => {
-                (self.selected, self.clicked) = (Some(ts), true);
+                (self.selected, self.clicked, self.moved) = (Some(ts), true, true);
                 true
             }
             None => false,
@@ -512,9 +516,9 @@ impl MessagePane {
             let start = total.saturating_sub(self.scroll).saturating_sub(height);
             if at < start {
                 self.scroll = total.saturating_sub(at + height);
-                // A selection standing on the newest (landing on the messages puts it there) goes along to the first
-                // message under the line, or it would bring the view back down.
-                if self.selected.is_some() && self.selected.as_deref() == order.last().copied() {
+                // A selection you did not move (landing on the messages puts it on the newest) goes along to the
+                // first message under the line, or it would bring the view back down.
+                if self.selected.is_some() && !self.moved {
                     if let Some(below) = owners[at + 1..].iter().flatten().next() {
                         (self.selected, self.shown) = (Some(below.clone()), Some(below.clone()));
                     }

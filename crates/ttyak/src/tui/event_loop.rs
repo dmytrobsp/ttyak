@@ -2538,8 +2538,7 @@ impl App {
         }
         // Paging back to the unread part: given up once you scroll or pick a message (the view stays yours; the pane
         // says if more new messages are above).
-        let newest = super::messages::shown_messages(tl, false).last().map(|m| m.ts.clone());
-        if self.seek_unread.is_some() && !self.messages.untouched(newest.as_deref()) {
+        if self.seek_unread.is_some() && !self.messages.untouched() {
             (self.seeking, self.seek_unread) = (None, None);
             self.messages.jump_to_new = false;
             self.clear_seek_note();
@@ -2644,11 +2643,13 @@ impl App {
         });
     }
 
-    /// Esc in the messages pane: stop paging back for a message.
+    /// Esc in the messages pane: stop paging back for a message (or for the unread part's start: the view still goes up
+    /// to what is loaded of it).
     fn stop_seek(&mut self) {
         if self.seeking.take().is_some() {
+            let note = if self.seek_unread.is_some() { UNREAD_STOPPED } else { SEEK_STOPPED };
             (self.pending_hit, self.seek_hit, self.link_reply, self.seek_back, self.seek_unread) = (None, None, None, None, None);
-            self.status = super::i18n::tr(SEEK_STOPPED).into_owned();
+            self.status = super::i18n::tr(note).into_owned();
         }
     }
 
@@ -4947,6 +4948,9 @@ const SEEKING: &str = "looking for the message… ({} loaded)";
 /// are loaded).
 const UNREAD_SEEKING: &str = "looking for the first new message… ({} loaded)";
 
+/// The note when Esc stops the paging back to the unread part's start.
+const UNREAD_STOPPED: &str = "stopped looking for the first new message";
+
 /// How many pages older than the newest a conversation just opened pages back for its unread part's start: beyond
 /// them, a note at the top says more new messages are above.
 const UNREAD_PAGES: usize = 5;
@@ -4983,7 +4987,7 @@ fn spawn_leave(client: slack_core::api::Client, params: Vec<(&'static str, Strin
 }
 
 /// The status notes of links into ttyak and of the seeks paging back, for `ctl locale-template`.
-pub const LINK_NOTES: &[&str] = &[LINK_GONE, HISTORY_GONE, CONVERSATION_GONE, SEEKING, UNREAD_SEEKING, SEEK_STOPPED, FILE_NOT_SHOWN, super::applink::OPENS_IN_TTYAK, REACTION_REFUSED, REACTION_UNREACHED, REACTION_WAITING];
+pub const LINK_NOTES: &[&str] = &[LINK_GONE, HISTORY_GONE, CONVERSATION_GONE, SEEKING, UNREAD_SEEKING, SEEK_STOPPED, UNREAD_STOPPED, FILE_NOT_SHOWN, super::applink::OPENS_IN_TTYAK, REACTION_REFUSED, REACTION_UNREACHED, REACTION_WAITING];
 
 /// A history request for a conversation (`tl`) failed: it may be asked again (no longer loading). The note to show:
 /// a link's seek in it (`seeking`) ends with its not-found note, anything else says what failed.
@@ -7029,9 +7033,14 @@ fn handle_net(app: &mut App, msg: Net) {
             if older {
                 tl.prepend_page(page.messages, page.has_more);
             } else {
-                // Newest page: merge with anything that arrived live meanwhile.
+                // Newest page: merge with anything that arrived live meanwhile (or was loaded before: fetched again).
+                let (had_more, oldest) = (tl.has_more, tl.messages.first().map(|m| m.ts.clone()));
                 let live = std::mem::take(&mut tl.messages);
                 tl.prepend_page(page.messages, page.has_more);
+                // Older pages loaded before reach further back than this one: whether there is more is theirs to say.
+                if oldest.is_some_and(|o| tl.messages.first().is_some_and(|f| seek_older(&o, &f.ts))) {
+                    tl.has_more = had_more;
+                }
                 for m in live {
                     tl.upsert(m);
                 }
@@ -13337,6 +13346,73 @@ mod tests {
         new_line_above(&drawn(&mut app), 73);
         new_line_above(&drawn(&mut app), 73);
         assert_eq!(app.messages.selected, Some(top_ts(73)), "the first new message selected");
+    }
+
+    #[tokio::test]
+    async fn a_live_message_during_the_paging_at_start_is_not_you_moving() {
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 121, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        assert_eq!(app.messages.selected, Some(top_ts(120)), "landed on the newest");
+        // Message 121 comes live while the page before is on its way.
+        app.ws.timelines.get_mut("C1").unwrap().upsert(all[120].clone());
+        drawn(&mut app);
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn esc_stops_the_paging_back_to_the_unread_and_says_so() {
+        let (mut app, _net, page) = unread_c1(400, 5);
+        c1_page(&mut app, page(351, 400, true), false);
+        drawn(&mut app);
+        app.focus = super::Focus::Messages;
+        go(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, super::super::i18n::tr(super::UNREAD_STOPPED));
+        assert!(super::super::i18n::template().contains(&format!("\"{}\" = \"\"", super::UNREAD_STOPPED)));
+        // The page on its way comes: none after it; the view goes up to what is loaded, the note on top.
+        c1_page(&mut app, page(301, 350, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        let shown = drawn(&mut app);
+        assert!(shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn a_link_fetching_the_newest_page_again_keeps_the_line_at_the_start() {
+        use super::super::search::Hit;
+        // Never read: everything is new, and the whole history is paged in.
+        let (mut app, _net, page) = unread_c1(121, 0);
+        app.messages.new_since = Some("999.000000".into());
+        app.seek_new("C1".into(), "999.000000".into());
+        c1_page(&mut app, page(71, 120, true), false);
+        c1_page(&mut app, page(21, 70, true), true);
+        c1_page(&mut app, page(1, 20, false), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].has_more);
+        drawn(&mut app);
+        // A link to message 121, not loaded yet: the newest page is fetched again (and says there is more).
+        app.open_hit_from(Hit { channel: "C1".into(), ts: top_ts(121), ..Default::default() }, true);
+        assert!(app.ws.timelines["C1"].loading, "the newest page asked for again");
+        c1_page(&mut app, page(72, 121, true), false);
+        assert_eq!(app.messages.selected, Some(top_ts(121)));
+        assert!(!app.ws.timelines["C1"].has_more, "the start is still loaded");
+        app.messages.select(Some(top_ts(1)));
+        let shown = drawn(&mut app);
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        assert!(!shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+        new_line_above(&shown, 1);
     }
 
     #[tokio::test]
