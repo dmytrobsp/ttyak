@@ -42,9 +42,17 @@ Last rewritten: 2026-10-29.
   merged through a gate: [Running a milestone](agents/workflow.md#running-a-milestone),
   [Live checks in a milestone](agents/live-testing.md#live-checks-in-a-milestone), the helper
   `tools/milestone/milestone.py`. A dry run went through the whole unit path, live.
-- **Next: the trial milestone** — 3–5 small issues the maintainer picks, run with the new workflow in a fresh
-  session, with its own plan and ledger and a retro at the end.
-- No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
+- **Open: milestone [0.12.3](https://github.com/dmytrobsp/ttyak/milestone/4)**, the trial of the new workflow
+  (the maintainer's pick, 2026-10-29): five units — [#51](https://github.com/dmytrobsp/ttyak/issues/51) (HTTP
+  redirects), [#47](https://github.com/dmytrobsp/ttyak/issues/47) (mouse buttons 10 and 11),
+  [#56](https://github.com/dmytrobsp/ttyak/issues/56) (unread line beyond the first page),
+  [#50](https://github.com/dmytrobsp/ttyak/issues/50) with [#36](https://github.com/dmytrobsp/ttyak/issues/36)
+  (huddles view), [#41](https://github.com/dmytrobsp/ttyak/issues/41) (pages.yml timeouts). Units 1–3 at once, #41
+  when a slot frees, #50/#36 after #56's merge (both touch `event_loop.rs`). Not started: the start sitting comes
+  first, in a fresh session, with its own plan and ledger and a retro at the end.
+- **For this milestone the shared Windows VM is off-limits** (the maintainer): Windows live checks only in throwaway
+  Windows clones.
+- Last done: #29 (above); before it the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
 
