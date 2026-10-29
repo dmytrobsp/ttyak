@@ -45,12 +45,13 @@ const SECONDS: &str = "{n} s";
 const MINUTES: &str = "{n} min";
 const HOURS: &str = "{h} h {m} min";
 const HOURS_ROUND: &str = "{h} h";
+const NOT_IN: &str = "a conversation you are not in";
 const ONE_REPLY: &str = "1 reply";
 const REPLIES: &str = "{n} replies";
 
 /// The view's words, for the locale template.
 pub const WORDS: &[&str] = &[
-    "Huddles", LIVE_NOW, RECENT, LIVE, YOU_ARE_IN_IT, MISSED, NONE_LIVE, NONE_RECENT, LOADING, LOADING_MORE, FAILED, JUST_NOW, MINUTES_AGO, HOURS_AGO, DAYS_AGO, SECONDS, MINUTES, HOURS, HOURS_ROUND, ONE_REPLY, REPLIES,
+    "Huddles", LIVE_NOW, RECENT, LIVE, YOU_ARE_IN_IT, MISSED, NONE_LIVE, NONE_RECENT, LOADING, LOADING_MORE, FAILED, JUST_NOW, MINUTES_AGO, HOURS_AGO, DAYS_AGO, SECONDS, MINUTES, HOURS, HOURS_ROUND, NOT_IN, ONE_REPLY, REPLIES,
 ];
 
 #[derive(Default)]
@@ -215,6 +216,21 @@ impl Huddles {
         out
     }
 
+    /// The conversations of the rows shown, in order, once each (those this workspace does not know are asked about).
+    pub fn channels_shown(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for row in self.rows.iter().flatten() {
+            let channel = match row {
+                Row::Live(c) => Some(c.clone()),
+                Row::Past(n) => self.past_at(*n).map(|h| h.channel.clone()),
+            };
+            if let Some(c) = channel.filter(|c| !out.contains(c)) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     /// Not drawn this time: nothing of it is under the mouse.
     pub fn hide(&mut self) {
         (self.area, self.list, self.hover) = (Rect::default(), Rect::default(), None);
@@ -322,7 +338,7 @@ pub fn build(ws: &Workspace, live: &[String], past: &[PastHuddle], recent_note: 
         let Some(h) = ws.huddles.get(c) else { continue };
         any = true;
         let live_style = Style::default().fg(p.good).add_modifier(Modifier::BOLD);
-        let mut first = vec![Span::raw(" "), Span::styled("● ", live_style), Span::styled(tr(LIVE).into_owned(), live_style), Span::raw("  "), Span::styled(super::feed::place(ws, c), Style::default().fg(p.strong).add_modifier(Modifier::BOLD))];
+        let mut first = vec![Span::raw(" "), Span::styled("● ", live_style), Span::styled(tr(LIVE).into_owned(), live_style), Span::raw("  "), Span::styled(place_of(ws, c), Style::default().fg(p.strong).add_modifier(Modifier::BOLD))];
         if h.start > 0 {
             first.push(Span::styled(format!(" · {}", length(now - h.start)), dim));
         }
@@ -347,7 +363,7 @@ pub fn build(ws: &Workspace, live: &[String], past: &[PastHuddle], recent_note: 
     }
     for (n, h) in shown {
         let missed = h.missed.contains(&ws.self_id);
-        let mut first = vec![Span::raw(" "), Span::styled(super::feed::place(ws, &h.channel), Style::default().fg(p.strong).add_modifier(Modifier::BOLD))];
+        let mut first = vec![Span::raw(" "), Span::styled(place_of(ws, &h.channel), Style::default().fg(p.strong).add_modifier(Modifier::BOLD))];
         if missed {
             first.push(Span::styled(" · ", dim));
             first.push(Span::styled(tr(MISSED).into_owned(), Style::default().fg(p.danger).add_modifier(Modifier::BOLD)));
@@ -399,6 +415,20 @@ fn ago(secs: i64) -> String {
         _ => tr(DAYS_AGO).replace("{n}", &n(86400)),
     }
 }
+
+/// Where a huddle is: as the rest of the app names it; a conversation not known: what Slack said when asked.
+fn place_of(ws: &Workspace, channel: &str) -> String {
+    use super::state::PlaceName;
+    if ws.conversations.contains_key(channel) {
+        return super::feed::place(ws, channel);
+    }
+    match ws.place_names.get(channel) {
+        Some(PlaceName::Named(name)) => name.clone(),
+        Some(PlaceName::Unreachable) => tr(NOT_IN).into_owned(),
+        _ => "…".to_string(),
+    }
+}
+
 
 /// How long, `secs` seconds: "40 s", "12 min", "1 h 5 min".
 fn length(secs: i64) -> String {
@@ -477,6 +507,39 @@ mod tests {
         let text: Vec<String> = lines.iter().map(plain).collect();
         assert!(text[1].contains("No huddles going on") && text.last().unwrap().contains("No recent huddles"), "{text:#?}");
         assert!(rows.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn a_conversation_not_known_is_named_when_asked_and_never_by_its_id() {
+        use crate::tui::state::PlaceName;
+        let mut w = ws();
+        assert_eq!(place_of(&w, "C1"), format!("#{}", w.conversations["C1"].name), "known");
+        assert_eq!(place_of(&w, "C9"), "…", "not asked yet: neutral");
+        w.place_names.insert("C9".into(), PlaceName::Pending);
+        assert_eq!(place_of(&w, "C9"), "…", "pending");
+        w.place_names.insert("C9".into(), PlaceName::Named("#ops".into()));
+        assert_eq!(place_of(&w, "C9"), "#ops", "looked up");
+        w.place_names.insert("C9".into(), PlaceName::Unreachable);
+        assert_eq!(place_of(&w, "C9"), "a conversation you are not in", "failed");
+        // The view shows it, not the id.
+        w.huddles.insert("C9".into(), Huddle { room: "R9".into(), participants: vec!["U2".into()], thread: None, start: NOW - 60 });
+        let (lines, _) = layout(&w, &["C9".to_string()], &[], &HashMap::new(), 60, NOW);
+        let text: String = lines.iter().map(plain).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("a conversation you are not in") && !text.contains("C9"), "{text}");
+    }
+
+    #[test]
+    fn the_rows_shown_name_their_conversations_once() {
+        let mut w = ws();
+        w.huddles.insert("C9".into(), Huddle { room: "R9".into(), participants: vec!["U2".into()], thread: None, start: NOW - 60 });
+        let mut h = Huddles { past: Some(vec![past("P1", "C9", NOW - 7200, 600, &["U2"], &[], None), past("P2", "C7", NOW - 9000, 600, &["U2"], &[], None)]), ..Default::default() };
+        let lines = drawn(&mut h, &w, 80, 30).join("\n");
+        assert!(!lines.contains("C9") && !lines.contains("C7"), "no raw id: {lines}");
+        let mut shown = h.channels_shown();
+        shown.sort();
+        assert_eq!(shown, ["C1", "C7", "C9"], "each once");
+        assert_eq!(w.ask_place_names(h.channels_shown()).len(), 2, "the unknown ones only");
+        assert!(w.ask_place_names(h.channels_shown()).is_empty(), "and once, redrawn or not");
     }
 
     #[test]

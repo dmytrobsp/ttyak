@@ -108,8 +108,21 @@ pub struct Status {
     pub in_huddle: bool,
 }
 
+/// What Slack said about a conversation this workspace does not know (the Huddles view names its huddles by it).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaceName {
+    /// Asked, not answered yet.
+    Pending,
+    /// The name to show ("#name").
+    Named(String),
+    /// Slack would not say (a private conversation you are not in).
+    Unreachable,
+}
+
 #[derive(Debug, Default)]
 pub struct Workspace {
+    /// Names of conversations not known, asked for once each (see [`PlaceName`]).
+    pub place_names: HashMap<String, PlaceName>,
     /// Replies in threads you follow not read yet (the sidebar's Threads row).
     pub thread_unread: ThreadUnread,
     /// The sidebar's Activity row: Slack's own Activity badge (`activity_counts` added up), else (an older
@@ -1124,6 +1137,24 @@ impl Workspace {
         self.huddles.iter().filter(|(c, h)| !h.participants.is_empty() && !self.muted.contains(*c) && self.conversations.get(*c).is_some_and(|c| c.is_member || c.is_dm())).map(|(c, _)| c.as_str())
     }
 
+    /// Of `channels`, those not known and not asked about yet; they are marked asked (so each is asked once).
+    pub fn ask_place_names(&mut self, channels: Vec<String>) -> Vec<String> {
+        let mut asked = Vec::new();
+        for c in channels {
+            if !self.conversations.contains_key(&c) && !self.place_names.contains_key(&c) {
+                self.place_names.insert(c.clone(), PlaceName::Pending);
+                asked.push(c);
+            }
+        }
+        asked
+    }
+
+    /// Slack's answer to `conversations.info` for `channel` (none: it failed).
+    pub fn set_place_name(&mut self, channel: &str, info: Option<&Conversation>) {
+        let name = info.filter(|c| c.id == channel).map(|c| if c.is_dm() { self.conversation_label(c) } else { format!("#{}", c.name) });
+        self.place_names.insert(channel.to_string(), name.filter(|n| n.trim_start_matches('#') != "").map_or(PlaceName::Unreachable, PlaceName::Named));
+    }
+
     /// A live event changed the huddle of `channel` (the live lists asked for before it do not undo that).
     pub fn touch_huddle(&mut self, channel: &str) {
         self.huddle_seq += 1;
@@ -1286,6 +1317,20 @@ mod tests {
         // Someone not known yet: taken as they come.
         crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U3", "name": "cy", "profile": {"status_emoji": ":x:"}}}), None, true);
         assert_eq!(ws.users["U3"].profile.status_emoji, ":x:");
+    }
+
+    #[test]
+    fn a_conversation_not_known_is_asked_about_once() {
+        let mut ws = Workspace { self_id: "UME".into(), ..Default::default() };
+        ws.conversations.insert("C1".into(), Conversation { id: "C1".into(), name: "known".into(), ..Default::default() });
+        let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(ws.ask_place_names(ids(&["C1", "C9", "C8", "C9"])), ["C9", "C8"], "not the known one, not twice");
+        assert!(ws.ask_place_names(ids(&["C1", "C9", "C8"])).is_empty(), "redrawn: nothing asked again");
+        assert_eq!(ws.place_names["C9"], PlaceName::Pending);
+        ws.set_place_name("C9", Some(&Conversation { id: "C9".into(), name: "ops".into(), is_channel: true, ..Default::default() }));
+        ws.set_place_name("C8", None);
+        assert_eq!((&ws.place_names["C9"], &ws.place_names["C8"]), (&PlaceName::Named("#ops".into()), &PlaceName::Unreachable));
+        assert!(ws.ask_place_names(ids(&["C9", "C8"])).is_empty(), "answered: kept for the session, failed ones too");
     }
 
     #[test]

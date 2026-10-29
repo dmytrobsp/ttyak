@@ -60,6 +60,8 @@ enum Net {
     DetailsInfo(slack_core::types::Conversation),
     /// What Slack says about a conversation a link (or notification) leads to that this workspace did not know.
     LinkConversation { result: Result<slack_core::types::Conversation, String>, target: super::applink::Target },
+    /// What Slack says about a conversation a huddle is in that this workspace did not know.
+    PlaceName { channel: String, result: Result<slack_core::types::Conversation, String> },
     DetailsMembers { channel: String, members: Vec<String> },
     DetailsPins { channel: String, pins: Vec<slack_core::types::Message> },
     /// Search results for a query.
@@ -2005,6 +2007,14 @@ impl App {
         }
         if let Some(cursor) = self.huddles.next_page() {
             self.fetch_huddle_history(self.huddles.generation, Some(cursor));
+        }
+        // (A conversation this workspace doesn't know is named by asking Slack once; its id is never shown.)
+        for channel in self.ws.ask_place_names(self.huddles.channels_shown()) {
+            let (client, tx) = (self.client.clone(), self.net.clone());
+            tokio::spawn(async move {
+                let result = client.conversation_info(&channel).await.map_err(|e| e.to_string());
+                let _ = tx.send(Net::PlaceName { channel, result });
+            });
         }
         for (channel, ts) in self.huddles.wanted() {
             self.huddles.requested.insert((channel.clone(), ts.clone()));
@@ -7374,6 +7384,12 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.huddles.fail(generation, e);
             }
         },
+        Net::PlaceName { channel, result } => {
+            if let Err(e) = &result {
+                tracing::debug!("conversations.info for a huddle's place: {e}");
+            }
+            app.ws.set_place_name(&channel, result.as_ref().ok());
+        }
         Net::HuddleReplies { channel, ts, count } => {
             if let Some(n) = count {
                 app.huddles.replies.insert((channel, ts), n);
