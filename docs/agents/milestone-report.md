@@ -38,7 +38,8 @@ _What the reviews found and fixed, what was dropped as a nit (why), what was fil
 
 _The tests, the Windows build, CI, the final live check._
 
-- `cargo test`: <result>. Windows: <build and `--no-run` result>. CI: <run and result>. Live smoke check: <result>.
+- Per platform, what ran — tests executed, tests only built, live: Linux: <…>. macOS: <…>. Windows: <the whole
+  `cargo test` in a clone, the cross-build>. CI: <run and result>. Live smoke check: <result>.
 
 ## 6. Refused actions
 

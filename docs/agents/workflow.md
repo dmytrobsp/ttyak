@@ -120,7 +120,9 @@ or a plan outside a milestone, runs as in the sections above.
 - **A milestone** is some known bugs and some improvements. **A unit** is one issue, or a small group of related
   issues (the controller groups them): its own branch, its own worktree with its own build folder, its own
   implementer and its own pull request into the milestone branch. A big new feature is a milestone of its own with
-  nothing else in it.
+  nothing else in it. Each unit costs about ten minutes of fixed overhead whatever its size (the privacy check, the
+  pull request, CI on every push, the review, the gate; measured in 0.12.3), so tiny unrelated issues (a few lines
+  each: a CI timeout, a parser case) are bundled into one unit, and the units of a wave are about the same size.
 - **The controller** is the only agent that talks to the maintainer, pushes, opens pull requests or files issues. It
   plans the units and their order, writes the briefs, dispatches implementers and reviewers, runs the merge gate, the
   final review, the live smoke check and the report. It keeps its own context lean: short reports, details in scratch
@@ -193,9 +195,13 @@ refused, 3 a merge conflict.
   cross-builds in its own worktree (over 10 GB, beyond the 4.9 GiB measured above) and deletes
   `<worktree>/target/x86_64-pc-windows-gnu` by its literal path after the check; at most one such unit runs at a
   time, and the controller checks the free space (`milestone.py ls`) before it dispatches one.
-- **Batching**: units in one wave touch separate files and modules as far as the controller can tell from reading the
-  code; units that share files run one after the other; a unit that needs another one's change waits for its merge.
-  A conflict at the gate means the batching missed something: it is noted in the ledger.
+- **Batching**: units that change the same functions or the same state run one after the other, and a unit that
+  needs another one's change waits for its merge. Units that only share a file, in parts apart from each other, run
+  at once: a conflict at the gate then goes back to its implementer as usual, which costs less than the wait (in
+  0.12.3 two units in `event_loop.rs` ran one after the other, 18 minutes, and merged with no conflict). A conflict
+  the controller did not expect is noted in the ledger: the batching missed something.
+- **The long pole first**: the unit with a live check or the most review risk is dispatched in the first wave, so the
+  small ones finish around it.
 
 ### A unit, from brief to merge
 
@@ -316,9 +322,12 @@ copy command. In patterns (paths as each machine has them):
 1. All units merged, then a final whole-milestone review (the milestone branch against `master`) and one fix wave,
    its fixes going through the same review and gate: a unit of its own (`add NAME fixes`), with its pull request, its
    implementer (the one who knows most of the code it touches may be resumed) and the final reviewer's scoped
-   re-review. Then the checks: the whole `cargo test`, the Windows
-   cross-build and `cargo test --no-run` for Windows, CI on the milestone pull request, and the controller's live
-   smoke check of the milestone branch.
+   re-review. Then the checks: the whole `cargo test`, the Windows cross-build and `cargo test --no-run` for Windows,
+   **the whole `cargo test` run on Windows** in a throwaway Windows clone
+   ([live-testing.md](live-testing.md#windows-in-a-clone); CI builds Windows but runs none of its tests, #61; not
+   tried yet in a clone — the first run, before the 0.12.3 release, writes its recipe into live-testing.md), CI on
+   the milestone pull request, and the controller's live smoke check of the milestone branch. The report's Health
+   line says, per platform, what ran: tests executed, tests only built, live.
 2. **The milestone pull request** (milestone branch into `master`) carries the report, made from
    [milestone-report.md](milestone-report.md). The privacy check runs on it before it is posted.
    The pull request's body is public and read on GitHub: nothing local to this machine (no path to a build, no
