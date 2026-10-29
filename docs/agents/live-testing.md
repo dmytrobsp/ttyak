@@ -28,6 +28,17 @@ their own, and every milestone brief quotes this section.
 
 Also in a milestone:
 
+- **Two paths.** `$REPO` is the main checkout: `tools/accounts/accounts.py`, `.accounts/` and `AGENTS.local.md` live
+  there, never in a worktree. `WT=<the unit's worktree>` (its absolute path, from the brief) is everything built or
+  archived: `cargo build` in `$WT` (or `cargo build --manifest-path "$WT/Cargo.toml"`), the binary
+  `"$WT/target/debug/ttyak"`, the mounts `--mount "$WT/target/debug/ttyak:/opt/ttyak/ttyak"` (sway) and
+  `--mount "$WT/target/debug:/opt/ttyak"` (Hyprland), `EXE="$WT/target/x86_64-pc-windows-gnu/debug/ttyak.exe"`,
+  and the Mac's source copy `git -C "$WT" archive HEAD | …`. A binary or archive from `$REPO` is master's, not the
+  unit's: a check of it is not a check of the unit. The recipes below are written with both; outside a milestone
+  `WT` is `$REPO`.
+- **Paths of one's own.** Units run at once, so nothing is shared by name: the fake home is `<scratch>/<unit>-home`
+  (`FAKE=` in the recipes), and every recipe output (`<evidence>/…` in the recipes: screenshots, recordings, pulled
+  logs, captured output) goes to an absolute path in the unit's evidence folder, never a relative one.
 - **One folder per unit on a shared box.** The recipes work in `~/ttyak-test/<unit>` on the Mac and
   `%USERPROFILE%\ttyak-test\<unit>` on the shared Windows VM, `<unit>` being the unit's name (outside a milestone, the
   agent's task name). An agent that dies before it cleans up then leaves a folder with a name, which no other agent
@@ -37,21 +48,23 @@ Also in a milestone:
 - **Claims do the queuing**: accounts, boxes and RAM slots, as everywhere on this page. Waiting for a claim or a slot
   is not a live observation.
 - **Evidence.** The implementer saves what shows the check in the unit's scratch folder (the main checkout's
-  `.superpowers/sdd/<plan>/<unit>/`, given in the brief as an absolute path), one file each: every claim and every
-  release (accounts and boxes), the instance's `new` and `rm` output and `instance ls --here`, `ctl` output, the
-  instance's own screenshot, log lines, the build's last lines with its exit status, each removal with its gone-check,
-  and `git status` after any refusal. Never a capture of the maintainer's screen, and nothing private in it. Its
-  report says where. The reviewer reads the evidence before anything counts as LIVE. Anything on this list
-  without its file is reported NOT backed, and is never re-created after the fact.
+  `.superpowers/sdd/<plan>/<unit>/`, given in the brief as an absolute path), one file each: the commit tested
+  (`git -C "$WT" rev-parse HEAD`, taken when the build is), every claim and every release (accounts and boxes), the
+  instance's `new` and `rm` output and `instance ls --here`, `ctl` output, the instance's own screenshot, log lines,
+  the build's last lines with its exit status, each removal with its gone-check, and `git status` after any refusal.
+  Never a capture of the maintainer's screen, and nothing private in it. Its report says where. The reviewer reads
+  the evidence before anything counts as LIVE. Anything on this list without its file is reported NOT backed, and is
+  never re-created after the fact.
 - **Command shape.** A call that runs the claim tool against a shared box, above all one that carries a recursive
   delete, holds only that one command, with the claim tool's path and the box claim id written out literally, not as
   variables: the safety hook reads the quoted remote command too, and refuses a recursive delete next to variables
   without `set -euo pipefail`. The recipe blocks on this page keep their variables and their single-call background
   steps, and `$ACC_ID` in accounts commands is fine; the box lines of a block
-  (`<tool> run|push|pull|release BOX ID …`) each run as their own call, as they use none of the block's variables. A
-  file whose text quotes a recursive delete or another guarded
-  command (a report, a brief, a script) is written with the Write or Edit tool, never through a Bash heredoc or
-  `python3 - <<EOF`: the hook scans heredoc bodies. The `settings.toml` heredoc of [A fake home](#a-fake-home) stays.
+  (`<tool> run|push|pull|release BOX ID …`) each run as their own call, with every path in them written out (the
+  Mac's `git -C "$WT" archive` line takes the worktree's literal path for `$WT`). A file whose text quotes a
+  recursive delete or another guarded command (a report, a brief, a script) is written with the Write or Edit tool,
+  never through a Bash heredoc or `python3 - <<EOF`: the hook scans heredoc bodies. The `settings.toml` heredoc of
+  [A fake home](#a-fake-home) stays.
 - **A refusal**: quote the refused command exactly as sent and the refusal text verbatim. After a refused cleanup on a
   shared box, the implementer stops and keeps its box claim held (it releases nothing). Its report gives its box and
   account claim ids. The controller does the whole cleanup under that still-live box claim, renewing it, by the
@@ -65,16 +78,17 @@ Also in a milestone:
 
 ## Before every live check
 
-1. `cargo build` (a `cargo test` alone leaves a stale `target/debug/ttyak`).
+1. `cargo build` in the tree you test, `$WT` ([Two paths](#live-checks-in-a-milestone); a `cargo test` alone leaves
+   a stale `target/debug/ttyak`).
 2. Close your old test windows and wait until none remain (an open one keeps its kitty socket; a new window then fails
    with "Invalid listen_on" and keys go to the wrong window).
 3. Claim the Slack accounts you need, so that nobody else — another agent, on this machine or a test machine — uses
    them meanwhile: `python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"` (the same for B; `$REPO` is
-   the main clone holding `.accounts/`, also when you work in a worktree; its absolute path, as in
-   [A fake home](#a-fake-home)); keep each claim id. A claim lasts 30 minutes: `renew A ID` during longer checks, or
-   claim with `--lease 2h` (a lapsed claim is broken by the next waiter, which also removes the installed copy while
-   ttyak still runs). Run `claim` in the background, or with `--report-every 5m` and re-run its `resume:` line, so a
-   shell timeout does not kill it while it is queued.
+   the main clone holding `.accounts/`, also when you work in a worktree, while the binary comes from `$WT`; their
+   absolute paths, as in [A fake home](#a-fake-home)); keep each claim id. A claim lasts 30 minutes: `renew A ID`
+   during longer checks, or claim with `--lease 2h` (a lapsed claim is broken by the next waiter, which also removes
+   the installed copy while ttyak still runs). Run `claim` in the background, or with `--report-every 5m` and re-run
+   its `resume:` line, so a shell timeout does not kill it while it is queued.
    Waiting for a claim is not a live observation, so the 10-minute cap does not apply (as with box claims below).
    If the check needs a test machine, claim it now (see [Test machines](#test-machines)) and keep the claim id; all
    work on the box goes through the claim tool. A Linux check in an instance needs a slot, which `instance new`
@@ -83,12 +97,13 @@ Also in a milestone:
    (`ctl api dnd.info` on A's profile, with the claimed copy in the fake home of [A fake home](#a-fake-home), the four
    variables set on that command only; see [Do-not-disturb](#do-not-disturb-on-the-test-accounts)).
    For example, after `install`: `HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share"
-   XDG_CACHE_HOME="$FAKE/.cache" "$REPO/target/debug/ttyak" --profile <A> ctl api dnd.info`.
+   XDG_CACHE_HOME="$FAKE/.cache" "$WT/target/debug/ttyak" --profile <A> ctl api dnd.info`.
 5. Decide what the check must show and cap its waits (not a wait for a claim) at about
    10 minutes. Only run experiments whose answer changes what gets built; report interim status rather than sit in a
    long wait.
 6. Use absolute paths in every command (an agent shell's working directory resets between commands), and keep the
    fake home, recordings and captures in the scratch folder — a reboot wipes it, so record results elsewhere.
+   `<evidence>` in the recipes is that absolute folder: in a milestone, the unit's evidence folder.
 
 ## The test workspace and profiles
 
@@ -129,8 +144,9 @@ Run ttyak under a fake home in the scratch folder:
 
 ```sh
 set -euo pipefail
-REPO=<the clone>                                   # its absolute path
-FAKE=<scratch>/home                                # a literal path in your scratch folder
+REPO=<the clone>                                   # its absolute path: the main checkout, holding .accounts/
+WT=<the tree you built>                            # its absolute path: a milestone unit's worktree, else $REPO
+FAKE=<scratch>/<unit>-home                         # a literal path in your scratch folder (<unit>: your unit's name)
 mkdir -p "$FAKE"/.config "$FAKE"/.local/share "$FAKE"/.cache
 chmod 700 "$FAKE" "$FAKE"/.config "$FAKE"/.local "$FAKE"/.cache
 python3 "$REPO/tools/accounts/accounts.py" install A ID --home "$FAKE"   # ID: your claim id
@@ -146,7 +162,7 @@ ring_sound = "off"
 alone_sound = "off"
 EOF
 HOME="$FAKE" XDG_CONFIG_HOME="$FAKE/.config" XDG_DATA_HOME="$FAKE/.local/share" XDG_CACHE_HOME="$FAKE/.cache" \
-  "$REPO/target/debug/ttyak" --profile <A>
+  "$WT/target/debug/ttyak" --profile <A>
 ```
 
 Set `HOME` and `XDG_*` only on the ttyak command line, as above, never exported before running `accounts.py`: the
@@ -180,22 +196,22 @@ tool named in `AGENTS.local.md` (`<tool>` below; its README has every option). t
 
 ```sh
 set -euo pipefail
-REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home": folders made, settings.toml written
+REPO=<the clone>; WT=<the tree you built>; FAKE=<scratch>/<unit>-home   # as in "A fake home": folders, settings.toml
 python3 "$REPO/tools/accounts/accounts.py" claim A --purpose "<what>"   # prints `claimed A id=ID lease=…`, more lines
 ACC_ID=<the ID from its "claimed A id=ID" line>
 python3 "$REPO/tools/accounts/accounts.py" install A "$ACC_ID" --home "$FAKE"
 # the instance: the fake home is its home, the debug binary is mounted read-only
 <tool> instance new --desktop sway --purpose "ttyak: <what>" --home "$FAKE" \
-    --mount "$REPO/target/debug/ttyak:/opt/ttyak/ttyak"
+    --mount "$WT/target/debug/ttyak:/opt/ttyak/ttyak"
 # it prints `instance NAME id=ID slot=N`: ID is the slot id, not `$ACC_ID`
 python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"            # right before ttyak starts
 <tool> instance exec NAME ID -- "setsid kitty --class ttyak-test timeout 25m /opt/ttyak/ttyak --profile <A> \
     >/dev/null 2>&1 < /dev/null &"
 <tool> instance windows NAME ID               # the ttyak-test window, focused
-<tool> instance shot NAME ID out.png          # what the window shows (look at it before relying on it)
+<tool> instance shot NAME ID <evidence>/out.png   # what the window shows (look at it before relying on it)
 <tool> instance notifications NAME ID         # the notifications it shows
-<tool> instance record NAME ID 5 out.wav      # what the null sink heard (at most 300 s); silent unless the
-                                              # fake home's settings turn sounds on and sound is agreed
+<tool> instance record NAME ID 5 <evidence>/out.wav   # what the null sink heard (at most 300 s); silent unless
+                                              # the fake home's settings turn sounds on and sound is agreed
 <tool> instance exec NAME ID -- "cat ~/.cache/ttyak/<A>/ttyak.log"     # the log, before the instance goes
 <tool> instance rm NAME ID
 python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
@@ -208,7 +224,8 @@ Not tried yet (NOT): a Slack notification reaching the instance's `notifications
 - **Home.** Inside the instance `HOME` is the mounted fake home (read-write), so ttyak finds
   `.config/ttyak/<profile>/session.json` there with no extra environment; do not set the four variables. The
   instance's `~/.cache` and `~/.local/state` live in RAM and vanish with it: read the log (above) before `rm`.
-  The binary is mounted from the clone's `target/debug` (`cargo build` first) and never from a release folder.
+  The binary is mounted from the built tree's `target/debug` (`$WT`; `cargo build` first) and never from a release
+  folder.
 - **Slot.** An instance needs a slot, granted by free RAM, and queues like a box claim (`--wait`, default forever;
   `--report-every 5m` and re-run its `resume:` line, or run `new` in the background). Waiting for a slot is not a live
   observation: the 10-minute cap does not apply. A slot lapses after 30 minutes without use, then the next `new` or
@@ -236,8 +253,8 @@ what depends on Hyprland (how ttyak raises or focuses its window there). Claim t
 home and renew as in [A Linux instance](#a-linux-instance); these lines differ:
 
 ```sh
-REPO=<the clone>; FAKE=<scratch>/home              # as above; `new` needs a built base ([The bases](#the-bases))
-<tool> instance new --desktop hyprland --purpose "ttyak: <what>" --home "$FAKE" --mount "$REPO/target/debug:/opt/ttyak"
+REPO=<the clone>; WT=<the tree you built>; FAKE=<scratch>/<unit>-home   # as above; `new` needs a built base
+<tool> instance new --desktop hyprland --purpose "ttyak: <what>" --home "$FAKE" --mount "$WT/target/debug:/opt/ttyak"
 <tool> instance exec NAME ID -- "setsid kitty --class ttyak-test timeout 25m /opt/ttyak/ttyak --profile <A> \
     >/dev/null 2>&1 < /dev/null &"
 ```
@@ -426,7 +443,8 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
 - **Restore it as found**: leave the box as you found it unless the goal was to change it (if it was running, leave
   it running; if you started it, shut it down after). Delete copied sessions, binaries, recordings and caches there;
   check each path is gone (one path per check). Delete the local cross-build directory
-  (`target/x86_64-pc-windows-gnu` grows past 10 GB).
+  (`target/x86_64-pc-windows-gnu` grows past 10 GB; in a milestone `<worktree>/target/x86_64-pc-windows-gnu`, by its
+  literal path).
 - **Windows, in a clone by default.** A Windows live check runs in a throwaway clone made by the claim tool
   ([Windows in a clone](#windows-in-a-clone)), not on the shared Windows VM. The shared VM is claimed only for what
   needs that VM itself (the maintainer's work machine, its real setup); `AGENTS.local.md` names it. The rest of this
@@ -443,14 +461,15 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   Then check it:
   `<tool> run BOX ID -- "if exist C:\Users\<user>\ttyak-test\<unit> echo left"`
   The `tools/vm` scripts are copied into `<unit>\vm` there, and `cleanup.ps1` is always called with `-Dir` set to that
-  literal unit folder ([tools/vm/](../../tools/vm/README.md)). A `run` executes in a services session (no desktop, no
-  notifications, no screen capture): to run something on the desktop, register a scheduled task with `-LogonType
-  Interactive` for the logged-on user; inject keys and clicks and capture **the machine's own desktop** with
-  PowerShell helpers (SendKeys, `mouse_event`, `keybd_event`; the screen capture of that desktop, never the
-  maintainer's): [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the maintainer to
-  sit at the console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI
-  test, in a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the
-  box name; the session there is the claimed copy `install` put on the box, not a profile in the user's real folder).
+  literal unit folder (`-Dir` is mandatory: [tools/vm/](../../tools/vm/README.md)). A `run` executes in a services
+  session (no desktop, no notifications, no screen capture): to run something on the desktop, register a scheduled
+  task with `-LogonType Interactive` for the logged-on user; inject keys and clicks and capture **the machine's own
+  desktop** with PowerShell helpers (SendKeys, `mouse_event`, `keybd_event`; the screen capture of that desktop,
+  never the maintainer's): [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the
+  maintainer to sit at the console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`,
+  `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test, in a kitty window:
+  `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the box name; the session
+  there is the claimed copy `install` put on the box, not a profile in the user's real folder).
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.
@@ -458,9 +477,9 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   ([macOS in a VM](#macos-in-a-vm)), not on the Mac itself. The Mac is claimed (a box claim) only to build ttyak there
   and for what needs the real machine: the maintainer's own setup, real speakers, microphone, camera or screen (ask
   the maintainer first), and their prompts and clicks. The rest of this bullet is the Mac itself.
-- **macOS, the Mac itself**: copy the source with
-  `git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"`
-  (`run` passes stdin through; `<unit>` as in [Live checks in a milestone](#live-checks-in-a-milestone)); a
+- **macOS, the Mac itself**: copy the source with `git -C "$WT" archive HEAD |
+  <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"` (`run` passes stdin
+  through; `$WT` and `<unit>` as in [Live checks in a milestone](#live-checks-in-a-milestone)); a
   non-interactive shell there lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake
   comes from Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files
   in through `<tool> run BOX ID -- "cat > …"`, and bring files back with `<tool> pull`). ttyak's notifications appear
@@ -481,9 +500,9 @@ lock is kept, so a new window may not take the focus: `windows` says which windo
 
 ```sh
 set -euo pipefail
-REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
+REPO=<the clone>; WT=<the tree you built>; FAKE=<scratch>/<unit>-home   # as in "A fake home"; A installed there
 ACC_ID=<the ID from its "claimed A id=ID" line>
-EXE="$REPO/target/x86_64-pc-windows-gnu/debug/ttyak.exe"        # cargo build --target x86_64-pc-windows-gnu first
+EXE="$WT/target/x86_64-pc-windows-gnu/debug/ttyak.exe"   # cargo build --target x86_64-pc-windows-gnu in $WT first
 <tool> instance new --desktop windows --purpose "ttyak: <what>"   # prints `instance NAME id=ID slot=N`
 CFG='C:\Users\tbuser\AppData\Roaming\ttyak\config'
 <tool> instance exec NAME ID -- "mkdir $CFG\<A>"
@@ -493,9 +512,9 @@ CFG='C:\Users\tbuser\AppData\Roaming\ttyak\config'
 python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"                              # right before ttyak starts
 <tool> instance exec --desktop --timeout 25m NAME ID -- start '""' 'C:\Users\tbuser\ttyak.exe' --profile <A>
 <tool> instance windows NAME ID               # the ttyak window, and which has the focus
-<tool> instance shot NAME ID out.png          # what the screen shows (look at it before relying on it)
+<tool> instance shot NAME ID <evidence>/out.png   # what the screen shows (look at it before relying on it)
 <tool> instance notifications NAME ID         # ttyak's toasts (the toast history of its app id)
-<tool> instance pull NAME ID "C:\Users\tbuser\AppData\Local\ttyak\cache\<A>\ttyak.log" ./ttyak.log
+<tool> instance pull NAME ID "C:\Users\tbuser\AppData\Local\ttyak\cache\<A>\ttyak.log" <evidence>/ttyak.log
 <tool> instance rm NAME ID
 python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
 ```
@@ -516,7 +535,8 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
   615 MiB: push it once.
 - **Log and cleanup.** Pull the log before `rm`; the clone and its files vanish with it, so no sessions are left on
   it. Release the accounts after ttyak is gone, then delete the fake home and the local cross-build directory
-  (`target/x86_64-pc-windows-gnu` grows past 10 GB).
+  (`target/x86_64-pc-windows-gnu` grows past 10 GB; in a milestone `<worktree>/target/x86_64-pc-windows-gnu`, by its
+  literal path: [How many at once](workflow.md#how-many-at-once)).
 - **LIVE** (2026-10-28): the debug exe pushed in 4.2 s; `session.json` and `settings.toml` in `%APPDATA%\ttyak\config`
   were read by ttyak; `exec --desktop --timeout 25m … start '""' …` started it; with Notepad focused, B's @mention was
   listed by `notifications` (PowerShell's app id) and showed as a banner in `shot`; `pull` fetched the log from
@@ -535,11 +555,11 @@ refused on battery.
 
 ```sh
 set -euo pipefail
-REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
+REPO=<the clone>; WT=<the tree you built>; FAKE=<scratch>/<unit>-home   # as in "A fake home"; A installed there
 ACC_ID=<the ID from its "claimed A id=ID" line>
 # 1. build ttyak on the Mac under a box claim (BOX and ID: [Test machines](#test-machines)); keep only the binary
 #    <unit> is your unit's name (outside a milestone, your task name): your folder is ~/ttyak-test/<unit>
-git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"
+git -C "$WT" archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"
 <tool> run BOX ID -- "export PATH=/opt/homebrew/bin:\$HOME/.cargo/bin:\$PATH; cd ~/ttyak-test/<unit>/src \
     && cargo build && mkdir -p ~/ttyak-test/<unit>/build && cp target/debug/ttyak ~/ttyak-test/<unit>/build/"
 <tool> release BOX ID                              # the VM needs no box claim; the Mac is free for others again
@@ -554,16 +574,16 @@ SUPPORT='Library/Application Support/ttyak'        # ttyak's macOS folder, from 
 python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"                                # right before ttyak starts
 # ttyak in Terminal, in the logged-on session; it blocks until ttyak ends: run it in the background, keep the PID
 <tool> instance exec --desktop --timeout 25m NAME ID -- "'/Volumes/My Shared Files/ttyak/ttyak' --profile <A>" \
-    >out.txt 2>&1 &
+    ><evidence>/out.txt 2>&1 &
 TTYAK_PID=$!
 <tool> instance windows NAME ID               # the apps and the front one, no window titles
-<tool> instance shot NAME ID out.png          # what the screen shows (look at it before relying on it)
+<tool> instance shot NAME ID <evidence>/out.png   # what the screen shows (look at it before relying on it)
 <tool> instance notifications NAME ID         # ttyak's notifications: delivered or presented, app Terminal
 # SIGTERM (the default of kill) closes the relay connection; the Mac then interrupts the command and ends the run.
 # Not SIGINT: a `&` job ignores it
 kill "$TTYAK_PID" 2>/dev/null || true
 wait "$TTYAK_PID" 2>/dev/null || true
-<tool> instance pull NAME ID 'Library/Caches/ttyak/<A>/ttyak.log' ./ttyak.log
+<tool> instance pull NAME ID 'Library/Caches/ttyak/<A>/ttyak.log' <evidence>/ttyak.log
 <tool> instance rm NAME ID
 python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
 # then delete the fake home as in "A fake home"; the build folder on the Mac, under a new box claim (see below)

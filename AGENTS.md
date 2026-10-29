@@ -5,8 +5,9 @@ and video, notifications, on Linux, macOS and Windows. One maintainer owns the p
 `dmytrobsp/ttyak`; agents do most of the building. This page is the front door: the rules that always apply and the
 workflow in short. Every detail is one link away.
 
-**Read `AGENTS.local.md` (repository root, git-ignored) if it exists.** It holds what is specific to this machine:
-the test profiles, the test workspace, the test machines, the paths of private lists. It is made from
+**Read `AGENTS.local.md` (repository root, git-ignored) if it exists** — in a milestone worktree, the main
+checkout's, whose path the brief gives. It holds what is specific to this machine: the test profiles, the test
+workspace, the test machines, the paths of private lists. It is made from
 [docs/agents/local-template.md](docs/agents/local-template.md). Without it, read-only work and docs/code work go
 ahead, but nothing live: no running ttyak against Slack, no test machines. Ask the maintainer for the local file.
 
@@ -20,7 +21,7 @@ ahead, but nothing live: no running ttyak against Slack, no test machines. Ask t
 | `vendor/` | patched copies of crates (rtc-turn, crossterm) |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | where the project stands now: latest release, what is in flight, outside waits, next topics |
 | `docs/history/` | the old status rows by era, with their LIVE/UNIT/NOT records and commit hashes |
-| `docs/agents/` | for agents: [workflow.md](docs/agents/workflow.md), [live-testing.md](docs/agents/live-testing.md), [setup.md](docs/agents/setup.md) (a new machine), [local-template.md](docs/agents/local-template.md) |
+| `docs/agents/` | for agents: [workflow.md](docs/agents/workflow.md), [live-testing.md](docs/agents/live-testing.md), [setup.md](docs/agents/setup.md) (a new machine), [local-template.md](docs/agents/local-template.md), [milestone-report.md](docs/agents/milestone-report.md) (a milestone's report) |
 | [docs/DESIGN.md](docs/DESIGN.md) | architecture and portability rules |
 | `docs/protocol/` | how the undocumented Slack endpoints ttyak uses were worked out |
 | `docs/wiki/` | the user manual, published to the GitHub wiki at each release |

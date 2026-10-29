@@ -94,7 +94,8 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
   outside the repository, or dispatch subagents. They never quote real emails, names or ids in anything they write.
   Each one's live checks use its own window class and kitty socket, never the controller's or one the maintainer is
   typing into. In a milestone two things differ: the implementer's own worktree counts as the repository (nothing
-  outside it and the plan's scratch folder), and its live checks run in instances only
+  outside it and the plan's scratch folder, except what the live-check recipes make and remove: a fake home, an
+  instance, the unit's folder on a shared box), and its live checks run in instances only
   ([live-testing.md](live-testing.md#live-checks-in-a-milestone)).
 - **Reviews.** A review per task (the diff against the plan and the rules), fix rounds sent to the same implementer
   (resume it, it keeps its context), then a final whole-branch review. Reviewers find real things in most rounds; one
@@ -125,6 +126,8 @@ or a plan outside a milestone, runs as in the sections above.
   final review, the live smoke check and the report. It keeps its own context lean: short reports, details in scratch
   files. Implementers and reviewers keep the limits of
   [Executing a plan with subagents](#executing-a-plan-with-subagents).
+- **Agent ids.** The controller keeps every background agent's id in `.superpowers/sdd/<plan>/agents.md`, one line
+  each (unit, role, id), written when it dispatches: fix rounds, conflicts and a lost session resume an agent by its id.
 
 ### The start sitting
 
@@ -150,19 +153,28 @@ The git part is done by `tools/milestone/milestone.py` ([tools/README.md](../../
 refused, 3 a merge conflict.
 
 - **`python3 tools/milestone/milestone.py start NAME`** makes the milestone branch `milestone/NAME` from `master` and
-  the gate worktree `<root>/NAME/_gate`. The controller pushes the branch.
+  the gate worktree `<root>/NAME/_gate`. The controller pushes the branch at once: `git push -u origin milestone/NAME`
+  (`ungate` needs `origin/milestone/NAME`).
 - **`add NAME UNIT`** makes the unit branch `m/NAME/UNIT` from the milestone tip, in the worktree `<root>/NAME/UNIT`
   with its own `target/`. It refuses below the free-disk floor. `rm NAME UNIT` removes the worktree and its `target/`
   once the unit has merged; it refuses any uncommitted work and keeps the branch (`--delete-branch` deletes it only
   when it is merged into `milestone/NAME`, and deleting branches on GitHub is the maintainer's word). A unit name is
   used once per milestone. `end NAME` removes the gate when no unit is left; `ls [NAME]` shows the worktrees with
-  their sizes and the free space.
+  their sizes and the free space. `ungate NAME` undoes a gate that went red before its push
+  ([A unit, from brief to merge](#a-unit-from-brief-to-merge)). Only the controller runs `milestone.py`.
+- **Pushes** are the controller's and run from the main checkout, never with `git -C <worktree> push` (an
+  always-asked rule): all worktrees share the refs, so the main checkout pushes `milestone/NAME` while the gate has it
+  checked out. The commands, written out: `git push -u origin milestone/NAME` (at `start`),
+  `git push -u origin m/NAME/UNIT` (a unit's first push), `git push origin m/NAME/UNIT` (later rounds),
+  `git push origin milestone/NAME` (after a gate), `git push origin master` (the final merge).
 - **The root** is `$TTYAK_WORKTREES` (an absolute path outside the repository) or, by default, the folder
   `<repository folder>-worktrees` next to the repository. It is not the scratch folder, which a reboot wipes.
 - **The main checkout stays on `master`**, where the ledger is committed (docs-only commits, no CI). Merging into
   the milestone branch happens in the gate worktree only.
 - **An urgent fix during a milestone** goes to `master` as usual; the controller merges `master` into the milestone
-  branch at the next gate.
+  branch at the next gate, as a gate of its own: `git -C <gate> merge --no-ff --no-edit master` (the gate clean and
+  on `milestone/NAME`), the whole `cargo test` in the gate worktree, then `git push origin milestone/NAME` from the
+  main checkout; if the tests are red, `ungate NAME`, and the merge waits until the cause is fixed.
 
 ### How many at once
 
@@ -176,7 +188,10 @@ refused, 3 a merge conflict.
 - **Disk**: a worktree goes as soon as its unit merges. The Windows cross-build (`target/x86_64-pc-windows-gnu`, over
   10 GB) is not made in every unit. CI's `windows-cross` job runs on every unit pull request (CI fires on a pull
   request with no branch filter), so the per-unit Windows compile happens there; the local cross-build and
-  `cargo test --no-run` for Windows run only at the milestone's end.
+  `cargo test --no-run` for Windows run only at the milestone's end. A unit whose live check needs a Windows clone
+  cross-builds in its own worktree (over 10 GB, beyond the 4.9 GiB measured above) and deletes
+  `<worktree>/target/x86_64-pc-windows-gnu` by its literal path after the check; at most one such unit runs at a
+  time, and the controller checks the free space (`milestone.py ls`) before it dispatches one.
 - **Batching**: units in one wave touch separate files and modules as far as the controller can tell from reading the
   code; units that share files run one after the other; a unit that needs another one's change waits for its merge.
   A conflict at the gate means the batching missed something: it is noted in the ledger.
@@ -187,30 +202,52 @@ refused, 3 a merge conflict.
    chained command as the dispatch, with the Write tool (not a heredoc: [Permission
    refusals](#permission-refusals)). It holds the plan's Global Constraints (the shell rules always), the issue and the
    maintainer's answers for it, the files to read, the worktree, branch and build folder, the absolute path of the
-   unit's evidence folder (the main checkout's `.superpowers/sdd/<plan>/<unit>/`), the live-check rules of
-   [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do. Then it dispatches the
-   implementer in the background.
+   main checkout (`$REPO` of the recipes: `AGENTS.local.md`, `.accounts/` and `tools/accounts/accounts.py` are
+   there, as a worktree has no `AGENTS.local.md`), the absolute path of the unit's evidence folder (the main
+   checkout's `.superpowers/sdd/<plan>/<unit>/`), the live-check rules of
+   [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do: the limits above,
+   and never run `milestone.py`, never `git push` (both are allow rules, there for the controller, so only the brief
+   stops an implementer). Then it dispatches the implementer in the background and notes its id in `agents.md`.
 2. **Implementation.** TDD with the RED shown, commits on the unit branch, the whole `cargo test` in the worktree,
    live checks where the change needs them, and a short report with the paths of its evidence.
-3. **Pull request.** The controller runs the privacy check on what will become public (the diff and the
-   description), pushes the unit branch and opens a pull request into the milestone branch, in public wording. CI
-   runs on it.
+3. **Pull request.** Before anything goes public, the controller runs the privacy check
+   ([Docs](#docs)) on a folder of copies, `<scratch>/<unit>-public/`, holding all of it: every commit of the unit
+   with its message and diff, conflict-merge commits included,
+   `git log --cc -p milestone/NAME..m/NAME/UNIT > <scratch>/<unit>-public/commits.txt` (`git format-patch` skips
+   merge commits), and the pull request body. Then, from the main checkout, `git push -u origin m/NAME/UNIT` and
+   `gh pr create --base milestone/NAME --head m/NAME/UNIT --title "…" --body-file <the checked body>`, in public
+   wording. CI runs on it.
 4. **Review.** A fresh reviewer (opus for security- or concurrency-heavy units) reads the diff against the plan and
    the rules and checks the live evidence. Findings go to the same implementer, and the same reviewer, resumed, does a
-   scoped re-review after each fix round. Every real finding is fixed; nits are dropped with a reason in the ledger;
-   out-of-scope items and the maintainer's decisions become issues. Review text stays in the scratch folder; the pull
-   request gets a short public summary (rounds, the kind of things fixed). Security findings never go to a pull
-   request: a private advisory.
-5. **Merge gate**, one unit at a time, and no pushed branch is ever rewritten (no rebase, no force-push). The
-   controller runs `milestone.py gate NAME UNIT`, which merges the unit branch into the milestone tip in the gate
-   worktree (`--no-ff`); then it runs the whole `cargo test` on that merge result, and CI on the pull request must be
-   green (GitHub tests the pull request merged into its base). If both pass, the controller pushes
-   the milestone branch, a plain fast-forward push, and GitHub marks the pull request merged. A merge with conflicts
-   (exit 3, the files listed, the merge aborted) goes back to its implementer, who merges the milestone tip into its
-   own branch and resolves them; the author resolves its own conflicts. The controller pushes that, and the gate
-   starts again. Afterwards the unit's worktree and build folder are removed with `rm`. Units still in flight take the
-   new tip only at their own gate. A docs-only unit's pull request gets no CI run (`ci.yml` ignores docs): it passes
-   the gate on the whole `cargo test` alone.
+   scoped re-review after each fix round. After each fix round the controller runs the privacy check on the new
+   commits (the same `git log` into the folder of copies) and pushes them, `git push origin m/NAME/UNIT`, so CI runs
+   on them too. Every real finding is fixed; nits are dropped with a reason in the ledger; out-of-scope items and the
+   maintainer's decisions become issues. Review text stays in the scratch folder; the pull request gets a short public
+   summary (rounds, the kind of things fixed), checked in the folder of copies before `gh pr comment` posts it.
+   Security findings never go to a pull request: a private advisory.
+5. **Merge gate**, one unit at a time, and no pushed branch is ever rewritten (no rebase, no force-push). In this
+   order:
+   1. **The head.** `gh pr view N --json headRefOid --jq .headRefOid` equals `git rev-parse m/NAME/UNIT`; if not,
+      the last commits were never pushed: push them and wait for CI.
+   2. **CI green** on that head (GitHub tests the pull request merged into its base). Red or still running: no gate
+      yet.
+   3. **`milestone.py gate NAME UNIT`** merges the unit branch into the milestone tip in the gate worktree
+      (`--no-ff`) and prints the old and the new tip.
+   4. **The whole `cargo test`** on that merge result, in the gate worktree
+      (`cargo test --manifest-path <gate>/Cargo.toml`).
+   5. **`git push origin milestone/NAME`** from the main checkout: a plain fast-forward push, and GitHub marks the
+      pull request merged.
+
+   No `add` runs between the gate and its push: a new unit would branch from an untested merge. A red `cargo test`
+   at the gate: `ungate NAME` (it resets the gate to `origin/milestone/NAME` and lists what it dropped), then the
+   unit goes back to its implementer like a conflict: it merges the milestone tip into its own branch and fixes what
+   was red. A merge with conflicts (exit 3, the files listed, the merge aborted) goes back the same way: the
+   implementer merges the milestone tip into its own branch and resolves them (the author resolves its own
+   conflicts). Either way the controller checks and pushes the new commits as after a fix round, and the gate starts
+   again at the head. Afterwards the unit's worktree and build folder are removed with `rm`. Units still in flight
+   take the new tip only at their own gate. A docs-only unit's pull request gets no CI run (`ci.yml` ignores docs,
+   its name check included): step 2 falls away, and step 4 is the link and name checks in the gate worktree,
+   `python3 <gate>/tools/wiki/check_links.py` and, in one call, `cd <gate> && sh tools/check-name.sh .`.
 6. **The ledger** gets an entry at each step
    ([A milestone's ledger](../superpowers/ledgers/README.md#a-milestones-ledger)).
 
@@ -257,12 +294,15 @@ copy command. In patterns (paths as each machine has them):
 
 - **Allowed without a check**: `cargo build`, `cargo test`; the Python tool tests and the name, link and privacy
   checks; `tools/milestone/milestone.py` and `tools/accounts/accounts.py`; `git` status, diff, log, show, rev-parse,
-  add, commit, merge (also with `-C` into a milestone worktree); `git push` of `master`, `m/*` and `milestone/*`;
-  `gh pr` create, view, checks, list, diff, comment; `gh run` list, view, watch; `gh issue` view, list;
-  `<tool>` status, claim, renew, release, instance, run, push, pull.
+  add, commit, merge, and with `-C` into a milestone worktree only status, diff, log, add, commit, merge (not show,
+  not rev-parse); `git push` (and `git push -u`) of `master`, `m/*` and `milestone/*` from the main checkout;
+  `gh pr` create, view, checks, list, diff, comment; `gh run` list, view, watch; `gh workflow run`; `gh issue` view,
+  list; `<tool>` status, claim, renew, release, instance, run, push, pull. `gh workflow run` can dispatch any
+  workflow, Release included: only the controller runs it, and only for a workflow the maintainer has asked for.
 - **Always asked**, even in auto mode (each needs the maintainer's word anyway): any force-push (`--force`, `-f`,
   a `+` refspec), deleting by push (`--delete`, `:`), `git -C … push`, `git -C … branch -D`,
-  `git -C … reset --hard`, `gh api` DELETE, `gh repo delete`, `gh release`, `git tag`.
+  `git -C … reset --hard`, `gh api` DELETE, `gh repo delete`, `gh release`, `git tag`. A red gate is undone with
+  `milestone.py ungate`, which resets only after its checks, never with a hand-typed reset.
 - **Not listed**, so auto mode checks them as usual: `rm`, `git branch -D`, `gh pr merge`, `<tool> shell`.
 - `<tool> run` lets any command reach a shared box without a check: the box claim and the recipes are the guard
   there ([live-testing.md](live-testing.md#live-checks-in-a-milestone)).
@@ -276,10 +316,13 @@ copy command. In patterns (paths as each machine has them):
 2. **The milestone pull request** (milestone branch into `master`) carries the report, made from
    [milestone-report.md](milestone-report.md). The privacy check runs on it before it is posted.
 3. On the maintainer's word ("merge") the controller merges with a merge commit, not squashed, so `master` keeps each
-   unit's commits and `Fixes #N` closes the issues. The report asks, in the same line, for leave to delete the
-   milestone's branches on GitHub; deleting is the maintainer's word, never assumed. The controller removes the
-   gate worktree (`end`) and any worktree left, and, under its own claim, the folders a dead agent left on a shared
-   box. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
+   unit's commits and `Fixes #N` closes the issues: from the main checkout, on `master`,
+   `git merge --no-ff milestone/NAME`, the whole `cargo test`, then `git push origin master`, and GitHub marks the
+   milestone pull request merged. A red `cargo test` there pushes nothing: the controller tells the maintainer. The
+   report asks, in the same line, for leave to delete the milestone's branches on GitHub; deleting is the
+   maintainer's word, never assumed. The controller removes any unit worktree left (`rm`), then the gate worktree
+   (`end`, which refuses while a unit worktree is left), and, under its own claim, the folders a dead agent left on a
+   shared box. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
 
 ### Judging a trial milestone
 

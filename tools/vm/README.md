@@ -35,35 +35,42 @@ folder come from `AGENTS.local.md`; nothing here names them.
   - `KEYDOWN ctrl` / `KEYUP ctrl` (also shift, alt), `CHORD ctrl+shift+P` (keys with their scan codes);
   - `SIZE w,h` (the front window restored and sized), `CLOSE` (WM_CLOSE to the front window);
   - `SHOT name.png` (a capture now), `WINS name.txt` (the program's top-level windows).
-- `cleanup.ps1 [-Dir <folder>]` stops the ttyak processes started from the work folder (default
-  `%USERPROFILE%\ttyak-test`, which holds every unit's folder: always pass `-Dir <the literal unit folder>`, or it
-  stops another unit's ttyak) and stuck `keys.ps1` runs of this copy; other people's programs are left alone.
+- `cleanup.ps1 -Dir <folder>` stops the ttyak processes started from the folder `-Dir` (mandatory, no default: the
+  literal unit folder, never `%USERPROFILE%\ttyak-test`, which holds every unit's folder and so another unit's ttyak)
+  and stuck `keys.ps1` runs of this copy; other people's programs are left alone.
 - `test_vm_scripts.py` (run here, not there): every script is plain ASCII and parses with PowerShell's parser.
 
 ## Using them
 
-From this repository, with `<host>` the Windows machine's ssh alias from `AGENTS.local.md` (the commands run cmd
-there; relative `scp` paths start in the user's home folder):
+On the shared Windows VM, only under a box claim and only through the claim tool named in `AGENTS.local.md`
+(`<tool>`, with `BOX` and your claim id `ID`: live-testing's
+[Test machines](../../docs/agents/live-testing.md#test-machines)); never a raw `ssh` or `scp` to the machine. One
+command per call, every path written out: `<unit>` is your unit's folder under `ttyak-test` (outside a milestone,
+your task name), `<user>` is in `AGENTS.local.md`, `<checkout>` is the absolute path of the tree you work in (in a
+milestone, your worktree) and `<evidence>` an absolute folder of yours (in a milestone, the unit's evidence folder).
 
 ```sh
-set -euo pipefail
-# <unit> is your unit's folder under ttyak-test (outside a milestone, your task name); <user> is in AGENTS.local.md
-W='C:\Users\<user>\ttyak-test\<unit>\vm'
-ssh -T -o BatchMode=yes <host> "if not exist $W mkdir $W" < /dev/null
-scp -q -o BatchMode=yes tools/vm/*.ps1 '<host>:ttyak-test/<unit>/vm/'
-# a capture of the machine's desktop, copied back into the scratch folder
-RUN='powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\<user>\ttyak-test\<unit>\vm'
-ssh -T -o BatchMode=yes <host> "$RUN\\capture.ps1 -Name desk.png" < /dev/null
-scp -q -o BatchMode=yes '<host>:ttyak-test/<unit>/vm/shots/desk.png' <scratch>/desk.png
+# your unit folder, then the scripts into its vm folder (`push` places a folder as scp -r would)
+<tool> run BOX ID -- "if not exist C:\Users\<user>\ttyak-test\<unit> mkdir C:\Users\<user>\ttyak-test\<unit>"
+<tool> push BOX ID <checkout>/tools/vm 'C:\Users\<user>\ttyak-test\<unit>\vm'
+# a capture of the machine's desktop, copied back
+<tool> run BOX ID -- "powershell -NoProfile -ExecutionPolicy Bypass \
+    -File C:\Users\<user>\ttyak-test\<unit>\vm\capture.ps1 -Name desk.png"
+<tool> pull BOX ID 'C:\Users\<user>\ttyak-test\<unit>\vm\shots\desk.png' <evidence>/desk.png
+# at the end: stop what ran from the unit folder, remove the folder, check it is gone
+<tool> run BOX ID -- "powershell -NoProfile -ExecutionPolicy Bypass \
+    -File C:\Users\<user>\ttyak-test\<unit>\vm\cleanup.ps1 -Dir C:\Users\<user>\ttyak-test\<unit>"
+<tool> run BOX ID -- "rmdir /s /q C:\Users\<user>\ttyak-test\<unit>"
+<tool> run BOX ID -- "if exist C:\Users\<user>\ttyak-test\<unit> echo left"
 ```
 
-- Always close ssh's standard input (`< /dev/null`) and use `-T -o BatchMode=yes`: otherwise ssh can hang.
-- The machine's default ssh shell is cmd; anything with several steps goes into a `.ps1` file that is copied over and
-  run with `-File`, not through nested quotes.
+- `run` hands its line to the box's shell, cmd; anything with several steps goes into a `.ps1` file that is pushed
+  over and run with `-File`, not through nested quotes.
 - Look at every capture before relying on it; it shows the Windows machine's desktop only.
-- Call `cleanup.ps1` with `-Dir C:\Users\<user>\ttyak-test\<unit>` (the literal unit folder) at the end.
-- Remove the `vm` folder, the `shots` in it and anything else copied over when done (live-testing's "Restore it as
-  found").
+- `cleanup.ps1` always gets `-Dir` with the literal unit folder (it has no default), before the folder is removed.
+- The unit folder holds everything pushed (the `vm` folder, its `shots`): removing it is live-testing's "Restore it as
+  found". A Windows clone has commands of its own for this (`<tool> instance push`, `exec --desktop`, `shot`:
+  live-testing's [Windows in a clone](../../docs/agents/live-testing.md#windows-in-a-clone)), and is thrown away.
 
 ## Where they came from
 

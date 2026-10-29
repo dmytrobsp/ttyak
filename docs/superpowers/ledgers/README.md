@@ -51,8 +51,9 @@ ledger, committed on `master` like any other (not on the milestone branch), with
   change it led to.
 - **At the end**: the final review's outcome, the checks, and the retro.
 
-After a lost session, this ledger, `git log`, the open pull requests and the worktrees on disk
-(`python3 tools/milestone/milestone.py ls`) are how the controller resumes.
+After a lost session, this ledger, `git log`, the open pull requests, the worktrees on disk
+(`python3 tools/milestone/milestone.py ls`) and the agent ids in `.superpowers/sdd/<plan>/agents.md` (unit, role,
+id: git-ignored, so the agents can be resumed) are how the controller resumes.
 
 ## Example
 
