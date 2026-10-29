@@ -192,7 +192,7 @@ pub fn wrapped_rows(text: &str, width: usize) -> u16 {
     rows
 }
 
-/// The words of the audio line's long form, for `tr`.
+/// The words of the audio line (its long and its short form), for `tr`.
 pub const WORDS: &[&str] = &["volume", "mic gain", "threshold", "noise suppression", "echo cancellation", "on", "off", "F6 → Audio & video", "vol", "gain", "gate", "noise", "echo"];
 
 /// The audio settings in a line, shortened when `width` is too narrow for the long form.
