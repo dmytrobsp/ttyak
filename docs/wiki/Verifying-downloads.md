@@ -17,15 +17,15 @@ with its line in `SHA256SUMS`.
 
 ## Attestations
 
-With the [GitHub CLI](https://cli.github.com) (for version 0.12.2):
+With the [GitHub CLI](https://cli.github.com) (for version 0.12.3):
 
 ```sh
-gh attestation verify ttyak-0.12.2-x86_64-linux.zip -R dmytrobsp/ttyak --source-ref refs/tags/v0.12.2 \
+gh attestation verify ttyak-0.12.3-x86_64-linux.zip -R dmytrobsp/ttyak --source-ref refs/tags/v0.12.3 \
   --signer-workflow dmytrobsp/ttyak/.github/workflows/release.yml
 ```
 
 passes only for a file this repository's release workflow (`.github/workflows/release.yml`) built from the tag
-`v0.12.2`; with another tag it fails ("expected SourceRepositoryRef to be refs/tags/…").
+`v0.12.3`; with another tag it fails ("expected SourceRepositoryRef to be refs/tags/…").
 
 ## If it doesn't work
 
