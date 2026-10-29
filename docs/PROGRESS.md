@@ -3,7 +3,7 @@
 The current state, in short. This page is rewritten when things change, never appended to; keep it near 100 lines.
 What happened before is in [history/](history/README.md), the plans' ledgers and `git log`.
 
-Last rewritten: 2026-10-28.
+Last rewritten: 2026-10-29.
 
 ## Latest release
 
@@ -23,32 +23,17 @@ Last rewritten: 2026-10-28.
 
 ## In flight
 
-- **Test machines and shared resources** ([#30](https://github.com/dmytrobsp/ttyak/issues/30)): design
-  [2026-10-27-test-machines-design.md](superpowers/specs/2026-10-27-test-machines-design.md) — box claims, throwaway
-  Linux/Windows/macOS instances, claims for the Slack test accounts — built in five parts, one plan each.
-- **Done: box claims** (2026-10-27) — plan [2026-10-27-box-claims.md](superpowers/plans/2026-10-27-box-claims.md),
-  ledger [2026-10-27-box-claims.md](superpowers/ledgers/2026-10-27-box-claims.md): the shared test boxes are used
-  only under a claim, through the claim tool named in `AGENTS.local.md` (a private repository of its own); live on
-  both boxes.
-- **Done: account claims** (2026-10-27) — plan
-  [2026-10-27-account-claims.md](superpowers/plans/2026-10-27-account-claims.md), ledger
-  [2026-10-27-account-claims.md](superpowers/ledgers/2026-10-27-account-claims.md): the Slack test accounts
-  are claimed with `tools/accounts/accounts.py`, and live checks get their sessions through `install` into a fake
-  home; no agent recipe uses the real config folder any more.
-- **Done: Linux instances** (2026-10-27) — plan
-  [2026-10-27-linux-instances.md](superpowers/plans/2026-10-27-linux-instances.md), ledger
-  [2026-10-27-linux-instances.md](superpowers/ledgers/2026-10-27-linux-instances.md): throwaway sway and GNOME
-  desktops in rootless podman; ttyak's Linux live checks run there (docs/agents/live-testing.md, "A Linux
-  instance"); a Slack notification reached ttyak in one, live.
-- **Done: VM clones** (2026-10-28) — plan [2026-10-28-vm-clones.md](superpowers/plans/2026-10-28-vm-clones.md),
-  ledger [2026-10-28-vm-clones.md](superpowers/ledgers/2026-10-28-vm-clones.md): a Hyprland VM and Windows 11
-  evaluation clones, throwaway linked clones of bases built by script, through the same instance commands and slots;
-  Windows live checks run in a clone by default (docs/agents/live-testing.md). ttyak ran in both and a Slack message
-  reached each, live. Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise).
-- **Now: macOS VM** — plan [2026-10-28-macos-vm.md](superpowers/plans/2026-10-28-macos-vm.md), ledger
-  [2026-10-28-macos-vm.md](superpowers/ledgers/2026-10-28-macos-vm.md): a throwaway macOS VM on the Mac (Tart, a
-  base from Apple's restore image), driven from the desktop through the same instance commands (a spike showed it
-  works headless with no click).
+- **Done: test machines and shared resources** ([#30](https://github.com/dmytrobsp/ttyak/issues/30), 2026-10-27 –
+  2026-10-29): design [2026-10-27-test-machines-design.md](superpowers/specs/2026-10-27-test-machines-design.md),
+  five plans and their ledgers in [superpowers/plans/](superpowers/plans/) and
+  [superpowers/ledgers/](superpowers/ledgers/README.md) (box claims, account claims, Linux instances, VM clones,
+  macOS VM). Every shared test box is used under a claim, the Slack test accounts are claimed and installed into fake
+  homes, and live checks run in throwaway instances by default: sway and GNOME containers, a Hyprland VM, Windows 11
+  evaluation clones and a macOS VM on the Mac — all through the claim tool named in `AGENTS.local.md`
+  ([docs/agents/live-testing.md](agents/live-testing.md)). ttyak ran in each and a Slack message reached it, live.
+  Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise). The history of `master`
+  was rewritten on 2026-10-28 to keep the claim tool unnamed
+  ([history-rewrite-2026-10-28.md](superpowers/ledgers/history-rewrite-2026-10-28.md)).
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
@@ -69,8 +54,6 @@ The maintainer's next topics, all about how the work gets done (`process`, `need
 
 - [#29](https://github.com/dmytrobsp/ttyak/issues/29) — a multi-agent milestone workflow: agents pull issues, pull
   requests into a milestone branch, review-fix loops.
-- [#30](https://github.com/dmytrobsp/ttyak/issues/30) — test machines for agents: throwaway instances or shared boxes,
-  Linux checks off the maintainer's desktop.
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
   re-test when they change.
 
