@@ -48,8 +48,8 @@ Last rewritten: 2026-10-29 (milestone 0.12.3 done).
   [2026-10-29-milestone-0.12.3.md](superpowers/ledgers/2026-10-29-milestone-0.12.3.md). It brought: 307/308
   redirects followed only to Slack's own hosts (#51); mouse buttons 10 and 11 decoded and ignored (#47); the "new"
   line placed right with more unread than a page (#56); the huddles view's "1 h", names instead of ids and a
-  reliable start notice, its short audio line translated (#50, #36); timeouts in pages.yml (#41). About 2½ hours
-  from the first dispatch to the merge; the retro's changes are in workflow.md, live-testing.md and the report
+  reliable start notice, its short audio line translated (#50, #36); timeouts in pages.yml (#41). About 1½ hours
+  from the first dispatch to the milestone pull request; the retro's changes are in workflow.md, live-testing.md and the report
   template, and a milestone's branches are now deleted after its merge.
 - Last done: the above; before it #29 and #30.
 
