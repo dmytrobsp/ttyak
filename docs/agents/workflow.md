@@ -324,8 +324,8 @@ copy command. In patterns (paths as each machine has them):
    implementer (the one who knows most of the code it touches may be resumed) and the final reviewer's scoped
    re-review. Then the checks: the whole `cargo test`, the Windows cross-build and `cargo test --no-run` for Windows,
    **the whole `cargo test` run on Windows** in a throwaway Windows clone
-   ([live-testing.md](live-testing.md#windows-in-a-clone); CI builds Windows but runs none of its tests, #61; not
-   tried yet in a clone — the first run, before the 0.12.3 release, writes its recipe into live-testing.md), CI on
+   ([live-testing.md](live-testing.md#the-whole-cargo-test-in-a-clone); CI builds Windows but runs none of its tests,
+   #61; a known failure there is listed in that recipe), CI on
    the milestone pull request, and the controller's live smoke check of the milestone branch. The report's Health
    line says, per platform, what ran: tests executed, tests only built, live.
 2. **The milestone pull request** (milestone branch into `master`) carries the report, made from

@@ -544,6 +544,41 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
   `%LOCALAPPDATA%\ttyak\cache\<profile>\ttyak.log`. No environment variable moves ttyak's folders on Windows (the
   `directories` crate asks the system for them), hence the pushes. NOT tried: sound, and a click on a Windows toast.
 
+#### The whole `cargo test` in a clone
+
+CI builds Windows but runs none of its tests (#61), so a milestone's end and a release run them in a clone. No account
+is needed. The test binaries are self-contained (no test reads the source tree at run time), about 1 GiB together,
+inside the clone's 2 GB.
+
+```sh
+set -euo pipefail
+WT=<the tree you test>; E=<evidence>                     # absolute paths
+cargo test --no-run --target x86_64-pc-windows-gnu --manifest-path "$WT/Cargo.toml" --message-format=json \
+  | python3 -c 'import sys,json
+for l in sys.stdin:
+    m=json.loads(l) if l.startswith("{") else {}
+    if m.get("reason")=="compiler-artifact" and m.get("executable") and m.get("profile",{}).get("test"):
+        print(m["executable"])'
+# one test binary per crate: slack_core-<hash>.exe, huddle-<hash>.exe, ttyak-<hash>.exe under target/…/debug/deps
+<tool> instance new --desktop windows --purpose "ttyak: Windows cargo test"   # prints `instance NAME id=ID slot=N`
+<tool> instance push NAME ID <each test binary> 'C:\Users\tbuser\<crate>-tests.exe'
+# huddle's tests need MinGW's C++ runtime (the shipped ttyak.exe does not): the linker's own copies, next to them
+STDCXX=$(x86_64-w64-mingw32-g++ -print-file-name=libstdc++-6.dll)
+GCC_S=$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)
+<tool> instance push NAME ID "$STDCXX" 'C:\Users\tbuser\libstdc++-6.dll'
+<tool> instance push NAME ID "$GCC_S" 'C:\Users\tbuser\libgcc_s_seh-1.dll'
+<tool> instance exec NAME ID -- 'cd /d C:\Users\tbuser && <crate>-tests.exe' > "$E/<crate>.txt" 2>&1  # each crate
+<tool> instance rm NAME ID
+```
+
+- `exec` (session 0) is enough for the tests; `exec --desktop` with the output redirected to a file and `pull`ed runs
+  one in the user's session.
+- **LIVE** (2026-10-29, at 0.12.3's merge): slack_core 94 passed, huddle 44 passed (after the two DLLs; without them
+  it exits without output), ttyak 1036 passed and 1 failed: `a_toast_is_named_by_its_tag` asserts that Windows'
+  notification setting for PowerShell's app id can be read, and on a fresh clone it cannot (in session 0 and in the
+  user's session alike). ttyak handles that (the toast is handed to Windows, the setting "not known"); the test's
+  assumption is filed on #61. A few tests are Unix-only, so the counts are below Linux's.
+
 ### macOS in a VM
 
 `<tool> instance new --desktop macos` makes a macOS VM on the Mac, from the desktop (the claim tool relays it there),
