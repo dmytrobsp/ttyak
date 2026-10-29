@@ -26,7 +26,8 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
   branch `milestone/NAME` from `master` and the gate worktree `<root>/NAME/_gate`; `add NAME UNIT [--floor-gb N]`:
   branch `m/NAME/UNIT` and worktree `<root>/NAME/UNIT` from the milestone tip (refuses below the free-disk floor);
   `rm NAME UNIT [--delete-branch]`: removes that worktree with its `target/` (only an exact registered worktree of
-  this repository; `git branch -d` for the branch); `end NAME`: removes the gate when no unit is left; `ls [NAME]`:
+  this repository; refuses any uncommitted work: tracked, staged or untracked files, ignored build output is fine;
+  `--delete-branch` deletes the branch only when it is merged into `milestone/NAME`); `end NAME`: removes the gate when no unit is left; `ls [NAME]`:
   worktrees with sizes and free GB; `gate NAME UNIT`: `merge --no-ff` of the unit into the clean gate (conflict:
   aborted, files listed). Never pushes or runs tests. Exit codes: 0 done, 2 refused, 3 merge conflict.
 - `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop

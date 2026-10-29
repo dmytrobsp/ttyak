@@ -346,7 +346,6 @@ class MilestoneTest(unittest.TestCase):
         real = self.tmp / "real"
         real.mkdir()
         git(self.repo, "worktree", "add", "-q", "-b", "m/trial/fix-1", str(real / "fix-1"), "milestone/trial")
-        (self.root / "other").mkdir()
         (self.root / "link").symlink_to(real)
         code, _, _ = self.run_cli("rm", "link", "fix-1")
         self.assertEqual(code, 2)
@@ -357,6 +356,35 @@ class MilestoneTest(unittest.TestCase):
         code, _, _ = self.run_cli("start", "trial")
         self.assertEqual(code, 2)
         self.assertNotIn("milestone/trial", self.branches())
+
+    def test_gate_failure_without_merge_shows_git_message(self):
+        gate = self.start()
+        sha = git(self.repo, "commit-tree", "master^{tree}", "-m", "unrelated")
+        git(self.repo, "branch", "m/trial/orph", sha)
+        old = git(gate, "rev-parse", "HEAD")
+        code, _, err = self.run_cli("gate", "trial", "orph")
+        self.assertEqual(code, 2)
+        self.assertIn("unrelated histories", err)
+        self.assertNotIn("needs a hand", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), old)
+        self.assertEqual(git(gate, "status", "--porcelain"), "")
+
+    def test_delete_branch_fails_if_commit_lands_in_between(self):
+        self.start()
+        wt = self.add("fix-1")
+        orig = milestone.git
+
+        def fake(repo, *args, **kw):
+            r = orig(repo, *args, **kw)
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                git(repo, "update-ref", "refs/heads/m/trial/fix-1", git(repo, "commit-tree", "master^{tree}",
+                                                                          "-p", "master", "-m", "late"))
+            return r
+
+        with mock.patch.object(milestone, "git", fake):
+            code, _, err = self.run_cli("rm", "trial", "fix-1", "--delete-branch")
+        self.assertEqual(code, 2)
+        self.assertIn("m/trial/fix-1", self.branches())
 
     def test_check_name_and_root(self):
         self.assertEqual(milestone.check_name("a.b-1"), "a.b-1")

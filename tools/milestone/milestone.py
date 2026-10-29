@@ -9,10 +9,11 @@ gate NAME UNIT. Global option: --repo PATH (the repository to work on; default: 
 Exit codes: 0 done, 2 refused (bad name, exists, disk floor, not our worktree, dirty gate), 3 merge conflict.
 
 Removal is checked: `rm` and `end` delete only the exact path `<root>/NAME/UNIT` (not a symlink, resolving under the
-root) that is a registered worktree of this repository, and refuse when tracked files have changes.
+root) that is a registered worktree of this repository, and refuse when it holds uncommitted work (tracked, staged or
+untracked files that are not ignored; ignored build output such as target/ is fine).
 
-It never pushes, never deletes a remote branch, never deletes a branch except `rm --delete-branch` (git branch -d,
-merged branches only), and never runs tests.
+It never pushes, never deletes a remote branch, never deletes a branch except `rm --delete-branch`, and then only
+one that is merged into `milestone/NAME`, and never runs tests.
 """
 from __future__ import annotations
 
@@ -189,10 +190,15 @@ def cmd_rm(repo: Path, rt: Path, a) -> int:
             print(f"branch {branch} does not exist", file=sys.stderr)
             return 2
         # merged means into the milestone branch (`git branch -d` would compare with master)
-        if git(repo, "merge-base", "--is-ancestor", branch, base, check=False).returncode != 0:
+        sha = git(repo, "rev-parse", f"refs/heads/{branch}").stdout.strip()
+        if git(repo, "merge-base", "--is-ancestor", sha, base, check=False).returncode != 0:
             print(f"{branch} is not merged into {base}; branch kept", file=sys.stderr)
             return 2
-        git(repo, "branch", "-D", branch)
+        # delete only the commit just checked: a commit that landed since makes this fail
+        r = git(repo, "update-ref", "-d", f"refs/heads/{branch}", sha, check=False)
+        if r.returncode != 0:
+            print(f"{branch} changed while it was checked; branch kept ({r.stderr.strip()})", file=sys.stderr)
+            return 2
     return 0
 
 
@@ -237,6 +243,9 @@ def cmd_gate(repo: Path, rt: Path, a) -> int:
     r = git(gate, "merge", "--no-ff", "--no-edit", branch, check=False)
     if r.returncode != 0:
         files = git(gate, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+        if git(gate, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0:
+            # no merge in progress (e.g. unrelated histories): nothing to abort, show git's own message
+            raise Refused(r.stderr.strip() or r.stdout.strip() or "merge failed")
         aborted = git(gate, "merge", "--abort", check=False)
         if (aborted.returncode != 0 or git(gate, "rev-parse", "HEAD").stdout.strip() != old
                 or git(gate, "status", "--porcelain").stdout.strip()):
