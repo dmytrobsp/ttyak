@@ -17,9 +17,11 @@ as one event (Task 9 of 0.12.0).
 
 ## What changed
 
-- `MouseButton` (`src/event.rs`) gains `Back` and `Forward`.
-- `parse_cb` (`src/event/sys/unix/parse.rs`) decodes buttons 8 and 9 as `Down`, and as `Drag` with the motion
-  bit; the release (`m`) turns `Down` into `Up` as for the other buttons. Buttons 10 and 11 still fail.
+- `MouseButton` (`src/event.rs`) gains `Back` and `Forward`, and `Button10` and `Button11` (named by their SGR
+  button number, as the mouse has no common name for them).
+- `parse_cb` (`src/event/sys/unix/parse.rs`) decodes buttons 8 and 9 as `Down`, buttons 10 and 11 (`Cb` 130 and 131)
+  the same, and all four as `Drag` with the motion bit; the release (`m`) turns `Down` into `Up` as for the other
+  buttons. Button 12 and up (`Cb` 192 and up) still fail. ttyak ignores 10 and 11 on purpose.
 - `Event::Osc(String)` (`src/event.rs`): the payload between `ESC ]` and its end (BEL or `ESC \`), both left out. Only
   the Unix backend produces it; the Windows backend never does, so it compiles unchanged. `Event` is no longer
   `Copy` without the `bracketed-paste` feature (it carries a `String`; ttyak uses the default features, where it
@@ -42,7 +44,8 @@ as one event (Task 9 of 0.12.0).
   `Parser::advance` in `mio.rs`: `esc_bracket_and_a_key_is_alt_bracket_and_the_key`,
   `an_st_split_between_esc_and_backslash_is_one_osc`, `a_stray_osc_then_typing_loses_nothing`.
   ttyak ignores the event for now (`an_osc_reply_is_no_key_and_changes_nothing`).
-- A unit test for the SGR sequences: `test_parse_csi_sgr_mouse_side_buttons`.
+- A unit test for the SGR sequences: `test_parse_csi_sgr_mouse_side_buttons` (buttons 8 to 11: down, release, drag;
+  button 12 still fails).
 - Upstream's colour tests (`src/style/types/colored.rs`) take turns on the process-wide colour switch (a test-only
   mutex, `colour_switch`), and the ANSI parse test turns colours on for itself: run in parallel, one test turned colours
   off while another formatted, so `test_parse_ansi_fg`/`_bg` failed about every other run (and with `NO_COLOR` set
@@ -53,7 +56,8 @@ as one event (Task 9 of 0.12.0).
 - Files: `.cargo-ok`, `.github/` and `.travis.yml` of the registry copy are left out, as for rtc-turn.
   `src/event.rs` and `parse.rs` keep their CRLF line endings, so a diff shows only the patch.
 - Nothing else. The Windows backend never builds the new variants (its console events carry no side
-  buttons, no OSC), so it compiles unchanged. ttyak's own test is `the_mouses_side_buttons_go_back_and_forward`.
+  buttons, no OSC), so it compiles unchanged. ttyak's own tests are `the_mouses_side_buttons_go_back_and_forward` and
+  `the_mouses_buttons_10_and_11_do_nothing`.
 
 The crate is not a member of ttyak's workspace, so its own tests (which need dev-dependencies ttyak does
 not have) are not run by `cargo test`; run them from a copy outside the workspace.

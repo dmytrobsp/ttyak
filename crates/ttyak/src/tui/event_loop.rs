@@ -11241,6 +11241,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_mouses_buttons_10_and_11_do_nothing() {
+        use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        app.jump_to("C1");
+        settle(&mut app, true);
+        let status = app.status.clone();
+        for b in [MouseButton::Button10, MouseButton::Button11] {
+            for kind in [MouseEventKind::Down(b), MouseEventKind::Up(b), MouseEventKind::Drag(b)] {
+                super::handle_event(&mut app, Event::Mouse(MouseEvent { kind, column: 10, row: 5, modifiers: KeyModifiers::NONE }));
+                settle(&mut app, true);
+                assert_eq!(app.current.as_deref(), Some("C1"), "{kind:?} does not step through the history");
+                assert!(app.overlay().is_none() && app.menu.is_none());
+                assert_eq!(app.status, status);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn the_mouses_side_buttons_leave_the_picker_and_the_menu_open() {
         use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
         let (mut app, _net) = with_channels(&["C1", "C2"]);

@@ -836,6 +836,12 @@ pub enum MouseButton {
     // ttyak: see Back.
     /// Forward (side) mouse button.
     Forward,
+    // ttyak: the buttons after them, SGR buttons 10 and 11 (some mice send them); ttyak ignores them.
+    /// Mouse button 10.
+    Button10,
+    // ttyak: see Button10.
+    /// Mouse button 11.
+    Button11,
 }
 
 bitflags! {

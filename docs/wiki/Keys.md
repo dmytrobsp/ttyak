@@ -70,7 +70,7 @@ Threads, Activity (on its tab) or Huddles view you came from, at the message you
   drops the places ahead. A channel left or archived meanwhile is skipped.
 - Only in NORMAL, never while you type.
 - The mouse's side buttons do the same (button 8 back, 9 forward), in a terminal that reports them; ttyak reads them
-  through a patched `crossterm` (`vendor/crossterm`).
+  through a patched `crossterm` (`vendor/crossterm`). Buttons 10 and 11, which some mice send, do nothing.
 
 ### The mouse
 
