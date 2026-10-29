@@ -184,7 +184,8 @@ refused, 3 a merge conflict.
 ### A unit, from brief to merge
 
 1. **Brief.** The controller writes it to the plan's scratch folder (`.superpowers/sdd/<plan>/`), never in the same
-   chained command as the dispatch. It holds the plan's Global Constraints (the shell rules always), the issue and the
+   chained command as the dispatch, with the Write tool (not a heredoc: [Permission
+   refusals](#permission-refusals)). It holds the plan's Global Constraints (the shell rules always), the issue and the
    maintainer's answers for it, the files to read, the worktree, branch and build folder, the absolute path of the
    unit's evidence folder (the main checkout's `.superpowers/sdd/<plan>/<unit>/`), the live-check rules of
    [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do. Then it dispatches the
@@ -226,12 +227,19 @@ them, and the few that remain reach the maintainer at once.
 
 - **Fewer refusals.** A project allowlist of the commands the workflow needs, written as narrowly as works; the
   maintainer approves it before it goes in. Briefs and recipes use plain, separate commands with literal paths (or
-  `${VAR:?}`), never a scripted edit chained with a commit and never a computed command name. A dry run before the
-  first milestone (one implementer, one throwaway unit, every recipe the workflow uses) finds the refusals that are
-  left, and each is fixed in the allowlist or the recipes.
+  `${VAR:?}`), never a scripted edit chained with a commit and never a computed command name. One command per tool
+  call; the claim tool is written with its literal path and the claim id literally (never `$T` or `$ID`), above all
+  in a call that carries a recursive delete: the safety hook reads the quoted remote command too and refuses a
+  recursive delete next to variables without `set -euo pipefail`. Files (reports, briefs, scripts) are written with
+  the Write and Edit tools, never through a heredoc or `python3 - <<EOF` in Bash: the hook scans heredoc bodies, so a
+  report that quotes an `rm` line is refused. A dry run before the first milestone (one implementer, one throwaway
+  unit, every recipe the workflow uses) finds the refusals that are left, and each is fixed in the allowlist or the
+  recipes.
 - **A refusal that still happens** stops only the step that hit it, as the hard rule says: never reworded, split or
-  retried. The implementer reports it with the exact command; the controller checks the worktree for partial writes
-  (`git status`), parks that unit and keeps the others running.
+  retried. The implementer reports it with the command exactly as sent and the refusal text verbatim; the controller
+  checks the worktree for partial writes (`git status`), parks that unit and keeps the others running. After a
+  refused cleanup on a shared box the implementer stops and leaves the whole cleanup, the release included, to the
+  controller (it does not release the claim separately), which cleans up under its own claim by the recipe.
 - **The controller tells the maintainer at once**: the exact command, why it was needed, what waits on it, and the
   allowlist line that would prevent it next time. Refusals that arrive together go in one message. When the
   maintainer has run or allowed it, the parked unit goes on.
