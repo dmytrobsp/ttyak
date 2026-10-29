@@ -388,7 +388,11 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.
-- **macOS**: copy the source with
+- **macOS, in a VM by default.** A macOS live check runs in a throwaway macOS VM on the Mac, made by the claim tool
+  ([macOS in a VM](#macos-in-a-vm)), not on the Mac itself. The Mac is claimed (a box claim) only to build ttyak there
+  and for what needs the real machine: the maintainer's own setup, real speakers, microphone, camera or screen (ask
+  the maintainer first), and their prompts and clicks. The rest of this bullet is the Mac itself.
+- **macOS, the Mac itself**: copy the source with
   `git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test"` (`run` passes stdin
   through); a non-interactive shell there lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake
   comes from Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files
@@ -451,6 +455,77 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
   listed by `notifications` (PowerShell's app id) and showed as a banner in `shot`; `pull` fetched the log from
   `%LOCALAPPDATA%\ttyak\cache\<profile>\ttyak.log`. No environment variable moves ttyak's folders on Windows (the
   `directories` crate asks the system for them), hence the pushes. NOT tried: sound, and a click on a Windows toast.
+
+### macOS in a VM
+
+`<tool> instance new --desktop macos` makes a macOS VM on the Mac, from the desktop (the claim tool relays it there),
+ready in under a minute. ttyak is built on the Mac, under a box claim as in [Test machines](#test-machines), and the
+build is mounted into the VM; the session is pushed in. The VM is the fake home. It needs 6 GB of the Mac's pool beside
+the maintainer's 6 GB reserve, and macOS VMs run one at a time, so `new` may queue like any instance (the 10-minute cap
+does not apply to that wait). A start is refused unless the Mac's firewall is on and Tart is blocked; the claim tool's
+README has the setup (the maintainer does it once), and it is refused on battery.
+
+```sh
+set -euo pipefail
+REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
+ACC_ID=<the ID from its "claimed A id=ID" line>
+# 1. build ttyak on the Mac under a box claim (BOX and ID: [Test machines](#test-machines)); keep only the binary
+git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/src && tar -x -C ~/ttyak-test/src"
+<tool> run BOX ID -- "export PATH=/opt/homebrew/bin:\$HOME/.cargo/bin:\$PATH; cd ~/ttyak-test/src && cargo build \
+    && mkdir -p ~/ttyak-test/build && cp target/debug/ttyak ~/ttyak-test/build/"
+<tool> release BOX ID                              # the VM needs no box claim; the Mac is free for others again
+# 2. the VM: the build folder is snapshotted read-only; SRC is the Mac's absolute path (its user is in AGENTS.local.md)
+<tool> instance new --desktop macos --purpose "ttyak: <what>" --mount <the Mac's home>/ttyak-test/build:ttyak
+# it prints `instance NAME id=ID slot=N`: ID is the slot id, not `$ACC_ID`; the binary is at
+# '/Volumes/My Shared Files/ttyak/ttyak' in the guest
+SUPPORT='Library/Application Support/ttyak'        # ttyak's macOS folder, from the guest user's home
+<tool> instance exec NAME ID -- "mkdir -p '$SUPPORT/<A>'"
+<tool> instance push NAME ID "$FAKE/.config/ttyak/<A>/session.json" "$SUPPORT/<A>/session.json"
+<tool> instance push NAME ID "$FAKE/.config/ttyak/settings.toml" "$SUPPORT/settings.toml"   # sounds off
+python3 "$REPO/tools/accounts/accounts.py" renew A "$ACC_ID"                                # right before ttyak starts
+# ttyak in Terminal, in the logged-on session; it blocks until ttyak ends: run it in the background, keep the PID
+<tool> instance exec --desktop --timeout 25m NAME ID -- "'/Volumes/My Shared Files/ttyak/ttyak' --profile <A>" \
+    >out.txt 2>&1 &
+TTYAK_PID=$!
+<tool> instance windows NAME ID               # the apps and the front one, no window titles
+<tool> instance shot NAME ID out.png          # what the screen shows (look at it before relying on it)
+<tool> instance notifications NAME ID         # ttyak's notifications: delivered or presented, app Terminal
+<tool> instance pull NAME ID 'Library/Caches/ttyak/<A>/ttyak.log' ./ttyak.log
+kill "$TTYAK_PID" 2>/dev/null || true         # stops the waiting exec; it still ends ttyak (or let the timeout)
+<tool> instance rm NAME ID
+python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after ttyak is gone
+# then delete the fake home as in "A fake home"; the build folder on the Mac, under a new box claim (see below)
+```
+
+- **Files go in with `push`; the build with `--mount`.** `--mount SRC:NAME` takes a read-only APFS snapshot of the
+  folder SRC (a Mac path, a folder, never a file) when `new` runs, so later builds stay out; the guest sees it at
+  `/Volumes/My Shared Files/NAME`. `--home` and `record` are refused (exit 2): there is no fake home to point ttyak
+  at, the VM is it. The session goes to ttyak's macOS folder, `~/Library/Application Support/ttyak/<profile>/`
+  (`settings.toml` one level up); the log is `~/Library/Caches/ttyak/<profile>/ttyak.log` (from the code's use of the
+  `directories` crate, NOT yet read in a VM). `push` 100 MiB takes about 4 s (24 MB/s), `pull` is about 38 MB/s.
+- **`exec` and `exec --desktop`.** `exec` runs over ssh in the guest user's home: files, `ttyak ctl`, `sw_vers`. `exec
+  --desktop` runs the command in Terminal, in the logged-on session, and streams its output back; its `--timeout`
+  (default 25m) ends the command and replaces `timeout 25m`, so a dead agent's ttyak cannot outlive the account claim:
+  renew the account right before it starts. The command line goes to `sh`: quote the path with spaces as above. There
+  is no `python3` in the guest (calling it opens the developer-tools dialog): use macOS's own programs. ttyak's stdin
+  is Terminal's terminal and nothing types into it, so a TUI check reads the screen with `shot`.
+- **Notifications.** ttyak's notifications appear as Terminal's (`com.apple.Terminal`). `notifications` lists each as
+  `delivered`, or `presented` once a banner showed; macOS 26 logs no title or body, so a check proves that a
+  notification arrived and showed, not its text (read the text from `shot` while the banner is up, or from the log's
+  decision at debug level). Terminal in front suppresses banners: the tool starts Terminal in the background, and
+  `windows` says which app is in front. `--app BUNDLEID` reads another app's rows.
+- **`windows` and `shot`.** `windows` lists the apps with a Dock icon and the front one, with no window titles (macOS
+  gives none without the Accessibility permission). `shot` is a VNC screenshot taken on the Mac, local only.
+  **Never point a VNC viewer at a VM**: Virtualization's VNC server ends the whole VM when a client lacks the
+  DesktopSize extension.
+- **Software Update and Rosetta.** Software Update is off in the VM (Apple's update servers are blocked), so an update
+  prompt cannot appear and a Rosetta install would fail: build for the Mac's own architecture (Apple Silicon) only.
+- **Cleanup.** Pull the log before `rm`; the VM and the pushed session vanish with it. Release the accounts after
+  ttyak is gone, then delete the fake home. The build folder and source copy sit in `~/ttyak-test` on the Mac: delete
+  them under a new box claim (`<tool> run BOX ID -- "rm -rf ~/ttyak-test/src ~/ttyak-test/build"`, literal paths, then
+  check each is gone), and release. `<tool> instance ls` must show none of yours.
+- **LIVE** (the claim tool, not yet ttyak): `new` was ready in about 20 s (about 50 s until a fix lands); the first
+  ttyak check in a VM adds its own result here. NOT tried: sound (no audio device), a click on a notification.
 
 ## After the check
 
