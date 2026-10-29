@@ -410,8 +410,9 @@ the same machinery).
   VM is charged nothing more (resident at ~4.1 GB once ready).
 - **Tart.** The release bundle pinned by version and SHA-256, fetched with Apple's `/usr/bin/curl`, kept whole (its
   entitlements) under the tool's own folder; `TART_HOME` the tool's own (never `~/.tart`); auto-prune off (it would
-  drop the restore image). Every run: `--no-graphics --no-audio --no-clipboard`, VNC on 127.0.0.1 with `CI=true`.
-  Refused on battery (exit 5): `caffeinate -s` holds only on AC.
+  drop the restore image). Every run: `--no-graphics --no-audio --no-clipboard`, VNC for the tool's own client on
+  the Mac with `CI=true` (see "As built" below for how it is kept local). Refused on battery (exit 5): `caffeinate -s`
+  holds only on AC.
 - **Keeper.** A detached keeper process per VM (its own session) runs `caffeinate -s -i tart run …`, records the PIDs
   and the VNC address (0600), and every minute stops and deletes the VM once its slot claim is not live — no launchd
   job in the maintainer's account. `reap` also runs at every Mac-side `new` and `ls`.
@@ -434,6 +435,22 @@ the same machinery).
   lock and assistant prompts off. A check pass on a clone made as `new` makes it, before publish. Restore image
   cached; rebuilt from a fresh download when Apple no longer signs the cached one. Only the current build is kept;
   a build refuses below a free-disk floor.
+
+**macOS VM — as built (2026-10-29; what changed from the answers above, from the real Mac):**
+
+- The `macos` slot is **6 GB**, not 4.5 (a running VM measured 5.72 GiB resident).
+- VNC: Tart's VNC server does not bind to loopback alone, so the maintainer turned on the Mac's application firewall
+  with the tool's Tart blocked for incoming connections (2026-10-28); a VM start and a base build refuse unless both
+  hold. Proven live: the tool's client on the Mac connects; from the network no VNC data ever arrives. Apple's VNC
+  server ends the whole VM for a client that lacks the DesktopSize extension: the tool's client offers it, and no
+  other viewer is ever pointed at a VM.
+- Terminal's notification grant: the tool's own VNC pointer events at build time (the button shows only on hover,
+  which Packer's text-recognition click cannot do).
+- Software Update: macOS 26.6 turns it back on at every boot and offers no switch without MDM, so Apple's update
+  servers are blocked in the guest's hosts file, and the check pass checks it.
+- Notifications: macOS 26.6 logs no title or body; `notifications` proves arrival and presentation, `shot` the text.
+- Ready: about 50 s after `new` (the ready agent waits out 30 s for a System Settings window the base no longer
+  opens; shortened at the next rebuild).
 - **ttyak in the VM.** Built on the Mac under a Mac box claim; `--mount SRC:NAME` snapshots SRC with an APFS clone
   (`cp -c`, free) into the clone's record folder and shares it read-only at `/Volumes/My Shared Files/NAME`. The
   session is pushed to ttyak's folder in the VM (`~/Library/Application Support/ttyak/<profile>`); the VM is the
