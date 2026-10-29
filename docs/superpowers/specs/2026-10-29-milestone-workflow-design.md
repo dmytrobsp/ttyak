@@ -45,7 +45,9 @@ same quality.
 5. **Implementers run their own live checks**, under claims, with evidence the reviewer checks.
 6. **Measured capacity**: how many implementers this machine carries at once, measured before the trial and written
    down.
-7. **A trial milestone** of 3–5 small issues the maintainer picks, then an adjustment of the docs from what it
+7. **Few permission refusals**: a project allowlist the maintainer approves and a dry run that finds refusals before
+   the trial; any refusal that still happens reaches the maintainer at once.
+8. **A trial milestone** of 3–5 small issues the maintainer picks, then an adjustment of the docs from what it
    showed.
 
 ## Non-goals
@@ -180,20 +182,36 @@ only when the answer would change the implementation significantly. Other units 
 
 ### Permission prompts and refusals
 
-The maintainer runs sessions in auto mode and "would prefer to not be interrupted with refusals". So:
+The maintainer runs sessions in auto mode. A refusal must not hold the milestone up: "i want the milestone to
+actually be completed, so the refusals has to be addressed ASAP. i just want to minimize the amount of refusals
+happening". So the work is in preventing them, and the few that remain reach the maintainer at once.
 
-- Milestone sessions run in auto mode; no allowlist is built for now.
-- **A refused action** (a permission refusal, a safety hook, the auto-mode classifier) stops only the step that hit
-  it, as the hard rule says: never reworded or retried to get around it. The implementer reports it with the exact
-  command; the controller checks the worktree for partial writes, parks that unit if it cannot go on without the
-  action, and keeps the other units running. It does not tell the maintainer mid-milestone.
-- **Refusals reach the maintainer once, at the end**, in the report: each with the exact command, why it was
-  needed, and what is parked behind it. A parked unit is listed as not done; after the maintainer has run or allowed
-  the commands, the controller finishes it in a follow-up round. If a refusal blocks the whole milestone (the gate,
-  the milestone branch itself), that is a question that changes the implementation significantly, and the controller
-  asks.
-- If the trial shows the same kinds of refusal recurring, a project allowlist is the adjustment, with the maintainer's
-  approval of its commands.
+**Fewer refusals, up front:**
+
+- **A project allowlist** of the commands the workflow needs (cargo in the worktrees, git in the worktrees and the
+  milestone's worktree, the helper, the accounts tool, the claim tool's recipe commands, `gh pr` for the controller),
+  written as narrowly as works. Changing settings is the maintainer's call: the plan proposes the list, the
+  maintainer approves it before it goes in. It goes into the untracked `.claude/settings.local.json` (it names the
+  private claim tool's paths), which the repository's `.gitignore` then lists too (today only this machine's global
+  git ignore covers it); a template with placeholders may be tracked.
+- **Command shapes that pass**: the briefs and recipes use plain, separate commands with literal paths (or
+  `${VAR:?}`), never a scripted edit chained with a commit, never computed command names — the shapes the safety hook
+  and the worktree checks accept.
+- **A dry run before the trial**: one implementer, one throwaway unit, every recipe the milestone workflow uses (a
+  worktree, a build, a pull request into a scratch milestone branch, an instance, an account claim, the Mac build),
+  in auto mode. Every refusal it hits is fixed in the allowlist or the recipes, with the maintainer, before the trial
+  starts. The scratch branch and pull request are removed afterwards, with the maintainer's word (deleting on GitHub).
+
+**A refusal that still happens:**
+
+- It stops only the step that hit it, as the hard rule says: never reworded or retried to get around it. The
+  implementer reports it with the exact command; the controller checks the worktree for partial writes, parks that
+  unit, and keeps the other units running.
+- **The controller tells the maintainer at once**: the exact command, why it was needed, what is waiting on it, and
+  the allowlist line that would prevent it next time. Refusals that arrive together go in one message. When the
+  maintainer has run or allowed it, the parked unit goes on.
+- Every refusal goes into the ledger; the retro after the trial turns recurring ones into allowlist or recipe
+  changes.
 
 ### Live checks by implementers
 
@@ -234,7 +252,8 @@ Three places, three rules:
       tried.
    4. **Reviews**: what was found and fixed, dropped as a nit (why), filed as an issue.
    5. **Health**: the tests, the Windows build, CI, the final live check.
-   6. **Refused actions**, if any: each with the exact command, why, and the parked unit behind it.
+   6. **Refused actions** during the milestone, if any (each was raised at once): what it was, how it was settled,
+      the allowlist or recipe change it led to.
    7. **A build to try**: where a debug build of the milestone branch is (a scratch `--target-dir`, never
       `target/release`) and the one command to run it, for when the maintainer wants to.
    Public wording throughout; the privacy check runs on it before it is posted.
@@ -272,8 +291,8 @@ controller resumes; implementers' transcripts survive and can be resumed.
 
 ## Expected effort
 
-About 1–1½ days to build: the written design and its builder's read, the docs, the helper with its tests, the
-measurement, and reviews as usual. Mostly docs, so most pushes skip CI. The trial milestone costs what its issues cost
+About 1½–2 days to build: the written design and its builder's read, the docs, the helper with its tests, the
+measurement, the allowlist and the dry run, and reviews as usual. Mostly docs, so most pushes skip CI. The trial milestone costs what its issues cost
 and ships real fixes. A lighter version (docs only, worktrees by hand, the measurement during the trial) was offered;
 the maintainer chose the full one.
 
@@ -292,7 +311,8 @@ the maintainer chose the full one.
 - Implementers' live checks are instances only; the desktop's hidden test workspace stays the controller's.
 - One folder per unit on the Mac; the controller removes a dead agent's folder at the milestone's end.
 - The trial's quality is judged against the recent ledgers' final reviews (its time is the maintainer's impression).
-- A refused action parks only its unit; refusals wait for the end report unless one blocks the whole milestone.
+- A refused action parks only its unit and reaches the maintainer at once; the allowlist and a dry run before the
+  trial are there to keep refusals rare.
 
 ## Left to the builder
 
