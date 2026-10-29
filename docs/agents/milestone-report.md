@@ -46,14 +46,9 @@ _Each one was raised at once. What it was, how it was settled, the allowlist or 
 there were none._
 
 - <the command> — <how it was settled> — <the change>
-
-## 7. A build to try
-
-_Where a debug build of the milestone branch is (a scratch `--target-dir`, never `target/release`) and the one command
-to run it._
-
-    <one command>
-
-Reply "merge" to merge this pull request with a merge commit, and say whether I may delete the milestone's branches on
-GitHub.
 ```
+
+Two things stay out of the pull request (the maintainer, 2026-10-29) and go into the controller's own message to the
+maintainer instead: the build to try (a debug build of the milestone branch — never `target/release` — its path on
+this machine and the one command to run it), and the request to reply "merge". The branches are deleted after the
+merge without asking ([workflow.md](workflow.md#the-end-of-a-milestone)).

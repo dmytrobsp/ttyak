@@ -179,7 +179,8 @@ refused, 3 a merge conflict.
 ### How many at once
 
 - **Three implementers at once** (`CAP`), and the controller does not dispatch while free space is below 40 GB
-  (`FLOOR_GB`, the helper's default).
+  (`FLOOR_GB`, the helper's default). `CAP` counts implementers that build: a unit that builds nothing (a workflow
+  file, docs) may run as a fourth, and an implementer that has reported and waits for its review holds no slot.
 - **Measured on 2026-10-29** on the maintainer's desktop (32 threads, 60 GB RAM): `cargo test --no-run` from fresh
   worktrees took 37 s with 1 at once, 65 s with 3 and 78 s with 4; the lowest available RAM was 36.4, 29.6 and 25.3
   GB. Each worktree's `target/` is 4.6 GiB, 4.9 GiB after a full `cargo test`. Warm, the whole `cargo test` took 13 s
@@ -213,8 +214,11 @@ refused, 3 a merge conflict.
 3. **Pull request.** Before anything goes public, the controller runs the privacy check
    ([Docs](#docs)) on a folder of copies, `<scratch>/<unit>-public/`, holding all of it: every commit of the unit
    with its message and diff, conflict-merge commits included,
-   `git log --cc -p milestone/NAME..m/NAME/UNIT > <scratch>/<unit>-public/commits.txt` (`git format-patch` skips
-   merge commits), and the pull request body. Then, from the main checkout, `git push -u origin m/NAME/UNIT` and
+   `git log --cc -p --format='commit %H%n%n%B' milestone/NAME..m/NAME/UNIT > <scratch>/<unit>-public/commits.txt`
+   (`git format-patch` skips merge commits; the format leaves out git's `Author:` header, the repository's own public
+   identity, which the check would flag), and the pull request body. A hit in a commit never pushed goes back to the
+   implementer, who amends that commit (a fix on top would leave the string in the earlier commit's diff); a pushed
+   commit is never rewritten. Then, from the main checkout, `git push -u origin m/NAME/UNIT` and
    `gh pr create --base milestone/NAME --head m/NAME/UNIT --title "…" --body-file <the checked body>`, in public
    wording. CI runs on it.
 4. **Review.** A fresh reviewer (opus for security- or concurrency-heavy units) reads the diff against the plan and
@@ -310,19 +314,27 @@ copy command. In patterns (paths as each machine has them):
 ### The end of a milestone
 
 1. All units merged, then a final whole-milestone review (the milestone branch against `master`) and one fix wave,
-   its fixes going through the same review and gate. Then the checks: the whole `cargo test`, the Windows
+   its fixes going through the same review and gate: a unit of its own (`add NAME fixes`), with its pull request, its
+   implementer (the one who knows most of the code it touches may be resumed) and the final reviewer's scoped
+   re-review. Then the checks: the whole `cargo test`, the Windows
    cross-build and `cargo test --no-run` for Windows, CI on the milestone pull request, and the controller's live
    smoke check of the milestone branch.
 2. **The milestone pull request** (milestone branch into `master`) carries the report, made from
    [milestone-report.md](milestone-report.md). The privacy check runs on it before it is posted.
+   The pull request's body is public and read on GitHub: nothing local to this machine (no path to a build, no
+   command to run here) and no "reply …" line. The controller's own message to the maintainer carries the build to
+   try (its path and the one command) and the request for "merge".
 3. On the maintainer's word ("merge") the controller merges with a merge commit, not squashed, so `master` keeps each
    unit's commits and `Fixes #N` closes the issues: from the main checkout, on `master`,
    `git merge --no-ff milestone/NAME`, the whole `cargo test`, then `git push origin master`, and GitHub marks the
-   milestone pull request merged. A red `cargo test` there pushes nothing: the controller tells the maintainer. The
-   report asks, in the same line, for leave to delete the milestone's branches on GitHub; deleting is the
-   maintainer's word, never assumed. The controller removes any unit worktree left (`rm`), then the gate worktree
-   (`end`, which refuses while a unit worktree is left), and, under its own claim, the folders a dead agent left on a
-   shared box. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
+   milestone pull request merged. A red `cargo test` there pushes nothing: the controller tells the maintainer.
+4. **Branch cleanup, after every milestone merge** (the maintainer's standing word, 2026-10-29: "post merge we do a
+   branch cleanup"): the controller removes any unit worktree left (`rm`), then the gate worktree (`end`, which
+   refuses while a unit worktree is left); deletes the milestone's branches on GitHub in one command from the main
+   checkout, `git push origin --delete milestone/NAME m/NAME/<unit> …` (an always-asked rule: one prompt), then
+   locally with `git branch -d` (which refuses a branch not merged) and `git fetch --prune origin`; and, under its own
+   claim, the folders a dead agent left on a shared box. Only the merged milestone's own branches: any other branch
+   on GitHub stays the maintainer's word. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
 
 ### Judging a trial milestone
 

@@ -90,7 +90,8 @@ The tool tests (Python's unittest, node's test runner) are listed in [workflow.m
   Outsiders report through [SECURITY.md](SECURITY.md) (GitHub's private vulnerability reporting).
 - **The maintainer's word** is needed for: tags and releases, force-pushes and history rewrites, deleting anything
   on GitHub, repository settings, publishing the wiki (`--push`), posts outside the test workspace, anything that
-  costs money or speaks for them. Routine pushes of `master` need no asking.
+  costs money or speaks for them. Routine pushes of `master` need no asking, nor deleting a milestone's own branches
+  after its merge ([workflow.md](docs/agents/workflow.md#the-end-of-a-milestone)).
 
 ## The workflow in short
 

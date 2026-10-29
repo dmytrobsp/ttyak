@@ -236,9 +236,10 @@ Not tried yet (NOT): a Slack notification reaching the instance's `notifications
   box) must show none of yours.
 - **GNOME.** `--desktop gnome` gives GNOME instead of sway; `windows`, `shot`, `notifications` and `record` work there
   too. Use it when a check depends on how GNOME shows or raises things.
-- **Keys.** `instance exec --tty` runs a command with a terminal. Driving the window with `kitty @` through `exec`
-  (start kitty with `-o allow_remote_control=yes --listen-on unix:@<socket>`) is the same as on the desktop below, but
-  has not been tried in an instance yet (NOT).
+- **Keys.** `instance exec --tty` runs a command with a terminal. The window is driven with `kitty @` through `exec`,
+  as on the desktop below: start kitty with `-o allow_remote_control=yes --listen-on unix:@<socket>` in the `exec`
+  line of the recipe, then `<tool> instance exec NAME ID -- "kitty @ --to unix:@<socket> send-text ' fh'"` (here
+  ttyak's keys for the Huddles view); tried 2026-10-29.
 - **What it cannot do.** A container cannot run Hyprland (use [the Hyprland VM](#the-hyprland-vm)). No instance has a
   real microphone, camera or screen, or the desktop's clipboard; in a VM only KVM and vsock reach the guest. On a VM
   `--mount` is read-only and takes folders only (see below). Checks that need the maintainer's own desktop use the

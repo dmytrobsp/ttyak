@@ -3,7 +3,7 @@
 The current state, in short. This page is rewritten when things change, never appended to; keep it near 100 lines.
 What happened before is in [history/](history/README.md), the plans' ledgers and `git log`.
 
-Last rewritten: 2026-10-29.
+Last rewritten: 2026-10-29 (milestone 0.12.3 done).
 
 ## Latest release
 
@@ -42,20 +42,16 @@ Last rewritten: 2026-10-29.
   merged through a gate: [Running a milestone](agents/workflow.md#running-a-milestone),
   [Live checks in a milestone](agents/live-testing.md#live-checks-in-a-milestone), the helper
   `tools/milestone/milestone.py`. A dry run went through the whole unit path, live.
-- **Running: milestone [0.12.3](https://github.com/dmytrobsp/ttyak/milestone/4)**, the trial of the new workflow
-  (the maintainer's pick; start sitting 2026-10-29): plan
-  [2026-10-29-milestone-0.12.3.md](superpowers/plans/2026-10-29-milestone-0.12.3.md), ledger
-  [2026-10-29-milestone-0.12.3.md](superpowers/ledgers/2026-10-29-milestone-0.12.3.md) (the state of each unit).
-  Five units — [#51](https://github.com/dmytrobsp/ttyak/issues/51) (HTTP redirects),
-  [#47](https://github.com/dmytrobsp/ttyak/issues/47) (mouse buttons 10 and 11),
-  [#56](https://github.com/dmytrobsp/ttyak/issues/56) (unread line beyond the first page),
-  [#50](https://github.com/dmytrobsp/ttyak/issues/50) with [#36](https://github.com/dmytrobsp/ttyak/issues/36)
-  (huddles view), [#41](https://github.com/dmytrobsp/ttyak/issues/41) (pages.yml timeouts); units 1–3 at once, #41
-  when a slot frees, #50/#36 after #56's merge. Branch `milestone/0.12.3`, one pull request per unit into it, then
-  the milestone pull request into `master` with the report and a retro in the ledger.
-- **For this milestone the shared Windows VM is off-limits** (the maintainer): Windows live checks only in throwaway
-  Windows clones.
-- Last done: #29 (above); before it the documentation housekeeping (2026-10-26 – 2026-10-27).
+- **Done: milestone [0.12.3](https://github.com/dmytrobsp/ttyak/milestone/4)**, the trial of the new workflow
+  (2026-10-29, merged into `master` by [#71](https://github.com/dmytrobsp/ttyak/pull/71); not released yet): plan
+  [2026-10-29-milestone-0.12.3.md](superpowers/plans/2026-10-29-milestone-0.12.3.md), ledger with the retro
+  [2026-10-29-milestone-0.12.3.md](superpowers/ledgers/2026-10-29-milestone-0.12.3.md). It brought: 307/308
+  redirects followed only to Slack's own hosts (#51); mouse buttons 10 and 11 decoded and ignored (#47); the "new"
+  line placed right with more unread than a page (#56); the huddles view's "1 h", names instead of ids and a
+  reliable start notice, its short audio line translated (#50, #36); timeouts in pages.yml (#41). About 2½ hours
+  from the first dispatch to the merge; the retro's changes are in workflow.md, live-testing.md and the report
+  template, and a milestone's branches are now deleted after its merge.
+- Last done: the above; before it #29 and #30.
 
 ## Outside waits
 
@@ -73,7 +69,9 @@ a milestone to the maintainer (a few related issues, and why they go together), 
 
 The maintainer's next topics, about how the work gets done (`process`, `needs-user`):
 
-- The trial milestone above, the first run of [Running a milestone](agents/workflow.md#running-a-milestone).
+- A release of 0.12.3 ([RELEASING.md](RELEASING.md)), on the maintainer's word.
+- The next milestone, proposed to the maintainer and run by
+  [Running a milestone](agents/workflow.md#running-a-milestone).
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
   re-test when they change.
 
