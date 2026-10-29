@@ -157,3 +157,33 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
   instance with A, a Mac build, a pull request, a review with a fix round, the gate, a plain push, #64 marked merged,
   cleanup. Refusals found: 2, both settled (the docs changed). NOT: two units at once, a gate conflict, a macOS VM or
   Windows clone in a milestone, the ask rules (they apply from the next session).
+- Task 7: final review dispatched (opus), dbd688a..730563b.
+- Task 7, final review (opus): needs fixes — 1 critical (in a milestone the live-check recipes build, mount and
+  archive the main checkout, not the unit's worktree; the dry run's brief had overridden them by hand), 6 important
+  (the push commands not spelled out and the dry run's `git -C … push` shapes matching an ask rule; the gate's order
+  and red path undefined; fix-round commits never pushed before the gate; the privacy check missing commit messages
+  and the review summary; parallel units sharing a fake home and relative output paths; no local file in a worktree),
+  9 minors, 3 nits; plus one item outside the plan for the maintainer (kept out of this ledger's wording). All in
+  scope sent to one fix wave (opus).
+- Ruling: a helper command `ungate NAME` resets the gate to the remote-tracking milestone tip after a red gate —
+  the undo would otherwise be an always-ask `reset --hard` — costs one more helper command if wrong.
+- Ruling: cleanup.ps1's `-Dir` becomes mandatory, revisiting the earlier ruling that kept its default — a forgotten
+  `-Dir` would stop another unit's ttyak — costs one script change if wrong.
+- Ruling: the final merge into master is `git merge --no-ff milestone/NAME` on master from the main checkout, then the
+  whole `cargo test` and `git push origin master`, on the maintainer's "merge" — costs nothing if wrong.
+- Task 7: fix wave 411e80f (helper: ungate, gate prints old and new tip, the whole help; 33 tests), 6694881
+  (cleanup.ps1 `-Dir` mandatory), 1d24d90 (docs: all 19 items); the controller reran the helper tests and the Tool
+  tests line (OK). Re-review (opus): all 19 addressed, `ungate`, a conflict and the final merge exercised in a temp
+  repository with a bare origin; "Ready for the trial".
+- Parked, with rulings: the docs-only gate checks run from the gate worktree have no allow rule (auto mode checks
+  them; the trial's retro adds narrow rules with the maintainer if one prompts); a red `cargo test` after the final
+  merge on master leaves a local merge commit (near impossible — master differs only by ledger commits and fixes
+  already gated; the maintainer is told); the tools/vm README block for the shared Windows VM not yet run on the box
+  (clones are the default; NOT tried until a unit needs it); `ungate` refusing a gate with files a red test left
+  (no crate writes such files; unlikely).
+- Dropped (nits): `-NonInteractive` on the two PowerShell lines of the tools/vm README (`-Dir` is always passed).
+- Carried to the trial: the next milestone's rules file adds "never run `milestone.py`, never `git push`"; check at
+  the start of the trial's session that the ask rules fire.
+- Plan complete (2026-10-29). Final review: ready for the trial after one fix wave. Fixed in reviews: every real
+  finding, minors included; dropped: the nits listed above; filed: none. Next: the trial milestone of 3–5 small
+  issues the maintainer picks, with its own plan and ledger and a retro at its end.

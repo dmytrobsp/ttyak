@@ -34,13 +34,16 @@ Last rewritten: 2026-10-29.
   Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise). The history of `master`
   was rewritten on 2026-10-28 to keep the claim tool unnamed
   ([history-rewrite-2026-10-28.md](superpowers/ledgers/history-rewrite-2026-10-28.md)).
-- **In flight: the multi-agent milestone workflow** ([#29](https://github.com/dmytrobsp/ttyak/issues/29), started
-  2026-10-29): design
-  [2026-10-29-milestone-workflow-design.md](superpowers/specs/2026-10-29-milestone-workflow-design.md) (approved),
+- **Done: the multi-agent milestone workflow** ([#29](https://github.com/dmytrobsp/ttyak/issues/29), 2026-10-29):
+  design [2026-10-29-milestone-workflow-design.md](superpowers/specs/2026-10-29-milestone-workflow-design.md),
   plan [2026-10-29-milestone-workflow.md](superpowers/plans/2026-10-29-milestone-workflow.md), ledger
   [2026-10-29-milestone-workflow.md](superpowers/ledgers/2026-10-29-milestone-workflow.md). One controller runs a
-  milestone with several implementers at once, each issue a pull request into a milestone branch; then a trial
-  milestone of 3–5 small issues the maintainer picks.
+  milestone with up to three implementers at once (measured), each unit a pull request into a milestone branch,
+  merged through a gate: [Running a milestone](agents/workflow.md#running-a-milestone),
+  [Live checks in a milestone](agents/live-testing.md#live-checks-in-a-milestone), the helper
+  `tools/milestone/milestone.py`. A dry run went through the whole unit path, live.
+- **Next: the trial milestone** — 3–5 small issues the maintainer picks, run with the new workflow in a fresh
+  session, with its own plan and ledger and a retro at the end.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
@@ -57,10 +60,9 @@ Last rewritten: 2026-10-29.
 a milestone to the maintainer (a few related issues, and why they go together), and the maintainer decides.
 `needs-user` issues wait for the maintainer.
 
-The maintainer's next topics, all about how the work gets done (`process`, `needs-user`):
+The maintainer's next topics, about how the work gets done (`process`, `needs-user`):
 
-- [#29](https://github.com/dmytrobsp/ttyak/issues/29) — a multi-agent milestone workflow: agents pull issues, pull
-  requests into a milestone branch, review-fix loops.
+- The trial milestone above, the first run of [Running a milestone](agents/workflow.md#running-a-milestone).
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
   re-test when they change.
 
