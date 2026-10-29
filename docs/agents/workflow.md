@@ -240,7 +240,8 @@ them, and the few that remain reach the maintainer at once.
   checks the worktree for partial writes (`git status`), parks that unit and keeps the others running. After a
   refused cleanup on a shared box the implementer stops and keeps its box claim held, so its report gives its box and
   account claim ids; the controller does the whole cleanup under that still-live box claim, renewing it, by the
-  recipe, then releases it.
+  recipe, then releases it. It also renews and then releases the implementer's account claims, once the session
+  copies on the box are gone.
 - **The controller tells the maintainer at once**: the exact command, why it was needed, what waits on it, and the
   allowlist line that would prevent it next time. Refusals that arrive together go in one message. When the
   maintainer has run or allowed it, the parked unit goes on.

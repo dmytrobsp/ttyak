@@ -47,13 +47,16 @@ Also in a milestone:
   delete, holds only that one command, with the claim tool's path and the box claim id written out literally, not as
   variables: the safety hook reads the quoted remote command too, and refuses a recursive delete next to variables
   without `set -euo pipefail`. The recipe blocks on this page keep their variables and their single-call background
-  steps, and `$ACC_ID` in accounts commands is fine. A file whose text quotes a recursive delete or another guarded
+  steps, and `$ACC_ID` in accounts commands is fine; the box lines of a block
+  (`<tool> run|push|pull|release BOX ID …`) each run as their own call, as they use none of the block's variables. A
+  file whose text quotes a recursive delete or another guarded
   command (a report, a brief, a script) is written with the Write or Edit tool, never through a Bash heredoc or
   `python3 - <<EOF`: the hook scans heredoc bodies. The `settings.toml` heredoc of [A fake home](#a-fake-home) stays.
 - **A refusal**: quote the refused command exactly as sent and the refusal text verbatim. After a refused cleanup on a
   shared box, the implementer stops and keeps its box claim held (it releases nothing). Its report gives its box and
   account claim ids. The controller does the whole cleanup under that still-live box claim, renewing it, by the
-  recipe, then releases it.
+  recipe, then releases it. It also renews and then releases the implementer's account claims, once the session
+  copies on the box are gone.
 - **Small notes.** `ctl status` says "ttyak is not running" unless a ttyak runs in that instance: start the TUI first
   for a meaningful status. `pgrep -af <path>` also matches the agent's own shell: find a process by the PID you
   started (a match by name could be the maintainer's own ttyak). `instance new` prints the matching `instance rm`
