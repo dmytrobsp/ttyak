@@ -67,3 +67,28 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
   refuses; new unit names were used. Task 3's docs say a unit name is used once per milestone — costs one line if
   wrong.
 - Task 2: complete. LIVE (on this machine): the helper's `start`, `add`, `ls`, `rm`, `end` on this repository.
+- Tasks 3–4: dispatched together (base 96dbe2b), implementer sonnet. Commits 4ca3c9a (Task 4) and 9a41990 (Task 3);
+  checks on the final tree green (links, names, privacy, line length). Review dispatched (opus).
+- Ruling: 4ca3c9a alone has one dangling link (the two new sections link each other); both commits go out in one
+  push — costs a broken link in one intermediate commit if wrong.
+- Task 5: the allowlist proposal (local, git-ignored) sent to the maintainer.
+- CI 40886822489 (e36c6ba, the helper and its CI line): linux, macos, windows-cross green.
+- Tasks 3–4 review (opus): needs fixes — 3 important (the shared Windows VM cleanup a recursive delete on a
+  `%USERPROFILE%` path called literal; the Windows tool recipes and two setup lines still on the shared folder; the
+  milestone section importing "never outside the repository" and desktop test windows, which contradict worktrees
+  outside the repository and instances only), 4 minors (the Windows cross-build placed at the gate, which never runs
+  it; no rule for a docs-only unit's missing CI; the evidence folder unclear; the reviewer rules missing), 1 nit. All
+  sent to fix round 1.
+- Ruling: tools/vm/README.md and two setup.md lines join Tasks 3–4 (docs only; cleanup.ps1 unchanged, every call
+  passes `-Dir` with the unit folder) — costs a script default that still names the shared folder if wrong.
+- Ruling: the design's two "rebase" words (Roles, the ledger section) become the merge wording the gate uses — the
+  designer's slip, the approved gate is a merge — costs nothing if wrong.
+- Tasks 3–4: fix round 1/5 (8 addressed, 0 open; commit f943589; the design's three "rebase" words now "merge").
+  Re-review: a new minor (two commands split across source lines in the shared Windows VM bullet) and a nit (step 3
+  in AGENTS.md: reflow, "per unit"); both sent to fix round 2.
+- Tasks 3–4: fix round 2/5 (2 addressed, 0 open; commit 51151a2). Re-review: approved.
+- Dropped (nit): `-LogonType Interactive` split inside a code span across a prose line (a flag in prose, not a
+  command to copy).
+- Task 4: complete (commits 96dbe2b..4ca3c9a, with fixes in f943589, 51151a2; review clean).
+- Task 3: complete (commits 4ca3c9a..9a41990, with fixes in f943589, 51151a2; review clean). NOT: exercised — the
+  dry run (Task 6) is the first use. Checks rerun by the controller: links, names, privacy on copies, no tool name.
