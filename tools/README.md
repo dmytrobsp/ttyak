@@ -29,8 +29,10 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
   repository; refuses any uncommitted work: tracked, staged or untracked files, ignored build output is fine;
   `--delete-branch` deletes the branch only when it is merged into `milestone/NAME`); `end NAME`: removes the gate
   when no unit is left; `ls [NAME]`: worktrees with sizes and free GB; `gate NAME UNIT`: `merge --no-ff` of the unit
-  into the clean gate (conflict: aborted, files listed). Never pushes or runs tests. Exit codes: 0 done, 2 refused, 3
-  merge conflict.
+  into the clean gate, printing `old SHA` and `new SHA` (conflict: aborted, files listed); `ungate NAME`: after a red
+  gate, before its push, resets the clean gate to `origin/milestone/NAME` (the remote-tracking ref, not fetched; it
+  must be an ancestor of the local branch) and lists the commits it dropped. Never pushes, fetches or runs tests;
+  `--help` shows it all. Exit codes: 0 done, 2 refused, 3 merge conflict.
 - `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
   session, keys and clicks, captures): see `vm/README.md`.
 

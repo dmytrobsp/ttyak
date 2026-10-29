@@ -71,6 +71,24 @@ class MilestoneTest(unittest.TestCase):
     def branches(self) -> list[str]:
         return git(self.repo, "branch", "--format=%(refname:short)").split()
 
+    def push_origin(self, name: str = "trial") -> str:
+        """A local bare repository as `origin`, with `milestone/NAME` pushed to it; the origin tip."""
+        if "origin" not in git(self.repo, "remote").split():
+            git(self.tmp, "init", "-q", "--bare", "origin.git")
+            git(self.repo, "remote", "add", "origin", str(self.tmp / "origin.git"))
+        git(self.repo, "push", "-q", "origin", f"milestone/{name}")
+        return git(self.repo, "rev-parse", f"refs/remotes/origin/milestone/{name}")
+
+    def gated(self) -> tuple[Path, str]:
+        """A milestone pushed to origin with one unit merged at the gate but not pushed: (gate, origin tip)."""
+        gate = self.start()
+        tip = self.push_origin()
+        wt = self.add("fix-1")
+        commit_file(wt, "u.txt", "u\n", "unit work")
+        self.assertEqual(self.run_cli("gate", "trial", "fix-1")[0], 0)
+        self.assertNotEqual(git(gate, "rev-parse", "HEAD"), tip)
+        return gate, tip
+
     def test_start_makes_branch_and_gate(self):
         gate = self.start()
         self.assertEqual(gate, self.root / "trial" / "_gate")
@@ -100,7 +118,7 @@ class MilestoneTest(unittest.TestCase):
         bad = ["a/b", "..", "a b", "-x", "Fix", "", "a" * 42, "a.lock", "b."]
         for name in bad:
             for argv in (["start", name], ["add", "trial", name, "--floor-gb", "0"], ["rm", name, "u"],
-                         ["end", name], ["gate", "trial", name]):
+                         ["end", name], ["gate", "trial", name], ["ungate", name]):
                 with self.subTest(name=name, argv=argv), mock.patch("subprocess.run") as run:
                     code, _, _ = self.run_cli(*argv)
                     self.assertEqual(code, 2)
@@ -211,7 +229,8 @@ class MilestoneTest(unittest.TestCase):
         code, out, _ = self.run_cli("gate", "trial", "fix-1")
         self.assertEqual(code, 0)
         new = git(self.repo, "rev-parse", "milestone/trial")
-        self.assertEqual(out.strip(), new)
+        # the old tip first, the new HEAD on the last line
+        self.assertEqual(out.strip().splitlines(), [f"old {old}", f"new {new}"])
         self.assertEqual(git(self.repo, "rev-list", "--parents", "-n1", new).split()[1], old)
         self.assertEqual(len(git(self.repo, "rev-list", "--parents", "-n1", new).split()), 3)
 
@@ -403,6 +422,83 @@ class MilestoneTest(unittest.TestCase):
         r = subprocess.run(["git", "-C", str(self.repo), "config", "--get-regexp", r"^branch\.m/trial"],
                            capture_output=True, text=True)
         self.assertEqual(r.stdout, "")
+
+    def test_ungate_drops_the_unpushed_merge(self):
+        gate, tip = self.gated()
+        merge = git(gate, "rev-parse", "HEAD")
+        code, out, err = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 0, err)
+        lines = out.strip().splitlines()
+        self.assertIn(merge[:7], out)
+        self.assertTrue(any("unit work" in ln for ln in lines))
+        self.assertEqual(lines[-1], f"new {tip}")
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), tip)
+        self.assertEqual(git(self.repo, "rev-parse", "milestone/trial"), tip)
+        self.assertEqual(git(gate, "branch", "--show-current"), "milestone/trial")
+        self.assertEqual(git(gate, "status", "--porcelain"), "")
+        # the unit branch is untouched
+        self.assertIn("m/trial/fix-1", self.branches())
+
+    def test_ungate_nothing_to_undo(self):
+        gate = self.start()
+        tip = self.push_origin()
+        code, out, _ = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 0)
+        self.assertIn("nothing to undo", out)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), tip)
+
+    def test_ungate_refuses_dirty_gate(self):
+        gate, _ = self.gated()
+        merge = git(gate, "rev-parse", "HEAD")
+        (gate / "stray.txt").write_text("s")
+        code, _, err = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 2)
+        self.assertIn("not clean", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), merge)
+        self.assertTrue((gate / "stray.txt").is_file())
+        (gate / "stray.txt").unlink()
+        (gate / "f.txt").write_text("dirty\n")
+        self.assertEqual(self.run_cli("ungate", "trial")[0], 2)
+        self.assertEqual((gate / "f.txt").read_text(), "dirty\n")
+
+    def test_ungate_refuses_wrong_branch(self):
+        gate, _ = self.gated()
+        git(gate, "checkout", "-q", "-b", "other")
+        merge = git(gate, "rev-parse", "HEAD")
+        code, _, err = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 2)
+        self.assertIn("milestone/trial", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), merge)
+        self.assertEqual(git(gate, "branch", "--show-current"), "other")
+
+    def test_ungate_refuses_without_remote_tracking_ref(self):
+        gate = self.start()
+        wt = self.add("fix-1")
+        commit_file(wt, "u.txt", "u\n")
+        self.assertEqual(self.run_cli("gate", "trial", "fix-1")[0], 0)
+        merge = git(gate, "rev-parse", "HEAD")
+        code, _, err = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 2)
+        self.assertIn("origin/milestone/trial", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), merge)
+
+    def test_ungate_refuses_when_origin_is_not_an_ancestor(self):
+        gate, _ = self.gated()
+        merge = git(gate, "rev-parse", "HEAD")
+        # origin moved on elsewhere: its tip is not in the local branch's history
+        other = git(self.repo, "commit-tree", "master^{tree}", "-p", "master", "-m", "elsewhere")
+        git(self.repo, "update-ref", "refs/remotes/origin/milestone/trial", other)
+        code, _, err = self.run_cli("ungate", "trial")
+        self.assertEqual(code, 2)
+        self.assertIn("ancestor", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), merge)
+
+    def test_help_shows_the_whole_docstring(self):
+        code, out, _ = self.run_cli("--help")
+        self.assertEqual(code, 0)
+        self.assertIn("ungate NAME", out)
+        self.assertIn("Exit codes:", out)
+        self.assertIn("never pushes", " ".join(out.split()))
 
     def test_check_name_and_root(self):
         self.assertEqual(milestone.check_name("a.b-1"), "a.b-1")

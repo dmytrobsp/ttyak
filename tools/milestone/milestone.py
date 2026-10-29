@@ -4,16 +4,27 @@ A milestone NAME has a branch `milestone/NAME` (from master), a gate worktree `<
 branch `m/NAME/UNIT` with its own worktree `<root>/NAME/UNIT` per unit of work. The root is $TTYAK_WORKTREES if set,
 else the folder `<repository name>-worktrees` next to the repository, so the repository's own checks never walk it.
 
-Commands: start NAME | add NAME UNIT [--floor-gb N] | rm NAME UNIT [--delete-branch] | end NAME | ls [NAME] |
-gate NAME UNIT. Global option: --repo PATH (the repository to work on; default: the one this script lives in).
-Exit codes: 0 done, 2 refused (bad name, exists, disk floor, not our worktree, dirty gate), 3 merge conflict.
+Commands:
+  start NAME                       branch milestone/NAME from master, and the gate worktree <root>/NAME/_gate
+  add NAME UNIT [--floor-gb N]     branch m/NAME/UNIT and worktree <root>/NAME/UNIT from the milestone tip
+  rm NAME UNIT [--delete-branch]   remove that worktree with its build output (the branch only if merged)
+  end NAME                         remove the gate worktree once no unit worktree is left
+  ls [NAME]                        the worktrees with their size in GB, then the free GB
+  gate NAME UNIT                   merge --no-ff the unit into the clean gate; prints `old SHA`, then `new SHA`
+  ungate NAME                      reset the clean gate to origin/milestone/NAME (a red gate, before its push)
+Global option: --repo PATH (the repository to work on; default: the one this script lives in).
+Exit codes: 0 done, 2 refused (bad name, exists, disk floor, not our worktree, dirty gate, no or diverged
+origin/milestone/NAME), 3 merge conflict.
 
 Removal is checked: `rm` and `end` delete only the exact path `<root>/NAME/UNIT` (not a symlink, resolving under the
 root) that is a registered worktree of this repository, and refuse when it holds uncommitted work (tracked, staged or
 untracked files that are not ignored; ignored build output such as target/ is fine).
 
-It never pushes, never deletes a remote branch, never deletes a branch except `rm --delete-branch`, and then only
-one that is merged into `milestone/NAME`, and never runs tests.
+`ungate` reads the remote-tracking ref as it is (no fetch), refuses unless it is an ancestor of the local
+`milestone/NAME`, then runs `git reset --hard` to it in the gate worktree and lists the commits it dropped.
+
+It never pushes or fetches, never deletes a remote branch, never deletes a branch except `rm --delete-branch`, and
+then only one that is merged into `milestone/NAME`, and never runs tests.
 """
 from __future__ import annotations
 
@@ -235,15 +246,21 @@ def cmd_ls(repo: Path, rt: Path, a) -> int:
     return 0
 
 
-def cmd_gate(repo: Path, rt: Path, a) -> int:
-    w, branch = check_worktree(repo, rt, a.name, GATE), f"m/{a.name}/{a.unit}"
+def clean_gate(repo: Path, rt: Path, name: str) -> Path:
+    """The gate worktree's path, if it is our registered worktree, on `milestone/NAME` and clean; else Refused."""
+    w = check_worktree(repo, rt, name, GATE)
     gate = Path(w["raw"])
-    if w["branch"] != f"milestone/{a.name}":
-        raise Refused(f"the gate worktree {gate} is on {w['branch'] or 'no branch'}, not milestone/{a.name}")
-    if not branch_exists(repo, branch):
-        raise Refused(f"branch {branch} does not exist")
+    if w["branch"] != f"milestone/{name}":
+        raise Refused(f"the gate worktree {gate} is on {w['branch'] or 'no branch'}, not milestone/{name}")
     if git(gate, "status", "--porcelain").stdout.strip():
         raise Refused(f"the gate worktree {gate} is not clean")
+    return gate
+
+
+def cmd_gate(repo: Path, rt: Path, a) -> int:
+    gate, branch = clean_gate(repo, rt, a.name), f"m/{a.name}/{a.unit}"
+    if not branch_exists(repo, branch):
+        raise Refused(f"branch {branch} does not exist")
     old = git(gate, "rev-parse", "HEAD").stdout.strip()
     r = git(gate, "merge", "--no-ff", "--no-edit", branch, check=False)
     if r.returncode != 0:
@@ -262,12 +279,35 @@ def cmd_gate(repo: Path, rt: Path, a) -> int:
         for f in files:
             print(f)
         return 3
-    print(git(gate, "rev-parse", "HEAD").stdout.strip())
+    print(f"old {old}")
+    print(f"new {git(gate, 'rev-parse', 'HEAD').stdout.strip()}")
+    return 0
+
+
+def cmd_ungate(repo: Path, rt: Path, a) -> int:
+    gate, remote = clean_gate(repo, rt, a.name), f"refs/remotes/origin/milestone/{a.name}"
+    r = git(gate, "rev-parse", "-q", "--verify", f"{remote}^{{commit}}", check=False)
+    if r.returncode != 0:
+        raise Refused(f"there is no origin/milestone/{a.name} (the remote-tracking ref; nothing is fetched): "
+                      "push the milestone branch at `start`")
+    tip, local = r.stdout.strip(), git(gate, "rev-parse", "HEAD").stdout.strip()
+    if tip == local:
+        print(f"nothing to undo: milestone/{a.name} is at origin/milestone/{a.name} ({tip})")
+        return 0
+    if git(gate, "merge-base", "--is-ancestor", tip, local, check=False).returncode != 0:
+        raise Refused(f"origin/milestone/{a.name} ({tip[:10]}) is not an ancestor of milestone/{a.name} "
+                      f"({local[:10]}): not resetting; it needs a hand")
+    dropped = git(gate, "log", "--oneline", f"{tip}..{local}").stdout.rstrip()
+    git(gate, "reset", "-q", "--hard", tip)
+    print("dropped:")
+    print(dropped)
+    print(f"new {git(gate, 'rev-parse', 'HEAD').stdout.strip()}")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="milestone.py", description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog="milestone.py", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", type=Path, help="the repository to work on (default: the one this script is in)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("start").add_argument("name")
@@ -284,10 +324,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("gate")
     p.add_argument("name")
     p.add_argument("unit")
+    sub.add_parser("ungate").add_argument("name")
     return ap
 
 
-COMMANDS = {"start": cmd_start, "add": cmd_add, "rm": cmd_rm, "end": cmd_end, "ls": cmd_ls, "gate": cmd_gate}
+COMMANDS = {"start": cmd_start, "add": cmd_add, "rm": cmd_rm, "end": cmd_end, "ls": cmd_ls, "gate": cmd_gate,
+            "ungate": cmd_ungate}
 
 
 def main(argv: list[str]) -> int:
