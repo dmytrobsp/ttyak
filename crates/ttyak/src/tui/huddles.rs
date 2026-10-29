@@ -44,12 +44,13 @@ const DAYS_AGO: &str = "{n} d ago";
 const SECONDS: &str = "{n} s";
 const MINUTES: &str = "{n} min";
 const HOURS: &str = "{h} h {m} min";
+const HOURS_ROUND: &str = "{h} h";
 const ONE_REPLY: &str = "1 reply";
 const REPLIES: &str = "{n} replies";
 
 /// The view's words, for the locale template.
 pub const WORDS: &[&str] = &[
-    "Huddles", LIVE_NOW, RECENT, LIVE, YOU_ARE_IN_IT, MISSED, NONE_LIVE, NONE_RECENT, LOADING, LOADING_MORE, FAILED, JUST_NOW, MINUTES_AGO, HOURS_AGO, DAYS_AGO, SECONDS, MINUTES, HOURS, ONE_REPLY, REPLIES,
+    "Huddles", LIVE_NOW, RECENT, LIVE, YOU_ARE_IN_IT, MISSED, NONE_LIVE, NONE_RECENT, LOADING, LOADING_MORE, FAILED, JUST_NOW, MINUTES_AGO, HOURS_AGO, DAYS_AGO, SECONDS, MINUTES, HOURS, HOURS_ROUND, ONE_REPLY, REPLIES,
 ];
 
 #[derive(Default)]
@@ -405,6 +406,7 @@ fn length(secs: i64) -> String {
     match secs {
         ..60 => tr(SECONDS).replace("{n}", &secs.to_string()),
         60..3600 => tr(MINUTES).replace("{n}", &(secs / 60).to_string()),
+        _ if secs % 3600 / 60 == 0 => tr(HOURS_ROUND).replace("{h}", &(secs / 3600).to_string()),
         _ => tr(HOURS).replace("{h}", &(secs / 3600).to_string()).replace("{m}", &(secs % 3600 / 60).to_string()),
     }
 }
@@ -481,6 +483,7 @@ mod tests {
     fn times_read_plainly() {
         assert_eq!((ago(30), ago(125), ago(3 * 3600 + 5), ago(86400 * 3)), ("just now".into(), "2 min ago".into(), "3 h ago".into(), "3 d ago".into()));
         assert_eq!((length(40), length(12 * 60 + 3), length(3600 + 5 * 60)), ("40 s".into(), "12 min".into(), "1 h 5 min".into()));
+        assert_eq!((length(3600), length(3660), length(7200), length(7260)), ("1 h".into(), "1 h 1 min".into(), "2 h".into(), "2 h 1 min".into()));
     }
 
     /// The view drawn `width`×`height` (focused), you in no huddle.
