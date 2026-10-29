@@ -817,6 +817,7 @@ impl App {
             self.thread_pane.to_bottom();
         } else {
             self.messages.to_bottom();
+            self.give_up_unread_seek();
         }
         let (client, tx) = (self.client.clone(), self.net.clone());
         tokio::spawn(async move {
@@ -867,6 +868,7 @@ impl App {
             self.thread_pane.to_bottom();
         } else {
             self.messages.to_bottom();
+            self.give_up_unread_seek();
         }
         self.status = format!("uploading {label}…");
         let (client, tx) = (self.client.clone(), self.net.clone());
@@ -1420,7 +1422,7 @@ impl App {
         use super::menu::{Menu, Target};
         let Some(offers) = self.find_message(&t.channel, &t.ts).map(|m| super::menu::Offers::of(m, &self.ws.self_id)) else { return };
         match t.shown {
-            Shown::Messages => self.messages.selected = Some(t.ts.clone()),
+            Shown::Messages => self.messages.pick(t.ts.clone()),
             Shown::Thread => self.thread_pane.selected = Some(t.ts.clone()),
             Shown::Feed => self.threads.selected = Some((t.channel.clone(), t.ts.clone())),
             Shown::Activity => {}
@@ -1557,7 +1559,7 @@ impl App {
                 self.focus = Focus::ThreadComposer;
             }
             Shown::Messages => {
-                self.messages.selected = Some(ts.to_string());
+                self.messages.pick(ts.to_string());
                 self.focus = Focus::Composer;
             }
             // (The feed's box keeps the thread it replies in: not aimed again.)
@@ -1793,6 +1795,8 @@ impl App {
     /// Open the thread whose parent is `parent` in `channel`.
     fn open_thread_at(&mut self, channel: String, parent: String) {
         self.note_place();
+        // (The main pane's jump would move the view behind it.)
+        self.give_up_unread_seek();
         let key = super::state::thread_key(&channel, &parent);
         self.seen.insert(key.clone(), opened_now());
         if self.thread.as_ref().is_none_or(|(c, t)| super::state::thread_key(c, t) != key) {
@@ -2510,6 +2514,15 @@ impl App {
         self.continue_seek();
     }
 
+    /// The paging back to the unread part's start, if it runs, is given up with its jump (you moved in the pane, sent,
+    /// or opened a thread: the view stays yours; the pane says if more new messages are above).
+    fn give_up_unread_seek(&mut self) {
+        if self.seek_unread.take().is_some() && self.seeking.take().is_some() {
+            self.messages.jump_to_new = false;
+            self.clear_seek_note();
+        }
+    }
+
     /// The note a seek shows while it pages back goes (not one said since).
     fn clear_seek_note(&mut self) {
         for note in [SEEKING, UNREAD_SEEKING] {
@@ -2532,18 +2545,17 @@ impl App {
             }
             return None;
         }
+        if !self.ws.timelines.get(&channel).is_some_and(|t| t.loaded && !t.loading) {
+            return None;
+        }
+        // Paging back to the unread part: given up once you scroll or pick a message.
+        if !self.messages.untouched() {
+            self.give_up_unread_seek();
+            if self.seeking.is_none() {
+                return None;
+            }
+        }
         let tl = self.ws.timelines.get(&channel)?;
-        if !tl.loaded || tl.loading {
-            return None;
-        }
-        // Paging back to the unread part: given up once you scroll or pick a message (the view stays yours; the pane
-        // says if more new messages are above).
-        if self.seek_unread.is_some() && !self.messages.untouched() {
-            (self.seeking, self.seek_unread) = (None, None);
-            self.messages.jump_to_new = false;
-            self.clear_seek_note();
-            return None;
-        }
         let found = tl.index_of(&ts).is_some();
         let older = tl.messages.first().is_some_and(|m| seek_older(&ts, &m.ts));
         let newer = tl.messages.last().is_none_or(|m| seek_older(&m.ts, &ts));
@@ -2789,7 +2801,10 @@ impl App {
     /// does (an Activity item is not opened), then your reaction with that emoji added or taken off.
     fn click_pill(&mut self, t: MessageTarget, name: String, item: Option<usize>) {
         match t.shown {
-            Shown::Messages => (self.messages.selected, self.focus) = (Some(t.ts.clone()), Focus::Messages),
+            Shown::Messages => {
+                self.messages.pick(t.ts.clone());
+                self.focus = Focus::Messages;
+            }
             Shown::Thread => (self.thread_pane.selected, self.focus) = (Some(t.ts.clone()), Focus::Thread),
             Shown::Feed => (self.threads.selected, self.focus) = (Some((t.channel.clone(), t.ts.clone())), Focus::Messages),
             Shown::Activity => {
@@ -13413,6 +13428,41 @@ mod tests {
         let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
         assert!(!shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
         new_line_above(&shown, 1);
+    }
+
+    #[tokio::test]
+    async fn a_message_picked_for_its_menu_stops_the_paging_back_to_the_unread() {
+        use super::super::menu::{MessageTarget, Shown};
+        let (mut app, _net, page) = unread_c1(120, 5);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        // A right click on message 118 (its menu, the message selected).
+        app.message_menu(MessageTarget { channel: "C1".into(), ts: top_ts(118), shown: Shown::Messages }, (5, 5));
+        app.menu = None;
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading, "given up: no further page");
+        assert!(app.seeking.is_none() && !app.messages.jump_to_new);
+        drawn(&mut app);
+        assert_eq!(app.messages.selected, Some(top_ts(118)), "the message picked stays selected");
+    }
+
+    #[tokio::test]
+    async fn sending_or_opening_a_thread_stops_the_paging_back_to_the_unread() {
+        for thread in [false, true] {
+            let (mut app, _net, page) = unread_c1(120, 5);
+            c1_page(&mut app, page(71, 120, true), false);
+            drawn(&mut app);
+            if thread {
+                app.open_thread(&top_ts(120));
+                assert!(app.thread.is_some());
+            } else {
+                send(&mut app, "hi");
+            }
+            assert!(app.seeking.is_none() && !app.messages.jump_to_new, "thread {thread}: given up at once");
+            assert_eq!(app.status, "", "thread {thread}: its note gone");
+            c1_page(&mut app, page(21, 70, true), true);
+            assert!(!app.ws.timelines["C1"].loading, "thread {thread}: no further page");
+        }
     }
 
     #[tokio::test]

@@ -275,6 +275,11 @@ impl MessagePane {
         (self.selected, self.shown, self.put, self.moved) = (ts, None, true, true);
     }
 
+    /// Select message `ts` where it is (picked: its menu, a reaction pill, an edit), as moving to it.
+    pub fn pick(&mut self, ts: String) {
+        (self.selected, self.moved) = (Some(ts), true);
+    }
+
     /// Move the selection by `delta` messages among the shown ones (`order` = ts list).
     pub fn move_selection(&mut self, order: &[String], delta: isize) {
         self.put = false;
