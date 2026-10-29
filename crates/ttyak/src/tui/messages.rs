@@ -211,8 +211,14 @@ pub struct MessagePane {
 /// The note at the top of the loaded messages when the unread part starts further up.
 pub const MORE_NEW_ABOVE: &str = "— more new messages above —";
 
+/// The note at the top of the loaded messages while an older page loads.
+const LOADING_OLDER: &str = "Loading older messages…";
+
+/// The note at the top of the loaded messages once the conversation's first message is in.
+const BEGINNING: &str = "— beginning of conversation —";
+
 /// The pane's words shown through `tr`.
-pub const WORDS: &[&str] = &[MORE_NEW_ABOVE];
+pub const WORDS: &[&str] = &[LOADING_OLDER, BEGINNING, MORE_NEW_ABOVE];
 
 impl MessagePane {
     /// A pane in thread mode.
@@ -462,9 +468,9 @@ impl MessagePane {
         let mut new_line = None;
         if let Some(t) = timeline.filter(|_| !self.thread && !partial) {
             let note = if t.loading && t.loaded {
-                Some(std::borrow::Cow::Borrowed("Loading older messages…"))
+                Some(super::i18n::tr(LOADING_OLDER))
             } else if t.loaded && !t.has_more && !t.messages.is_empty() {
-                Some(std::borrow::Cow::Borrowed("— beginning of conversation —"))
+                Some(super::i18n::tr(BEGINNING))
             } else if above {
                 // (The jump to the unread part goes here.)
                 new_line = Some(0);
@@ -2533,6 +2539,15 @@ mod tests {
         let below = 29 - (0..30).position(|i| ts(i) == last).unwrap();
         assert!(below > 0);
         assert!(screen(&terminal)[13].contains(&format!("↓ {below} newer")), "{:?}", screen(&terminal)[13]);
+    }
+
+    #[test]
+    fn the_notes_at_the_top_go_through_tr_and_are_in_the_locale_template() {
+        let template = super::super::i18n::template();
+        for w in ["Loading older messages…", "— beginning of conversation —", MORE_NEW_ABOVE] {
+            assert!(WORDS.contains(&w), "{w}");
+            assert!(template.contains(&format!("\"{w}\" = \"\"")), "{w}");
+        }
     }
 
     #[test]
