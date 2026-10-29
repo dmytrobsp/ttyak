@@ -548,7 +548,9 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
 
 CI builds Windows but runs none of its tests (#61), so a milestone's end and a release run them in a clone. No account
 is needed. The test binaries are self-contained (no test reads the source tree at run time), about 1 GiB together,
-inside the clone's 2 GB.
+inside the clone's 2 GB — but only just: a clone over its cap is removed with everything on it, so push one more
+big binary (a second ttyak build, say) only after deleting one (`exec NAME ID -- 'del C:\Users\tbuser\<file>'`), and
+`pull` each output as soon as it is written.
 
 ```sh
 set -euo pipefail
@@ -573,11 +575,14 @@ GCC_S=$(x86_64-w64-mingw32-g++ -print-file-name=libgcc_s_seh-1.dll)
 
 - `exec` (session 0) is enough for the tests; `exec --desktop` with the output redirected to a file and `pull`ed runs
   one in the user's session.
-- **LIVE** (2026-10-29, at 0.12.3's merge): slack_core 94 passed, huddle 44 passed (after the two DLLs; without them
-  it exits without output), ttyak 1036 passed and 1 failed: `a_toast_is_named_by_its_tag` asserts that Windows'
-  notification setting for PowerShell's app id can be read, and on a fresh clone it cannot (in session 0 and in the
-  user's session alike). ttyak handles that (the toast is handed to Windows, the setting "not known"); the test's
-  assumption is filed on #61. A few tests are Unix-only, so the counts are below Linux's.
+- **Windows keeps an app id's notification setting only once it has shown a toast**: the key
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\<app id>` appears with the first toast, and
+  until then `ToastNotifier.Setting()` fails. A fresh clone has never shown one for PowerShell's app id, a used
+  machine has; `a_toast_is_named_by_its_tag` checks the read against that key, so it passes on both.
+- **LIVE** (2026-10-29, before the 0.12.3 release): on a fresh clone slack_core 94, huddle 44 (after the two DLLs;
+  without them it exits without output), ttyak 1037 passed, 0 failed. In the user's session, the setting test before a
+  toast: `None`, no key, passes; one toast shown by a PowerShell script; after it: `Some(0)`, the key there, passes; a
+  build whose read always fails, after the toast: fails. A few tests are Unix-only, so the counts are below Linux's.
 
 ### macOS in a VM
 
