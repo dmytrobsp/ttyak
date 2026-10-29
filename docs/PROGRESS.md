@@ -34,8 +34,13 @@ Last rewritten: 2026-10-29.
   Found on the way: [#63](https://github.com/dmytrobsp/ttyak/issues/63) (Hyprland raise). The history of `master`
   was rewritten on 2026-10-28 to keep the claim tool unnamed
   ([history-rewrite-2026-10-28.md](superpowers/ledgers/history-rewrite-2026-10-28.md)).
-- **Next: the multi-agent milestone workflow** ([#29](https://github.com/dmytrobsp/ttyak/issues/29), the
-  maintainer's choice, 2026-10-29): needs a design first — brainstorm with the maintainer, then a spec.
+- **In flight: the multi-agent milestone workflow** ([#29](https://github.com/dmytrobsp/ttyak/issues/29), started
+  2026-10-29): design
+  [2026-10-29-milestone-workflow-design.md](superpowers/specs/2026-10-29-milestone-workflow-design.md) (approved),
+  plan [2026-10-29-milestone-workflow.md](superpowers/plans/2026-10-29-milestone-workflow.md), ledger
+  [2026-10-29-milestone-workflow.md](superpowers/ledgers/2026-10-29-milestone-workflow.md). One controller runs a
+  milestone with several implementers at once, each issue a pull request into a milestone branch; then a trial
+  milestone of 3–5 small issues the maintainer picks.
 - No release milestone is open. Last done: the documentation housekeeping (2026-10-26 – 2026-10-27).
 
 ## Outside waits
