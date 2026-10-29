@@ -3,23 +3,25 @@
 The current state, in short. This page is rewritten when things change, never appended to; keep it near 100 lines.
 What happened before is in [history/](history/README.md), the plans' ledgers and `git log`.
 
-Last rewritten: 2026-10-29 (milestone 0.12.3 done).
+Last rewritten: 2026-10-29 (0.12.3 released).
 
 ## Latest release
 
-- **0.12.2**, released 2026-10-26: [release page](https://github.com/dmytrobsp/ttyak/releases/tag/v0.12.2).
-- What it brought: private files owner-only on Windows; the Windows uninstall counts only regular files as old
-  copies; showing a Windows notification no longer waits for reading the toast setting, and quitting never hangs (an
-  update being installed finishes first); late notification bubbles tracked, huddle bubbles gone when the huddle
-  ends; VIPs get through a pause when Slack's VIP setting says so (with an F6 row); the in-app help matches the code;
-  `tools/wiki/publish.sh` hardened.
-- Before it: 0.12.1 (2026-10-26, fixes from the maintainer's live checks of 0.12.0) and 0.12.0 (2026-10-25,
-  attention: notifications, the bell, the tab title, clicks; `ctl status` and `ctl check`).
-- The wiki was published at the v0.12.2 tag; the README is the short front door, the
-  [wiki](https://github.com/dmytrobsp/ttyak/wiki) is the manual.
-- The whole `cargo test` passed at 0.12.2: in CI on Linux and macOS, and on a Windows test machine (CI does not run
-  the Windows tests: #61). How to run it: [AGENTS.md](../AGENTS.md).
-- How a release is made: [RELEASING.md](RELEASING.md).
+- **0.12.3**, released 2026-10-29: [release page](https://github.com/dmytrobsp/ttyak/releases/tag/v0.12.3), the
+  first release of a milestone run by the multi-agent workflow (below).
+- What it brought: a conversation with more unread than a page loads back to the first of them (the "new" line in
+  the right place, a note past five pages), and a link or notification lands on its message; the Huddles view's
+  "1 h", names instead of ids, a start notice independent of event order, its short audio line translated; 307/308
+  redirects followed only to Slack's own hosts; mouse buttons 10 and 11 read and ignored; timeouts in pages.yml.
+- Before it: 0.12.2 (2026-10-26, Windows hardening, VIPs as in Slack, notification fixes), 0.12.1 and 0.12.0
+  (2026-10-25, attention: notifications, the bell, the tab title, clicks).
+- The wiki: published at the v0.12.2 tag; publishing it at v0.12.3 waits for the maintainer's word. The README is
+  the short front door, the [wiki](https://github.com/dmytrobsp/ttyak/wiki) is the manual.
+- The whole `cargo test` passed at 0.12.3: in CI on Linux and macOS, and on Windows in throwaway Windows 11 clones
+  (CI does not run the Windows tests: #61; the recipe in
+  [live-testing.md](agents/live-testing.md#the-whole-cargo-test-in-a-clone)).
+- How a release is made: [RELEASING.md](RELEASING.md) (its dry run is now skipped unless the release build's own
+  inputs change).
 
 ## In flight
 
@@ -43,14 +45,14 @@ Last rewritten: 2026-10-29 (milestone 0.12.3 done).
   [Live checks in a milestone](agents/live-testing.md#live-checks-in-a-milestone), the helper
   `tools/milestone/milestone.py`. A dry run went through the whole unit path, live.
 - **Done: milestone [0.12.3](https://github.com/dmytrobsp/ttyak/milestone/4)**, the trial of the new workflow
-  (2026-10-29, merged into `master` by [#71](https://github.com/dmytrobsp/ttyak/pull/71); not released yet): plan
+  (2026-10-29, merged into `master` by [#71](https://github.com/dmytrobsp/ttyak/pull/71); released as 0.12.3): plan
   [2026-10-29-milestone-0.12.3.md](superpowers/plans/2026-10-29-milestone-0.12.3.md), ledger with the retro
   [2026-10-29-milestone-0.12.3.md](superpowers/ledgers/2026-10-29-milestone-0.12.3.md). It brought: 307/308
   redirects followed only to Slack's own hosts (#51); mouse buttons 10 and 11 decoded and ignored (#47); the "new"
   line placed right with more unread than a page (#56); the huddles view's "1 h", names instead of ids and a
   reliable start notice, its short audio line translated (#50, #36); timeouts in pages.yml (#41). About 1½ hours
-  from the first dispatch to the milestone pull request; the retro's changes are in workflow.md, live-testing.md and the report
-  template, and a milestone's branches are now deleted after its merge.
+  from the first dispatch to the milestone pull request; the retro's changes are in workflow.md, live-testing.md and
+  the report template, and a milestone's branches are now deleted after its merge.
 - Last done: the above; before it #29 and #30.
 
 ## Outside waits
@@ -69,7 +71,7 @@ a milestone to the maintainer (a few related issues, and why they go together), 
 
 The maintainer's next topics, about how the work gets done (`process`, `needs-user`):
 
-- A release of 0.12.3 ([RELEASING.md](RELEASING.md)), on the maintainer's word.
+- Publishing the wiki at v0.12.3 (`tools/wiki/publish.sh --push`), on the maintainer's word.
 - The next milestone, proposed to the maintainer and run by
   [Running a milestone](agents/workflow.md#running-a-milestone).
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
