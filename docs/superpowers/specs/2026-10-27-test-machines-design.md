@@ -403,7 +403,7 @@ the same machinery).
 - **Box and slot.** A withdrawn Mac refuses new macOS slots (exit 4; running VMs finish); an unreachable or asleep
   Mac is exit 5. `ls` on the desktop adds the Mac's rows or an "unreachable" note; `reap` is local to each host.
 - **Pool on the Mac.** Per-host settings in the box list (`instances.hosts.<self>`): reserve 6 GB (the maintainer),
-  `max_slots` 1, `macos` 4.5 GB. Memory on macOS: available = `hw.memsize` × macOS's own free percentage
+  `max_slots` 1, `macos` 4.5 GB (6 as built). Memory on macOS: available = `hw.memsize` × macOS's own free percentage
   (`kern.memorystatus_level`, what `memory_pressure` shows), and no grant while macOS reports memory pressure; the
   Mac counts no libvirt VMs. (The maintainer, 2026-10-28: a stricter count from `vm_stat` — compressible app memory
   and the compressor as used — left a VM never fitting beside a browser while macOS reported 82% free.) A started
@@ -415,7 +415,8 @@ the same machinery).
   holds only on AC.
 - **Keeper.** A detached keeper process per VM (its own session) runs `caffeinate -s -i tart run …`, records the PIDs
   and the VNC address (0600), and every minute stops and deletes the VM once its slot claim is not live — no launchd
-  job in the maintainer's account. `reap` also runs at every Mac-side `new` and `ls`.
+  job in the maintainer's account. `reap` also runs at every Mac-side `new` (and a local `ls`; not an `ls`
+  relayed from the desktop, as built).
 - **Ownership.** Everything in the tool's `TART_HOME` is the tool's; clones `tb-<id>`, bases `base-macos-<build>`; a
   record per clone (pool, claim, slot, holder, purpose, created, build); before every ssh the record, the running VM
   and the keeper are checked. Apple's two-VM limit counts any VM of the maintainer's: mapped to a clear failure.
@@ -435,6 +436,16 @@ the same machinery).
   lock and assistant prompts off. A check pass on a clone made as `new` makes it, before publish. Restore image
   cached; rebuilt from a fresh download when Apple no longer signs the cached one. Only the current build is kept;
   a build refuses below a free-disk floor.
+- **ttyak in the VM.** Built on the Mac under a Mac box claim; `--mount SRC:NAME` snapshots SRC with an APFS clone
+  (`cp -c`, free) into the clone's record folder and shares it read-only at `/Volumes/My Shared Files/NAME`. The
+  session is pushed to ttyak's folder in the VM (`~/Library/Application Support/ttyak/<profile>`); the VM is the
+  fake home. Whether ttyak touches the Keychain is checked (a prompt would hang unseen).
+- **SSD.** A clone writes ~0.5 GB per run to the Mac's SSD (APFS clones cannot live in RAM), removed with it; the
+  anti-goal is met by size, not by RAM.
+- **Tests.** Fakes on the desktop for tart, caffeinate, `vm_stat`/`sysctl`/`pmset`, and the Mac hop (a local tool
+  run as the Mac with its own folders); the macOS modules import on Linux. Real tests opt-in on the Mac under a box
+  claim, using the real one-slot pool.
+- **Generalised from the VM code:** bases' `build|ls|gc` per backend; the reap timer is the desktop's (systemd).
 
 **macOS VM — as built (2026-10-29; what changed from the answers above, from the real Mac):**
 
@@ -451,16 +462,6 @@ the same machinery).
 - Notifications: macOS 26.6 logs no title or body; `notifications` proves arrival and presentation, `shot` the text.
 - Ready: about 50 s after `new` (the ready agent waits out 30 s for a System Settings window the base no longer
   opens; shortened at the next rebuild).
-- **ttyak in the VM.** Built on the Mac under a Mac box claim; `--mount SRC:NAME` snapshots SRC with an APFS clone
-  (`cp -c`, free) into the clone's record folder and shares it read-only at `/Volumes/My Shared Files/NAME`. The
-  session is pushed to ttyak's folder in the VM (`~/Library/Application Support/ttyak/<profile>`); the VM is the
-  fake home. Whether ttyak touches the Keychain is checked (a prompt would hang unseen).
-- **SSD.** A clone writes ~0.5 GB per run to the Mac's SSD (APFS clones cannot live in RAM), removed with it; the
-  anti-goal is met by size, not by RAM.
-- **Tests.** Fakes on the desktop for tart, caffeinate, `vm_stat`/`sysctl`/`pmset`, and the Mac hop (a local tool
-  run as the Mac with its own folders); the macOS modules import on Linux. Real tests opt-in on the Mac under a box
-  claim, using the real one-slot pool.
-- **Generalised from the VM code:** bases' `build|ls|gc` per backend; the reap timer is the desktop's (systemd).
 
 ## Order (my call)
 
