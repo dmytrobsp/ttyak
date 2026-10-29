@@ -33,8 +33,11 @@ A conversation with a draft kept is marked ✎. Each section's name heads a rule
 The selected message is highlighted across the whole width of its pane, every row of it, like a selection in a list
 (so is the selected message of the Threads feed and the selected item of the Activity view).
 
-A conversation opened with unread messages has a red "new" line above the first of them. While you read further up,
-the bottom border counts the newer messages below ("↓ 3 newer").
+A conversation opened with unread messages has a red "new" line above the first of them. When they start further back
+than the newest page, ttyak loads older pages until the first of them is in (up to five more pages; beyond them,
+"— more new messages above —" stands at the top until scrolling up loads them). Scrolling, picking a message, sending,
+opening a thread, switching conversation or Esc meanwhile stops the loading, and the note shows. While you read
+further up, the bottom border counts the newer messages below ("↓ 3 newer").
 
 The open conversation and thread (and the Threads feed, by its timer) are marked read only while the terminal window
 has focus. What comes while it does not stays unread until you are back. This needs a terminal that reports focus
@@ -184,8 +187,9 @@ the All tab's unread items, counted when the workspace starts and each time it l
 who is in it, then the recent ones. Huddles themselves are on [Huddles](Huddles).
 
 - **Live now** lists the huddles in conversations you are a member of (not muted ones, as Slack does), yours first,
-  each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going,
-  and who is in it with their status emoji.
+  each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going
+  ("40 s", "12 min", "1 h", "1 h 5 min"), and who is in it with their status emoji. A huddle in a conversation ttyak
+  doesn't know is named by asking Slack once ("#name"), or "a conversation you are not in" when Slack won't say.
 - **Recent** lists the ended huddles you were in or missed (from Slack's huddle history, newest first, more loading as
   the end comes on screen): where, "3 h ago · 25 min", who took part, "N replies" when its thread has some, and a
   missed one as "Missed huddle" in the alert colour.

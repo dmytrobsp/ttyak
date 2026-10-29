@@ -176,7 +176,7 @@ fn after_the_code(e: CodeError) -> anyhow::Error {
 impl CodeSignIn {
     fn new(email: &str, base: &str) -> Result<CodeSignIn> {
         let jar = Arc::new(Jar::default());
-        let http = crate::api::http_client(|| reqwest::Client::builder().user_agent(session::USER_AGENT).cookie_provider(jar.clone()).connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(30)))?;
+        let http = crate::api::http_client(|| reqwest::Client::builder().user_agent(session::USER_AGENT).redirect(crate::api::redirect_policy()).cookie_provider(jar.clone()).connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(30)))?;
         Ok(CodeSignIn { email: email.trim().to_string(), http, jar, base: base.to_string() })
     }
 

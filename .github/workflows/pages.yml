@@ -25,28 +25,35 @@ jobs:
   build:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        timeout-minutes: 2
         with:
           persist-credentials: false
       - uses: actions/setup-node@v7
+        timeout-minutes: 3
         with:
           node-version: 22
       - name: Tests
+        timeout-minutes: 5
         run: |
           python3 -m unittest discover -s tools/site -p 'test_*.py'
           node --test "tools/site/*.test.mjs"
       - name: Fill in the latest release
+        timeout-minutes: 5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 tools/site/fill.py site --fetch-release --strict
       - uses: actions/upload-pages-artifact@v5
+        timeout-minutes: 5
         with:
           path: site
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pages: write
       id-token: write
@@ -56,3 +63,4 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+        timeout-minutes: 12

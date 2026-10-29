@@ -108,8 +108,26 @@ pub struct Status {
     pub in_huddle: bool,
 }
 
+/// How long a name's request that got no answer waits before it is asked again.
+const PLACE_BACK_OFF: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What Slack said about a conversation this workspace does not know (the Huddles view names its huddles by it).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlaceName {
+    /// Asked, not answered yet.
+    Pending,
+    /// The name to show ("#name").
+    Named(String),
+    /// Slack would not say (a private conversation you are not in).
+    Unreachable,
+    /// The request got no answer from Slack (the network, a rate limit): asked again after this time.
+    Retry(std::time::Instant),
+}
+
 #[derive(Debug, Default)]
 pub struct Workspace {
+    /// Names of conversations not known, asked for once each (see [`PlaceName`]).
+    pub place_names: HashMap<String, PlaceName>,
     /// Replies in threads you follow not read yet (the sidebar's Threads row).
     pub thread_unread: ThreadUnread,
     /// The sidebar's Activity row: Slack's own Activity badge (`activity_counts` added up), else (an older
@@ -169,6 +187,13 @@ pub struct Workspace {
     /// was asked for), and the channel each change was in, by its number (since the oldest list still asked for).
     pub huddle_seq: u64,
     pub(super) huddle_touched: HashMap<String, u64>,
+    /// The `huddle_start`s whose live list is not taken yet, each as (`huddle_seq` after it, its channel; empty: not
+    /// said): the list asked for after one (its `since` reaches the number) may bring that huddle in before its
+    /// `sh_room_join`.
+    pub starts: Vec<(u64, String)>,
+    /// Huddles (channel, room) a live list brought in on a `huddle_start`'s heels: their `sh_room_join` still says
+    /// "started a huddle", once.
+    pub unannounced: HashMap<String, String>,
     /// When (`huddle_seq`) the live list taken last was asked for.
     pub(super) live_taken: u64,
     /// A channel we are not in, shown in the sidebar while it is being looked at.
@@ -1118,6 +1143,40 @@ impl Workspace {
         self.huddles.iter().filter(|(c, h)| !h.participants.is_empty() && !self.muted.contains(*c) && self.conversations.get(*c).is_some_and(|c| c.is_member || c.is_dm())).map(|(c, _)| c.as_str())
     }
 
+    /// Of `channels`, those not known and not asked about yet; they are marked asked (so each is asked once).
+    /// A request that got no answer is asked again once its back-off is over (`now`).
+    pub fn ask_place_names(&mut self, channels: Vec<String>, now: std::time::Instant) -> Vec<String> {
+        let mut asked = Vec::new();
+        for c in channels {
+            let due = match self.place_names.get(&c) {
+                None => true,
+                Some(PlaceName::Retry(at)) => now >= *at,
+                Some(_) => false,
+            };
+            if !self.conversations.contains_key(&c) && due {
+                self.place_names.insert(c.clone(), PlaceName::Pending);
+                asked.push(c);
+            }
+        }
+        asked
+    }
+
+    /// Slack's answer to `conversations.info` for `channel` (none: it failed).
+    pub fn set_place_name(&mut self, channel: &str, info: Option<&Conversation>) {
+        let name = info.filter(|c| c.id == channel).map(|c| if c.is_dm() { self.conversation_label(c) } else { format!("#{}", c.name) });
+        self.place_names.insert(channel.to_string(), name.filter(|n| n.trim_start_matches('#') != "").map_or(PlaceName::Unreachable, PlaceName::Named));
+    }
+
+    /// The request for `channel`'s name got no answer from Slack (not even a refusal): asked again at `now` + back-off.
+    pub fn place_name_unanswered(&mut self, channel: &str, now: std::time::Instant) {
+        self.place_names.insert(channel.to_string(), PlaceName::Retry(now + PLACE_BACK_OFF));
+    }
+
+    /// The live list asked for at `since` failed: the starts it was to answer for are given up.
+    pub fn live_huddles_failed(&mut self, since: u64) {
+        self.starts.retain(|(n, _)| *n > since);
+    }
+
     /// A live event changed the huddle of `channel` (the live lists asked for before it do not undo that).
     pub fn touch_huddle(&mut self, channel: &str) {
         self.huddle_seq += 1;
@@ -1135,8 +1194,15 @@ impl Workspace {
         self.live_taken = since;
         let changed: std::collections::HashSet<String> = self.huddle_touched.iter().filter(|(_, n)| **n > since).map(|(c, _)| c.clone()).collect();
         let mut old = std::mem::take(&mut self.huddles);
+        // (The list asked for after a `huddle_start`: what it brings in new, the join is yet to announce.)
+        let after_start = self.starts.iter().any(|(n, _)| since >= *n);
+        let started: Vec<String> = self.starts.iter().filter(|(n, _)| since >= *n).map(|(_, c)| c.clone()).collect();
+        self.starts.retain(|(n, _)| since < *n);
         for h in live.into_iter().filter(|h| !changed.contains(&h.channel)) {
             let known = old.get(&h.channel).filter(|o| o.room == h.call_id);
+            if after_start && known.is_none() && started.iter().any(|c| c.is_empty() || *c == h.channel) {
+                self.unannounced.insert(h.channel.clone(), h.call_id.clone());
+            }
             let thread = h.thread_ts.or_else(|| known.and_then(|o| o.thread.clone()));
             let start = if h.start > 0 { h.start } else { known.map_or(0, |o| o.start) };
             self.huddles.insert(h.channel, Huddle { room: h.call_id, participants: h.members, thread, start });
@@ -1148,6 +1214,8 @@ impl Workspace {
         }
         // (No list asked for before this one is taken any more.)
         self.huddle_touched.retain(|_, n| *n > since);
+        let live_now = &self.huddles;
+        self.unannounced.retain(|c, r| live_now.get(c).is_some_and(|h| h.room == *r));
         let mut over: Vec<String> = old.into_keys().filter(|c| !self.huddles.contains_key(c)).collect();
         over.sort();
         over
@@ -1270,6 +1338,36 @@ mod tests {
         // Someone not known yet: taken as they come.
         crate::tui::live::apply(&mut ws, &serde_json::json!({"type": "user_profile_changed", "user": {"id": "U3", "name": "cy", "profile": {"status_emoji": ":x:"}}}), None, true);
         assert_eq!(ws.users["U3"].profile.status_emoji, ":x:");
+    }
+
+    #[test]
+    fn a_conversation_not_known_is_asked_about_once() {
+        let mut ws = Workspace { self_id: "UME".into(), ..Default::default() };
+        ws.conversations.insert("C1".into(), Conversation { id: "C1".into(), name: "known".into(), ..Default::default() });
+        let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let now = std::time::Instant::now();
+        assert_eq!(ws.ask_place_names(ids(&["C1", "C9", "C8", "C9"]), now), ["C9", "C8"], "not the known one, not twice");
+        assert!(ws.ask_place_names(ids(&["C1", "C9", "C8"]), now).is_empty(), "redrawn: nothing asked again");
+        assert_eq!(ws.place_names["C9"], PlaceName::Pending);
+        ws.set_place_name("C9", Some(&Conversation { id: "C9".into(), name: "ops".into(), is_channel: true, ..Default::default() }));
+        ws.set_place_name("C8", None);
+        assert_eq!((&ws.place_names["C9"], &ws.place_names["C8"]), (&PlaceName::Named("#ops".into()), &PlaceName::Unreachable));
+        assert!(ws.ask_place_names(ids(&["C9", "C8"]), now).is_empty(), "answered: kept for the session, failed ones too");
+    }
+
+    #[test]
+    fn a_request_without_an_answer_is_asked_again_after_a_back_off() {
+        let mut ws = Workspace { self_id: "UME".into(), ..Default::default() };
+        let (now, ids) = (std::time::Instant::now(), vec!["C9".to_string()]);
+        assert_eq!(ws.ask_place_names(ids.clone(), now), ["C9"]);
+        ws.place_name_unanswered("C9", now);
+        assert!(matches!(ws.place_names["C9"], PlaceName::Retry(_)), "not given up on");
+        assert!(ws.ask_place_names(ids.clone(), now + std::time::Duration::from_secs(5)).is_empty(), "not at once: no storm on a dead link");
+        assert_eq!(ws.ask_place_names(ids.clone(), now + std::time::Duration::from_secs(120)), ["C9"], "after the back-off");
+        assert_eq!(ws.place_names["C9"], PlaceName::Pending);
+        // Slack's own refusal is final.
+        ws.set_place_name("C9", None);
+        assert!(ws.ask_place_names(ids, now + std::time::Duration::from_secs(9999)).is_empty());
     }
 
     #[test]

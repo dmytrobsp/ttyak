@@ -192,8 +192,8 @@ pub fn wrapped_rows(text: &str, width: usize) -> u16 {
     rows
 }
 
-/// The words of the audio line's long form, for `tr`.
-pub const WORDS: &[&str] = &["volume", "mic gain", "threshold", "noise suppression", "echo cancellation", "on", "off", "F6 → Audio & video"];
+/// The words of the audio line (its long and its short form), for `tr`.
+pub const WORDS: &[&str] = &["volume", "mic gain", "threshold", "noise suppression", "echo cancellation", "on", "off", "F6 → Audio & video", "vol", "gain", "gate", "noise", "echo"];
 
 /// The audio settings in a line, shortened when `width` is too narrow for the long form.
 pub fn audio_summary(a: &super::settings::Audio, width: usize) -> String {
@@ -203,7 +203,7 @@ pub fn audio_summary(a: &super::settings::Audio, width: usize) -> String {
     if long.chars().count() <= width {
         long
     } else {
-        format!(" vol {}% · gain {}% · gate {threshold} · noise {} · echo {}", a.huddle_volume, a.mic_gain, on(a.noise_suppression), on(a.echo_cancellation))
+        format!(" {} {}% · {} {}% · {} {threshold} · {} {} · {} {}", tr("vol"), a.huddle_volume, tr("gain"), a.mic_gain, tr("gate"), tr("noise"), on(a.noise_suppression), tr("echo"), on(a.echo_cancellation))
     }
 }
 

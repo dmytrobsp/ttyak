@@ -60,6 +60,9 @@ enum Net {
     DetailsInfo(slack_core::types::Conversation),
     /// What Slack says about a conversation a link (or notification) leads to that this workspace did not know.
     LinkConversation { result: Result<slack_core::types::Conversation, String>, target: super::applink::Target },
+    /// What Slack says about a conversation a huddle is in that this workspace did not know.
+    /// (`unanswered`: the request got no answer from Slack, as `slack_core::api::is_unanswered` says.)
+    PlaceName { channel: String, result: Result<slack_core::types::Conversation, String>, unanswered: bool },
     DetailsMembers { channel: String, members: Vec<String> },
     DetailsPins { channel: String, pins: Vec<slack_core::types::Message> },
     /// Search results for a query.
@@ -318,6 +321,9 @@ struct App {
     seeking: Option<(String, String)>,
     /// A link (or a notification) started the seek: a message that isn't there says so.
     seek_from_link: bool,
+    /// The seek pages back to where the unread part of a conversation just opened starts (its read mark): how many
+    /// more pages it may ask for (see [`UNREAD_PAGES`]).
+    seek_unread: Option<usize>,
     /// The link's hit, selected once the seek finds its message (never when it is missing).
     seek_hit: Option<super::search::Hit>,
     /// The seek fetched the conversation's newest page again (once, before saying a newer message is missing).
@@ -521,11 +527,18 @@ impl App {
             // marked read right away).
             self.messages.new_since = selected.as_ref().filter(|id| self.ws.unread.get(*id).is_some_and(|u| u.has_unreads)).and_then(|id| self.ws.conversations.get(id)).and_then(|c| c.last_read.clone());
             self.messages.jump_to_new = self.messages.new_since.is_some();
+            self.messages.new_above = self.messages.new_since.is_some();
             self.messages.to_bottom();
             self.messages.selected = None;
             self.close_thread();
+            // The last one's paging back to its unread part ends with it.
+            if self.seek_unread.take().is_some() && self.seeking.take().is_some() {
+                self.clear_seek_note();
+            }
             if let Some(hit) = self.pending_hit.take().filter(|h| Some(&h.channel) == selected.as_ref()) {
                 self.show_hit(hit);
+            } else if let (Some(id), Some(since)) = (&selected, &self.messages.new_since) {
+                self.seek_new(id.clone(), since.clone());
             }
             if let Some(id) = selected {
                 self.load_history(&id, false);
@@ -807,6 +820,7 @@ impl App {
             self.thread_pane.to_bottom();
         } else {
             self.messages.to_bottom();
+            self.give_up_unread_seek();
         }
         let (client, tx) = (self.client.clone(), self.net.clone());
         tokio::spawn(async move {
@@ -857,6 +871,7 @@ impl App {
             self.thread_pane.to_bottom();
         } else {
             self.messages.to_bottom();
+            self.give_up_unread_seek();
         }
         self.status = format!("uploading {label}…");
         let (client, tx) = (self.client.clone(), self.net.clone());
@@ -1410,7 +1425,7 @@ impl App {
         use super::menu::{Menu, Target};
         let Some(offers) = self.find_message(&t.channel, &t.ts).map(|m| super::menu::Offers::of(m, &self.ws.self_id)) else { return };
         match t.shown {
-            Shown::Messages => self.messages.selected = Some(t.ts.clone()),
+            Shown::Messages => self.messages.pick(t.ts.clone()),
             Shown::Thread => self.thread_pane.selected = Some(t.ts.clone()),
             Shown::Feed => self.threads.selected = Some((t.channel.clone(), t.ts.clone())),
             Shown::Activity => {}
@@ -1547,7 +1562,7 @@ impl App {
                 self.focus = Focus::ThreadComposer;
             }
             Shown::Messages => {
-                self.messages.selected = Some(ts.to_string());
+                self.messages.pick(ts.to_string());
                 self.focus = Focus::Composer;
             }
             // (The feed's box keeps the thread it replies in: not aimed again.)
@@ -1777,6 +1792,9 @@ impl App {
         let Some(channel) = self.current.clone() else { return };
         let Some(m) = self.ws.find_message(&channel, ts) else { return };
         let parent = if m.is_reply() { m.thread_ts.clone().unwrap_or_default() } else { m.ts.clone() };
+        // You open it: the paging back to the unread ends (its jump would move the view behind the thread). Not when a
+        // thread reopens by itself at start, nor for a link (its seek already took the unread one's place).
+        self.give_up_unread_seek();
         self.open_thread_at(channel, parent);
     }
 
@@ -1990,6 +2008,15 @@ impl App {
         }
         if let Some(cursor) = self.huddles.next_page() {
             self.fetch_huddle_history(self.huddles.generation, Some(cursor));
+        }
+        // (A conversation this workspace doesn't know is named by asking Slack once; its id is never shown.)
+        for channel in self.ws.ask_place_names(self.huddles.channels_shown(), std::time::Instant::now()) {
+            let (client, tx) = (self.client.clone(), self.net.clone());
+            tokio::spawn(async move {
+                let result = client.conversation_info(&channel).await;
+                let unanswered = result.as_ref().err().is_some_and(slack_core::api::is_unanswered);
+                let _ = tx.send(Net::PlaceName { channel, result: result.map_err(|e| e.to_string()), unanswered });
+            });
         }
         for (channel, ts) in self.huddles.wanted() {
             self.huddles.requested.insert((channel.clone(), ts.clone()));
@@ -2451,7 +2478,9 @@ impl App {
     fn show_hit(&mut self, hit: super::search::Hit) {
         let behind = self.seek_back.as_ref().and_then(|l| l.behind.clone());
         let top = behind.or_else(|| hit.thread_ts.clone()).unwrap_or_else(|| hit.ts.clone());
-        self.seeking = Some((hit.channel.clone(), top));
+        // It takes the place of a paging back to the unread part, and of the jump to it: the view goes to the hit's
+        // message (the "new" line, or the note, still stands where it is).
+        (self.seeking, self.seek_unread, self.messages.jump_to_new) = (Some((hit.channel.clone(), top)), None, false);
         if self.seek_back.is_some() {
             // Selected at once; a message no longer there gives way to the nearest one once the seek is done.
             self.select_hit(hit);
@@ -2490,6 +2519,34 @@ impl App {
         }
     }
 
+    /// Page `channel`, just opened, back to where its unread part starts (`since`, its read mark): at most
+    /// [`UNREAD_PAGES`] pages older than the newest; nothing asked for when that is loaded (see
+    /// [`App::continue_seek`]). Beyond them the pane says more new messages are above.
+    fn seek_new(&mut self, channel: String, since: String) {
+        (self.seek_from_link, self.seek_back, self.seek_hit, self.seek_refreshed, self.link_reply) = (false, None, None, false, None);
+        (self.seeking, self.seek_unread) = (Some((channel, since)), Some(UNREAD_PAGES));
+        self.continue_seek();
+    }
+
+    /// The paging back to the unread part's start, if it runs, is given up with its jump (you moved in the pane, sent,
+    /// or opened a thread: the view stays yours; the pane says if more new messages are above).
+    fn give_up_unread_seek(&mut self) {
+        if self.seek_unread.take().is_some() && self.seeking.take().is_some() {
+            self.messages.jump_to_new = false;
+            self.clear_seek_note();
+        }
+    }
+
+    /// The note a seek shows while it pages back goes (not one said since).
+    fn clear_seek_note(&mut self) {
+        for note in [SEEKING, UNREAD_SEEKING] {
+            let note = super::i18n::tr(note);
+            if note.split("{}").next().is_some_and(|p| !p.is_empty() && self.status.starts_with(p)) {
+                self.status.clear();
+            }
+        }
+    }
+
     /// Page the history back until the message being sought is loaded (the selection then
     /// shows it); stop at the beginning of the conversation or when it is no longer shown.
     /// What it did: None while it waits for the history (or has nothing to seek).
@@ -2498,26 +2555,35 @@ impl App {
         if self.current.as_deref() != Some(channel.as_str()) {
             // Not shown yet (the conversation is being switched to) or left: wait, or drop it.
             if self.pending_hit.is_none() {
-                (self.seeking, self.seek_hit, self.seek_back) = (None, None, None);
+                (self.seeking, self.seek_hit, self.seek_back, self.seek_unread) = (None, None, None, None);
             }
             return None;
         }
-        let tl = self.ws.timelines.get(&channel)?;
-        if !tl.loaded || tl.loading {
+        if !self.ws.timelines.get(&channel).is_some_and(|t| t.loaded && !t.loading) {
             return None;
         }
+        // Paging back to the unread part: given up once you scroll or pick a message.
+        if !self.messages.untouched() {
+            self.give_up_unread_seek();
+            if self.seeking.is_none() {
+                return None;
+            }
+        }
+        let tl = self.ws.timelines.get(&channel)?;
         let found = tl.index_of(&ts).is_some();
         let older = tl.messages.first().is_some_and(|m| seek_older(&ts, &m.ts));
         let newer = tl.messages.last().is_none_or(|m| seek_older(&m.ts, &ts));
         let (has_more, n) = (tl.has_more, tl.messages.len());
-        let step = seek_step(Sought { found, older, newer, has_more }, self.seek_from_link, self.seek_refreshed);
+        let step = match (seek_step(Sought { found, older, newer, has_more }, self.seek_from_link, self.seek_refreshed), self.seek_unread) {
+            // The unread part from the beginning of the conversation (the line above its first message), or further
+            // back than it pages (the pane's note).
+            (Seek::Missing(_), Some(_)) | (Seek::More, Some(0)) => Seek::Done,
+            (step, _) => step,
+        };
         match step {
             Seek::Done => {
-                self.seeking = None;
-                let seeking = super::i18n::tr(SEEKING);
-                if seeking.split("{}").next().is_some_and(|p| !p.is_empty() && self.status.starts_with(p)) {
-                    self.status.clear();
-                }
+                (self.seeking, self.seek_unread) = (None, None);
+                self.clear_seek_note();
                 if let Some(hit) = self.seek_hit.take() {
                     self.select_hit(hit);
                 }
@@ -2529,7 +2595,14 @@ impl App {
                 self.end_seek_back();
             }
             Seek::More => {
-                self.status = super::i18n::tr(SEEKING).replace("{}", &n.to_string());
+                let note = match self.seek_unread.as_mut() {
+                    Some(left) => {
+                        *left -= 1;
+                        UNREAD_SEEKING
+                    }
+                    None => SEEKING,
+                };
+                self.status = super::i18n::tr(note).replace("{}", &n.to_string());
                 self.load_history(&channel, true);
             }
             Seek::Refresh => {
@@ -2560,10 +2633,7 @@ impl App {
             return;
         }
         (self.seeking, self.seek_hit) = (None, None);
-        let seeking = super::i18n::tr(SEEKING);
-        if seeking.split("{}").next().is_some_and(|p| !p.is_empty() && self.status.starts_with(p)) {
-            self.status.clear();
-        }
+        self.clear_seek_note();
         self.end_seek_back();
     }
 
@@ -2599,11 +2669,13 @@ impl App {
         });
     }
 
-    /// Esc in the messages pane: stop paging back for a message.
+    /// Esc in the messages pane: stop paging back for a message (or for the unread part's start: the view still goes up
+    /// to what is loaded of it).
     fn stop_seek(&mut self) {
         if self.seeking.take().is_some() {
-            (self.pending_hit, self.seek_hit, self.link_reply, self.seek_back) = (None, None, None, None);
-            self.status = super::i18n::tr(SEEK_STOPPED).into_owned();
+            let note = if self.seek_unread.is_some() { UNREAD_STOPPED } else { SEEK_STOPPED };
+            (self.pending_hit, self.seek_hit, self.link_reply, self.seek_back, self.seek_unread) = (None, None, None, None, None);
+            self.status = super::i18n::tr(note).into_owned();
         }
     }
 
@@ -2743,7 +2815,10 @@ impl App {
     /// does (an Activity item is not opened), then your reaction with that emoji added or taken off.
     fn click_pill(&mut self, t: MessageTarget, name: String, item: Option<usize>) {
         match t.shown {
-            Shown::Messages => (self.messages.selected, self.focus) = (Some(t.ts.clone()), Focus::Messages),
+            Shown::Messages => {
+                self.messages.pick(t.ts.clone());
+                self.focus = Focus::Messages;
+            }
             Shown::Thread => (self.thread_pane.selected, self.focus) = (Some(t.ts.clone()), Focus::Thread),
             Shown::Feed => (self.threads.selected, self.focus) = (Some((t.channel.clone(), t.ts.clone())), Focus::Messages),
             Shown::Activity => {
@@ -3718,7 +3793,7 @@ impl App {
         hold_unread(&mut self.ws, &mut self.marked, &channel, &ts);
         if self.current.as_deref() == Some(channel.as_str()) {
             self.messages.new_since = Some(ts.clone());
-            self.messages.jump_to_new = false;
+            (self.messages.jump_to_new, self.messages.new_above) = (false, false);
         } else {
             // (Held only while it is open: opening it later marks it read as usual.)
             self.ws.release_unread(&channel);
@@ -4898,6 +4973,17 @@ const CONVERSATION_GONE: &str = "that conversation isn't there any more, or you 
 /// The note while a seek pages back (`{}`: how many messages are loaded).
 const SEEKING: &str = "looking for the message… ({} loaded)";
 
+/// The note while a conversation just opened pages back to where its unread part starts (`{}`: how many messages
+/// are loaded).
+const UNREAD_SEEKING: &str = "looking for the first new message… ({} loaded)";
+
+/// The note when Esc stops the paging back to the unread part's start.
+const UNREAD_STOPPED: &str = "stopped looking for the first new message";
+
+/// How many pages older than the newest a conversation just opened pages back for its unread part's start: beyond
+/// them, a note at the top says more new messages are above.
+const UNREAD_PAGES: usize = 5;
+
 /// The note when Esc stops a seek.
 const SEEK_STOPPED: &str = "stopped looking for the message";
 
@@ -4929,8 +5015,8 @@ fn spawn_leave(client: slack_core::api::Client, params: Vec<(&'static str, Strin
     });
 }
 
-/// The status notes of links into ttyak, for `ctl locale-template`.
-pub const LINK_NOTES: &[&str] = &[LINK_GONE, HISTORY_GONE, CONVERSATION_GONE, SEEKING, SEEK_STOPPED, FILE_NOT_SHOWN, super::applink::OPENS_IN_TTYAK, REACTION_REFUSED, REACTION_UNREACHED, REACTION_WAITING];
+/// The status notes of links into ttyak and of the seeks paging back, for `ctl locale-template`.
+pub const LINK_NOTES: &[&str] = &[LINK_GONE, HISTORY_GONE, CONVERSATION_GONE, SEEKING, UNREAD_SEEKING, SEEK_STOPPED, UNREAD_STOPPED, FILE_NOT_SHOWN, super::applink::OPENS_IN_TTYAK, REACTION_REFUSED, REACTION_UNREACHED, REACTION_WAITING];
 
 /// A history request for a conversation (`tl`) failed: it may be asked again (no longer loading). The note to show:
 /// a link's seek in it (`seeking`) ends with its not-found note, anything else says what failed.
@@ -5328,6 +5414,7 @@ impl App {
             pending_hit: None,
             ringing: None,
             seeking: None,
+            seek_unread: None,
             seek_from_link: false,
             seek_hit: None,
             seek_refreshed: false,
@@ -5751,8 +5838,9 @@ fn handle_dialog(app: &mut App, ev: &Event) -> bool {
             }
         }
         // The reaction picker: a click on an emoji reacts with it, a click outside closes it.
-        // The side buttons are no clicks: over the picker, the menu or the save dialog they do nothing.
-        Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Back | MouseButton::Forward)) && (app.picker.is_some() || app.menu.is_some() || app.save.is_some()) => {}
+        // The side buttons (and buttons 10 and 11) are no clicks: over the picker, the menu or the save dialog they do
+        // nothing.
+        Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Back | MouseButton::Forward | MouseButton::Button10 | MouseButton::Button11)) && (app.picker.is_some() || app.menu.is_some() || app.save.is_some()) => {}
         Event::Mouse(m) if app.picker.is_some() && app.update_view.is_none() && matches!(m.kind, MouseEventKind::Down(_)) => {
             let Some((picker, _, _)) = app.picker.as_mut() else { return true };
             let len = picker.candidates(&app.ws.custom_emoji).len();
@@ -6975,9 +7063,14 @@ fn handle_net(app: &mut App, msg: Net) {
             if older {
                 tl.prepend_page(page.messages, page.has_more);
             } else {
-                // Newest page: merge with anything that arrived live meanwhile.
+                // Newest page: merge with anything that arrived live meanwhile (or was loaded before: fetched again).
+                let (had_more, oldest) = (tl.has_more, tl.messages.first().map(|m| m.ts.clone()));
                 let live = std::mem::take(&mut tl.messages);
                 tl.prepend_page(page.messages, page.has_more);
+                // Older pages loaded before reach further back than this one: whether there is more is theirs to say.
+                if oldest.is_some_and(|o| tl.messages.first().is_some_and(|f| seek_older(&o, &f.ts))) {
+                    tl.has_more = had_more;
+                }
                 for m in live {
                     tl.upsert(m);
                 }
@@ -7286,7 +7379,10 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.sidebar.rebuild(&app.ws);
             }
             // The huddles kept from the live events stay.
-            Err(e) => tracing::warn!("the huddles going on: {e}"),
+            Err(e) => {
+                tracing::warn!("the huddles going on: {e}");
+                app.ws.live_huddles_failed(since);
+            }
         },
         Net::HuddleHistory { generation, more, result } => match result {
             Ok((page, cursor)) => app.huddles.add_page(generation, more, page, cursor),
@@ -7295,6 +7391,17 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.huddles.fail(generation, e);
             }
         },
+        Net::PlaceName { channel, result, unanswered } => {
+            if let Err(e) = &result {
+                tracing::debug!("conversations.info for a huddle's place: {e}");
+            }
+            // (No answer from Slack says nothing about the conversation: asked again later, "…" meanwhile.)
+            if unanswered {
+                app.ws.place_name_unanswered(&channel, std::time::Instant::now());
+            } else {
+                app.ws.set_place_name(&channel, result.as_ref().ok());
+            }
+        }
         Net::HuddleReplies { channel, ts, count } => {
             if let Some(n) = count {
                 app.huddles.replies.insert((channel, ts), n);
@@ -7400,7 +7507,7 @@ fn handle_net(app: &mut App, msg: Net) {
             app.status = history_failed(app.ws.timelines.get_mut(&channel), seeking, app.seek_from_link, &error);
             if seeking {
                 // The seek ends here (a link's message never selected), as when the message is missing.
-                (app.seeking, app.seek_hit, app.link_reply, app.seek_back) = (None, None, None, None);
+                (app.seeking, app.seek_hit, app.link_reply, app.seek_back, app.seek_unread) = (None, None, None, None, None);
             }
         }
         Net::Error(e) => {
@@ -10385,6 +10492,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_huddles_view_names_an_unknown_conversation_by_asking_once() {
+        use super::Net;
+        let (mut app, mut net) = test_app();
+        let now = chrono::Utc::now().timestamp();
+        super::run_global(&mut app, super::Action::Huddles);
+        // (A recent huddle: the live list holds only conversations you are in.)
+        let ended = slack_core::types::PastHuddle { id: "P9".into(), channel: "C9".into(), start: now - 3600, end: now - 3000, ended: true, ..Default::default() };
+        app.huddles.past = Some(vec![ended]);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let shown = |app: &mut super::App, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| -> String {
+            terminal.draw(|f| super::draw(f, app)).unwrap();
+            let buf = terminal.backend().buffer();
+            (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        let text = shown(&mut app, &mut terminal);
+        assert!(text.contains(" …") && !text.contains("C9"), "neutral while pending: {text}");
+        // Redrawn and asked again: still one request. (The test server is nowhere: no answer comes back.)
+        app.request_huddles();
+        shown(&mut app, &mut terminal);
+        app.request_huddles();
+        let mut answers = Vec::new();
+        while let Ok(Some(msg)) = tokio::time::timeout(std::time::Duration::from_secs(3), net.recv()).await {
+            if let Net::PlaceName { channel, unanswered, .. } = &msg {
+                answers.push((channel.clone(), *unanswered));
+            }
+            if answers.len() == 1 && matches!(msg, Net::PlaceName { .. }) {
+                // The unanswered request: not given up on, nothing said about the conversation.
+                super::handle_net(&mut app, msg);
+                break;
+            }
+        }
+        assert_eq!(answers, [("C9".to_string(), true)], "one request, which got no answer");
+        assert!(matches!(app.ws.place_names["C9"], super::super::state::PlaceName::Retry(_)));
+        assert!(shown(&mut app, &mut terminal).contains(" …"), "still neutral");
+        // Slack's refusal is final and said; its answer names the place.
+        super::handle_net(&mut app, Net::PlaceName { channel: "C9".into(), result: Err("channel_not_found".into()), unanswered: false });
+        assert!(shown(&mut app, &mut terminal).contains(" a conversation you are not in"));
+        let c = slack_core::types::Conversation { id: "C9".into(), name: "ops".into(), is_channel: true, ..Default::default() };
+        super::handle_net(&mut app, Net::PlaceName { channel: "C9".into(), result: Ok(c), unanswered: false });
+        assert!(shown(&mut app, &mut terminal).contains(" #ops"));
+    }
+
+    #[tokio::test]
     async fn a_conversation_learned_for_a_link_builds_the_views_again() {
         let (mut app, _net) = test_app();
         app.ws.conversations.insert("C1".into(), slack_core::types::Conversation { id: "C1".into(), name: "old".into(), is_channel: true, is_member: true, ..Default::default() });
@@ -11241,7 +11391,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_mouses_side_buttons_leave_the_picker_and_the_menu_open() {
+    async fn the_mouses_buttons_10_and_11_do_nothing() {
+        use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+        let (mut app, _net) = with_channels(&["C1", "C2"]);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        app.jump_to("C1");
+        settle(&mut app, true);
+        let status = app.status.clone();
+        for b in [MouseButton::Button10, MouseButton::Button11] {
+            for kind in [MouseEventKind::Down(b), MouseEventKind::Up(b), MouseEventKind::Drag(b)] {
+                super::handle_event(&mut app, Event::Mouse(MouseEvent { kind, column: 10, row: 5, modifiers: KeyModifiers::NONE }));
+                settle(&mut app, true);
+                assert_eq!(app.current.as_deref(), Some("C1"), "{kind:?} does not step through the history");
+                assert!(app.overlay().is_none() && app.menu.is_none());
+                assert_eq!(app.status, status);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_mouses_side_buttons_and_buttons_10_and_11_leave_the_popups_open() {
         use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
         let (mut app, _net) = with_channels(&["C1", "C2"]);
         app.jump_to("C2");
@@ -11250,18 +11420,26 @@ mod tests {
             super::handle_event(app, Event::Mouse(MouseEvent { kind: MouseEventKind::Down(b), column: 70, row: 20, modifiers: KeyModifiers::NONE }));
             settle(app, true);
         };
+        let buttons = [MouseButton::Back, MouseButton::Forward, MouseButton::Button10, MouseButton::Button11];
         let none = super::super::menu::Offers { own: false, open: false, save: false, text: false, reply: false };
         app.menu = Some(super::super::menu::Menu::new(super::super::menu::Target::Conversation, (70, 20), &app.keys, none, true, false, false));
-        for b in [MouseButton::Back, MouseButton::Forward] {
+        for b in buttons {
             side(&mut app, b);
-            assert!(app.menu.is_some(), "the menu stays");
+            assert!(app.menu.is_some(), "the menu stays after {b:?}");
             assert_eq!(app.current.as_deref(), Some("C2"));
         }
         app.menu = None;
         app.picker = Some((super::super::picker::EmojiPicker::default(), "C2".into(), "1.0".into()));
-        for b in [MouseButton::Back, MouseButton::Forward] {
+        for b in buttons {
             side(&mut app, b);
-            assert!(app.picker.is_some(), "the picker stays");
+            assert!(app.picker.is_some(), "the picker stays after {b:?}");
+            assert_eq!(app.current.as_deref(), Some("C2"));
+        }
+        app.picker = None;
+        app.save = Some(super::super::save::SaveDialog::new(vec![slack_core::types::File { id: "F1".into(), name: "a.txt".into(), ..Default::default() }], std::path::Path::new("/tmp/x")));
+        for b in buttons {
+            side(&mut app, b);
+            assert!(app.save.is_some(), "the save dialog stays after {b:?}");
             assert_eq!(app.current.as_deref(), Some("C2"));
         }
     }
@@ -13195,5 +13373,329 @@ mod tests {
         click(&mut app, x, y);
         click(&mut app, x, y);
         assert_eq!(app.status, super::super::i18n::tr(super::REACTION_WAITING));
+    }
+
+    /// C1's messages 1 to `n` on Slack (by U2), read up to message `read`, opened from C2 (nothing loaded yet); and
+    /// its page of messages `from` to `to`, newest first as Slack sends it.
+    fn unread_c1(n: usize, read: usize) -> (super::App, tokio::sync::mpsc::UnboundedReceiver<super::Net>, impl Fn(usize, usize, bool) -> slack_core::types::HistoryPage) {
+        let (mut app, net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, n, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(read));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        app.jump_to("C1");
+        settle(&mut app, true);
+        assert_eq!(app.messages.new_since, Some(top_ts(read)));
+        let page = move |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        (app, net, page)
+    }
+
+    /// C1's page comes (`older`: one before the oldest loaded).
+    fn c1_page(app: &mut super::App, page: slack_core::types::HistoryPage, older: bool) {
+        super::handle_net(app, super::Net::History { channel: "C1".into(), page, older });
+        settle(app, false);
+    }
+
+    /// The "— new —" line on screen, right above message `n` (its header or its text).
+    fn new_line_above(shown: &[String], n: usize) {
+        let rule = shown.iter().position(|l| l.contains("─ new ─")).unwrap_or_else(|| panic!("no line on screen:\n{}", shown.join("\n")));
+        let first = shown.iter().position(|l| l.contains(&format!("message number {n:03}"))).unwrap_or_else(|| panic!("no message {n}:\n{}", shown.join("\n")));
+        assert!(rule < first && first - rule <= 2, "the line at {rule}, message {n} at {first}:\n{}", shown.join("\n"));
+        assert!(!shown[rule..first].iter().any(|l| l.contains("message number")), "{}", shown.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn more_unread_than_a_page_is_paged_back_to_where_it_starts() {
+        let (mut app, _net, page) = unread_c1(120, 40);
+        c1_page(&mut app, page(71, 120, true), false);
+        assert!(app.ws.timelines["C1"].loading, "the page before asked for");
+        assert_eq!(app.status, super::super::i18n::tr(super::UNREAD_SEEKING).replace("{}", "50"));
+        let shown = drawn(&mut app);
+        assert!(!shown.iter().any(|l| l.contains("─ new ─")), "no line before its start is in:\n{}", shown.join("\n"));
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading, "the read mark is in: no further page");
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, "", "the note gone");
+        // The line above message 41, jumped to.
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn the_conversation_reopened_at_start_pages_back_to_its_unread_too() {
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // As the boot does with the conversation open last time: in NORMAL on its messages.
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        assert!(app.ws.timelines["C1"].loading, "the page before asked for");
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
+        // (And it stays there.)
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn the_landing_selection_never_undoes_the_jump_to_new() {
+        // Reopened at start, the read mark in the newest page: the line stays in view (the selection goes with it).
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(72));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        assert!(!app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 73);
+        new_line_above(&drawn(&mut app), 73);
+        assert_eq!(app.messages.selected, Some(top_ts(73)), "the first new message selected");
+    }
+
+    #[tokio::test]
+    async fn a_live_message_during_the_paging_at_start_is_not_you_moving() {
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 121, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        assert_eq!(app.messages.selected, Some(top_ts(120)), "landed on the newest");
+        // Message 121 comes live while the page before is on its way.
+        app.ws.timelines.get_mut("C1").unwrap().upsert(all[120].clone());
+        drawn(&mut app);
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn esc_stops_the_paging_back_to_the_unread_and_says_so() {
+        let (mut app, _net, page) = unread_c1(400, 5);
+        c1_page(&mut app, page(351, 400, true), false);
+        drawn(&mut app);
+        app.focus = super::Focus::Messages;
+        go(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, super::super::i18n::tr(super::UNREAD_STOPPED));
+        assert!(super::super::i18n::template().contains(&format!("\"{}\" = \"\"", super::UNREAD_STOPPED)));
+        // The page on its way comes: none after it; the view goes up to what is loaded, the note on top.
+        c1_page(&mut app, page(301, 350, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        let shown = drawn(&mut app);
+        assert!(shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn a_link_fetching_the_newest_page_again_keeps_the_line_at_the_start() {
+        use super::super::search::Hit;
+        // Never read: everything is new, and the whole history is paged in.
+        let (mut app, _net, page) = unread_c1(121, 0);
+        app.messages.new_since = Some("999.000000".into());
+        app.seek_new("C1".into(), "999.000000".into());
+        c1_page(&mut app, page(71, 120, true), false);
+        c1_page(&mut app, page(21, 70, true), true);
+        c1_page(&mut app, page(1, 20, false), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].has_more);
+        drawn(&mut app);
+        // A link to message 121, not loaded yet: the newest page is fetched again (and says there is more).
+        app.open_hit_from(Hit { channel: "C1".into(), ts: top_ts(121), ..Default::default() }, true);
+        assert!(app.ws.timelines["C1"].loading, "the newest page asked for again");
+        c1_page(&mut app, page(72, 121, true), false);
+        assert_eq!(app.messages.selected, Some(top_ts(121)));
+        assert!(!app.ws.timelines["C1"].has_more, "the start is still loaded");
+        app.messages.select(Some(top_ts(1)));
+        let shown = drawn(&mut app);
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        assert!(!shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+        new_line_above(&shown, 1);
+    }
+
+    #[tokio::test]
+    async fn the_thread_reopened_at_start_leaves_the_paging_back_to_the_unread_running() {
+        use slack_core::types::HistoryPage;
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 3);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        let replies = app.ws.threads.remove(&super::super::state::thread_key("C1", &top_ts(1))).unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // As the boot does with the conversation and its thread open last time.
+        app.start = Some(("C1".into(), Some(top_ts(1))));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        // Its thread comes back (opened by itself, not by you) while the page before is on its way.
+        super::handle_net(&mut app, super::Net::ThreadBack { channel: "C1".into(), ts: top_ts(1), page: Some(HistoryPage { messages: replies, ..Default::default() }) });
+        settle(&mut app, false);
+        assert!(app.thread.is_some(), "the thread reopened");
+        assert!(app.seeking.is_some(), "still paging back");
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn a_link_into_a_conversation_with_many_unread_lands_on_its_message() {
+        use super::super::search::Hit;
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(5));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // A notification of message 120, from C2.
+        app.open_hit_from(Hit { channel: "C1".into(), ts: top_ts(120), ..Default::default() }, true);
+        settle(&mut app, true);
+        assert_eq!(app.current.as_deref(), Some("C1"));
+        c1_page(&mut app, page(71, 120, true), false);
+        assert_eq!(app.messages.selected, Some(top_ts(120)));
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        for _ in 0..2 {
+            let shown = drawn(&mut app);
+            assert!(shown.iter().any(|l| l.contains("message number 120")), "the hit on screen:\n{}", shown.join("\n"));
+        }
+        // The note still stands at the top of what is loaded.
+        app.messages.select(Some(top_ts(71)));
+        drawn(&mut app);
+        app.messages.scroll_up(5);
+        let shown = drawn(&mut app);
+        assert!(shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn a_message_picked_for_its_menu_stops_the_paging_back_to_the_unread() {
+        use super::super::menu::{MessageTarget, Shown};
+        let (mut app, _net, page) = unread_c1(120, 5);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        // A right click on message 118 (its menu, the message selected).
+        app.message_menu(MessageTarget { channel: "C1".into(), ts: top_ts(118), shown: Shown::Messages }, (5, 5));
+        app.menu = None;
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading, "given up: no further page");
+        assert!(app.seeking.is_none() && !app.messages.jump_to_new);
+        drawn(&mut app);
+        assert_eq!(app.messages.selected, Some(top_ts(118)), "the message picked stays selected");
+    }
+
+    #[tokio::test]
+    async fn sending_or_opening_a_thread_stops_the_paging_back_to_the_unread() {
+        for thread in [false, true] {
+            let (mut app, _net, page) = unread_c1(120, 5);
+            c1_page(&mut app, page(71, 120, true), false);
+            drawn(&mut app);
+            if thread {
+                app.open_thread(&top_ts(120));
+                assert!(app.thread.is_some());
+            } else {
+                send(&mut app, "hi");
+            }
+            assert!(app.seeking.is_none() && !app.messages.jump_to_new, "thread {thread}: given up at once");
+            assert_eq!(app.status, "", "thread {thread}: its note gone");
+            c1_page(&mut app, page(21, 70, true), true);
+            assert!(!app.ws.timelines["C1"].loading, "thread {thread}: no further page");
+        }
+    }
+
+    #[tokio::test]
+    async fn unread_beyond_the_pages_paged_back_is_said_at_the_top() {
+        let (mut app, _net, page) = unread_c1(400, 5);
+        c1_page(&mut app, page(351, 400, true), false);
+        for k in 0..super::UNREAD_PAGES {
+            assert!(app.ws.timelines["C1"].loading, "page {k} asked for");
+            let to = 350 - 50 * k;
+            c1_page(&mut app, page(to - 49, to, true), true);
+        }
+        assert!(!app.ws.timelines["C1"].loading, "no further page by itself");
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, "");
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        let shown = drawn(&mut app);
+        let at = shown.iter().position(|l| l.contains(&note)).unwrap_or_else(|| panic!("the note on screen (jumped to):\n{}", shown.join("\n")));
+        assert!(shown[at + 1..].iter().find(|l| l.contains("message number")).is_some_and(|l| l.contains("message number 101")), "the oldest loaded below it:\n{}", shown.join("\n"));
+        assert!(!shown.iter().any(|l| l.contains("─ new ─")), "{}", shown.join("\n"));
+        // Scrolling up loads older pages as ever: the note stays until message 6 is in, then the line is above it.
+        app.load_history("C1", true);
+        c1_page(&mut app, page(51, 100, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        app.messages.scroll_up(10_000);
+        assert!(drawn(&mut app).iter().any(|l| l.contains(&note)));
+        app.load_history("C1", true);
+        c1_page(&mut app, page(1, 50, false), true);
+        // (Message 3 brought into view at the top: 6 below it.)
+        app.messages.select(Some(top_ts(3)));
+        let shown = drawn(&mut app);
+        assert!(!shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
+        new_line_above(&shown, 6);
+        assert!(super::super::i18n::template().contains(&format!("\"{}\" = \"\"", super::UNREAD_SEEKING)));
+        assert!(super::super::i18n::template().contains(&format!("\"{}\" = \"\"", super::super::messages::MORE_NEW_ABOVE)));
+    }
+
+    #[tokio::test]
+    async fn a_read_mark_in_the_newest_page_asks_for_nothing_more() {
+        let (mut app, _net, page) = unread_c1(120, 100);
+        c1_page(&mut app, page(71, 120, true), false);
+        assert!(!app.ws.timelines["C1"].loading, "no older page");
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, "");
+        new_line_above(&drawn(&mut app), 101);
+    }
+
+    #[tokio::test]
+    async fn switching_away_stops_the_paging_back_to_the_unread() {
+        let (mut app, _net, page) = unread_c1(120, 5);
+        c1_page(&mut app, page(71, 120, true), false);
+        assert!(app.ws.timelines["C1"].loading);
+        app.jump_to("C2");
+        settle(&mut app, true);
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, "", "its note gone");
+        // The page on its way comes: none after it.
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        assert_eq!(app.current.as_deref(), Some("C2"));
+    }
+
+    #[tokio::test]
+    async fn moving_in_the_messages_stops_the_paging_back_to_the_unread() {
+        let (mut app, _net, page) = unread_c1(120, 5);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        app.focus = super::Focus::Messages;
+        // (The first `k` lands on the newest, as landing on the messages does; the second moves.)
+        go(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+        go(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+        let picked = app.messages.selected.clone();
+        assert_ne!(picked, Some(top_ts(120)));
+        assert!(picked.is_some());
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading, "given up: no further page");
+        assert!(app.seeking.is_none());
+        assert_eq!(app.status, "");
+        assert!(!app.messages.jump_to_new, "the view stays yours");
+        drawn(&mut app);
+        assert_eq!(app.messages.selected, picked);
     }
 }
