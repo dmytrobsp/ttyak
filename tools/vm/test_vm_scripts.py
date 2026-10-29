@@ -103,6 +103,13 @@ class VmScripts(unittest.TestCase):
                 self.assertRegex(text, r"(?m)^param\(.*\[string\]\$User = \$env:USERNAME")
                 self.assertRegex(text, r"insession\.ps1'\) -Exe .* -User \$User")
 
+    def test_cleanup_needs_its_folder(self):
+        # -Dir is mandatory: a default (the shared parent of every unit's folder) would stop another unit's ttyak
+        with open(os.path.join(HERE, "cleanup.ps1"), encoding="ascii") as f:
+            text = f.read()
+        self.assertRegex(text, r"(?m)^param\(\[Parameter\(Mandatory\)\]\[string\]\$Dir\)$")
+        self.assertNotIn("$Dir =", text)
+
     def test_ci_without_powershell_fails(self):
         # a runner image without pwsh must not turn the parse check off unnoticed
         self.assertEqual(without_powershell({"CI": "true"}), "fail")
