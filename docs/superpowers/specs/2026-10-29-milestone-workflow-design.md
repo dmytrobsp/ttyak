@@ -3,6 +3,9 @@
 Issue: [#29](https://github.com/dmytrobsp/ttyak/issues/29). Machine-specific facts (accounts, boxes, paths) are not
 in this file: they live in `AGENTS.local.md` and the claim tool named there.
 
+Approved by the maintainer on 2026-10-29. Plan:
+[2026-10-29-milestone-workflow.md](../plans/2026-10-29-milestone-workflow.md).
+
 ## Intent
 
 Today one controller runs a plan's tasks one after another ([workflow.md](../../agents/workflow.md)): a milestone of
