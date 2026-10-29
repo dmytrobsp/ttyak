@@ -186,8 +186,9 @@ the All tab's unread items, counted when the workspace starts and each time it l
 who is in it, then the recent ones. Huddles themselves are on [Huddles](Huddles).
 
 - **Live now** lists the huddles in conversations you are a member of (not muted ones, as Slack does), yours first,
-  each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going,
-  and who is in it with their status emoji.
+  each marked with a green "● Live": where (`#channel`, the person or the people of a DM), how long it has been going
+  ("40 s", "12 min", "1 h", "1 h 5 min"), and who is in it with their status emoji. A huddle in a conversation ttyak
+  doesn't know is named by asking Slack once ("#name"), or "a conversation you are not in" when Slack won't say.
 - **Recent** lists the ended huddles you were in or missed (from Slack's huddle history, newest first, more loading as
   the end comes on screen): where, "3 h ago · 25 min", who took part, "N replies" when its thread has some, and a
   missed one as "Missed huddle" in the alert colour.

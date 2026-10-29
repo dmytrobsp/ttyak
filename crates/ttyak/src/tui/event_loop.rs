@@ -60,6 +60,9 @@ enum Net {
     DetailsInfo(slack_core::types::Conversation),
     /// What Slack says about a conversation a link (or notification) leads to that this workspace did not know.
     LinkConversation { result: Result<slack_core::types::Conversation, String>, target: super::applink::Target },
+    /// What Slack says about a conversation a huddle is in that this workspace did not know.
+    /// (`unanswered`: the request got no answer from Slack, as `slack_core::api::is_unanswered` says.)
+    PlaceName { channel: String, result: Result<slack_core::types::Conversation, String>, unanswered: bool },
     DetailsMembers { channel: String, members: Vec<String> },
     DetailsPins { channel: String, pins: Vec<slack_core::types::Message> },
     /// Search results for a query.
@@ -2005,6 +2008,15 @@ impl App {
         }
         if let Some(cursor) = self.huddles.next_page() {
             self.fetch_huddle_history(self.huddles.generation, Some(cursor));
+        }
+        // (A conversation this workspace doesn't know is named by asking Slack once; its id is never shown.)
+        for channel in self.ws.ask_place_names(self.huddles.channels_shown(), std::time::Instant::now()) {
+            let (client, tx) = (self.client.clone(), self.net.clone());
+            tokio::spawn(async move {
+                let result = client.conversation_info(&channel).await;
+                let unanswered = result.as_ref().err().is_some_and(slack_core::api::is_unanswered);
+                let _ = tx.send(Net::PlaceName { channel, result: result.map_err(|e| e.to_string()), unanswered });
+            });
         }
         for (channel, ts) in self.huddles.wanted() {
             self.huddles.requested.insert((channel.clone(), ts.clone()));
@@ -7365,7 +7377,10 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.sidebar.rebuild(&app.ws);
             }
             // The huddles kept from the live events stay.
-            Err(e) => tracing::warn!("the huddles going on: {e}"),
+            Err(e) => {
+                tracing::warn!("the huddles going on: {e}");
+                app.ws.live_huddles_failed(since);
+            }
         },
         Net::HuddleHistory { generation, more, result } => match result {
             Ok((page, cursor)) => app.huddles.add_page(generation, more, page, cursor),
@@ -7374,6 +7389,17 @@ fn handle_net(app: &mut App, msg: Net) {
                 app.huddles.fail(generation, e);
             }
         },
+        Net::PlaceName { channel, result, unanswered } => {
+            if let Err(e) = &result {
+                tracing::debug!("conversations.info for a huddle's place: {e}");
+            }
+            // (No answer from Slack says nothing about the conversation: asked again later, "…" meanwhile.)
+            if unanswered {
+                app.ws.place_name_unanswered(&channel, std::time::Instant::now());
+            } else {
+                app.ws.set_place_name(&channel, result.as_ref().ok());
+            }
+        }
         Net::HuddleReplies { channel, ts, count } => {
             if let Some(n) = count {
                 app.huddles.replies.insert((channel, ts), n);
@@ -10461,6 +10487,49 @@ mod tests {
         with_dm(&mut app, "U3");
         app.follow_profiles(std::time::Instant::now() + std::time::Duration::from_secs(5));
         assert!(app.lookups.due.contains("U3") && app.lookups.stale.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_huddles_view_names_an_unknown_conversation_by_asking_once() {
+        use super::Net;
+        let (mut app, mut net) = test_app();
+        let now = chrono::Utc::now().timestamp();
+        super::run_global(&mut app, super::Action::Huddles);
+        // (A recent huddle: the live list holds only conversations you are in.)
+        let ended = slack_core::types::PastHuddle { id: "P9".into(), channel: "C9".into(), start: now - 3600, end: now - 3000, ended: true, ..Default::default() };
+        app.huddles.past = Some(vec![ended]);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let shown = |app: &mut super::App, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| -> String {
+            terminal.draw(|f| super::draw(f, app)).unwrap();
+            let buf = terminal.backend().buffer();
+            (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        let text = shown(&mut app, &mut terminal);
+        assert!(text.contains(" …") && !text.contains("C9"), "neutral while pending: {text}");
+        // Redrawn and asked again: still one request. (The test server is nowhere: no answer comes back.)
+        app.request_huddles();
+        shown(&mut app, &mut terminal);
+        app.request_huddles();
+        let mut answers = Vec::new();
+        while let Ok(Some(msg)) = tokio::time::timeout(std::time::Duration::from_secs(3), net.recv()).await {
+            if let Net::PlaceName { channel, unanswered, .. } = &msg {
+                answers.push((channel.clone(), *unanswered));
+            }
+            if answers.len() == 1 && matches!(msg, Net::PlaceName { .. }) {
+                // The unanswered request: not given up on, nothing said about the conversation.
+                super::handle_net(&mut app, msg);
+                break;
+            }
+        }
+        assert_eq!(answers, [("C9".to_string(), true)], "one request, which got no answer");
+        assert!(matches!(app.ws.place_names["C9"], super::super::state::PlaceName::Retry(_)));
+        assert!(shown(&mut app, &mut terminal).contains(" …"), "still neutral");
+        // Slack's refusal is final and said; its answer names the place.
+        super::handle_net(&mut app, Net::PlaceName { channel: "C9".into(), result: Err("channel_not_found".into()), unanswered: false });
+        assert!(shown(&mut app, &mut terminal).contains(" a conversation you are not in"));
+        let c = slack_core::types::Conversation { id: "C9".into(), name: "ops".into(), is_channel: true, ..Default::default() };
+        super::handle_net(&mut app, Net::PlaceName { channel: "C9".into(), result: Ok(c), unanswered: false });
+        assert!(shown(&mut app, &mut terminal).contains(" #ops"));
     }
 
     #[tokio::test]
