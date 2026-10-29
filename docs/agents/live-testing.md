@@ -160,7 +160,8 @@ Not tried yet (NOT): a Slack notification reaching the instance's `notifications
   `reap` removes the instance; `exec`, `shot` and the others renew it, but only the slot, not the account claim
   (30 minutes): ttyak therefore starts under `timeout 25m` after a fresh `renew`, so a dead agent's ttyak cannot
   outlive the claim; for a check longer than 25 minutes renew the account and start it again. Remove the instance
-  when done (`rm`), then release the accounts and delete the fake home; `<tool> instance ls` must show none of yours.
+  when done (`rm`), then release the accounts and delete the fake home; `<tool> instance ls --here` (it asks no other
+  box) must show none of yours.
 - **GNOME.** `--desktop gnome` gives GNOME instead of sway; `windows`, `shot`, `notifications` and `record` work there
   too. Use it when a check depends on how GNOME shows or raises things.
 - **Keys.** `instance exec --tty` runs a command with a terminal. Driving the window with `kitty @` through `exec`
@@ -409,8 +410,8 @@ about 15 s after `new` (LIVE: 14.6 s). Defender and Windows Update are off in it
 the base, and the clone's ready file (its path is in the claim tool's README) records the mode as `notifications=`:
 a banner check reads it rather than assumes. A clone is charged 6.5 GB of the pool (its RAM plus its 2 GB of clone
 files), so `new` may wait longer for a slot than for a Linux instance. `instance rm` throws it away;
-`<tool> instance ls` must show none of yours at the end. Windows' default foreground lock is kept, so a new window
-may not take the focus: `windows` says which window has it.
+`<tool> instance ls --here` (it asks no other box) must show none of yours at the end. Windows' default foreground
+lock is kept, so a new window may not take the focus: `windows` says which window has it.
 
 ```sh
 set -euo pipefail
