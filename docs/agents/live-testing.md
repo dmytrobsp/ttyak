@@ -56,7 +56,8 @@ Also in a milestone:
   recipe, then releases it.
 - **Small notes.** `ctl status` says "ttyak is not running" unless a ttyak runs in that instance: start the TUI first
   for a meaningful status. `pgrep -af <path>` also matches the agent's own shell: find a process by the PID you
-  started (a match by name could be the maintainer's own ttyak). `instance new` prints the matching `instance rm` command: use it.
+  started (a match by name could be the maintainer's own ttyak). `instance new` prints the matching `instance rm`
+  command: use it.
 - **The controller keeps** the checks with the maintainer and one live smoke check of the merged milestone branch.
 
 ## Before every live check

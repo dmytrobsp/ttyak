@@ -232,9 +232,9 @@ them, and the few that remain reach the maintainer at once.
   the claim tool's path and the box claim id written out literally: the safety hook reads the quoted remote command
   too and refuses a recursive delete next to variables without `set -euo pipefail` (the recipe blocks keep their
   variables). A file whose text quotes a recursive delete or another guarded command (a report, a brief, a script) is
-  written with the Write or Edit tool, never a Bash heredoc: the hook scans heredoc bodies. A dry run before the first milestone (one implementer, one throwaway
-  unit, every recipe the workflow uses) finds the refusals that are left, and each is fixed in the allowlist or the
-  recipes.
+  written with the Write or Edit tool, never a Bash heredoc: the hook scans heredoc bodies. A dry run before the first
+  milestone (one implementer, one throwaway unit, every recipe the workflow uses) finds the refusals that are left,
+  and each is fixed in the allowlist or the recipes.
 - **A refusal that still happens** stops only the step that hit it, as the hard rule says: never reworded, split or
   retried. The implementer reports it with the command exactly as sent and the refusal text verbatim; the controller
   checks the worktree for partial writes (`git status`), parks that unit and keeps the others running. After a
