@@ -31,3 +31,28 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
 
 - Plan started (2026-10-29, the maintainer: "yes, go ahead"); rules file and briefs in the git-ignored scratch
   folder.
+- Task 1: dispatched (base 73e9eeb), implementer sonnet.
+- Task 1: ec454fb (implementer: 14 helper tests, the Tool tests line 260 OK, pristine); review dispatched (opus).
+- Task 1 review (opus): needs fixes — 3 important (`rm --delete-branch` checked "merged" against master, not the
+  milestone branch; a relative worktree root landed inside the repository; `rm` deleted untracked, not-ignored files),
+  5 minors (gate not checking its branch, `merge --abort` result unchecked, a check→remove window, names git refuses
+  passing the name check, a silent typo in `rm`), test gaps. All sent to fix round 1.
+- Ruling: `rm` refuses untracked files that are not ignored (plain `git status --porcelain`), against the plan's
+  `--untracked-files=no` — the spec's anti-goal "lost state" binds, the plan's flag was the designer's slip — costs
+  an extra refusal for a stray file if wrong.
+- Dropped (nits): `ls` prints the resolved path; hard links counted twice in sizes (overcounts, the safe side); the
+  `free N` line has no unit (the brief's format).
+- Task 1: fix round 1/5 (9 addressed, 0 open; 23 helper tests; commits ec454fb..5ef9503). Re-review: 2 new minors
+  (a merge failing without a conflict reported as "needs a hand"; stale docstring/README wording) and a small window
+  between the ancestor check and the branch delete; a nit (an unused test folder). All sent to fix round 2.
+- Task 1: fix round 2/5 (implementer: 4 fixed, 25 helper tests, the Tool tests line 271 OK; commits 5ef9503..1c161e9);
+  scoped re-review dispatched.
+- Task 1: re-review of round 2: 4 addressed (the hook case checked in scratch); new minor: a README line of 149
+  characters; a minor: `update-ref -d` skips `branch -D`'s checked-out-elsewhere refusal and config cleanup. Both
+  sent to fix round 3.
+- Task 1: fix round 3/5 (2 addressed, 0 open; commits 1c161e9..e13ad2f). Re-review: approved.
+- Dropped (nits): a comment two lines above the check it describes; a code span split across a README line break
+  (renders the same). Out of scope, negligible: a branch being rebased in another worktree shows as detached, so the
+  checked-out refusal misses it — the commit is checked to be in the milestone branch, nothing is lost.
+- Task 1: complete (commits 73e9eeb..e13ad2f, review clean). UNIT: 26 helper tests, the Tool tests line 272 OK
+  (pristine, rerun by the controller). NOT: run against this repository (Task 2 is the first real use).
