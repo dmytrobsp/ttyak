@@ -43,15 +43,17 @@ What it is for: reaching the Windows and macOS machines, and the rules for shari
 
 - Windows: VM `win-test` (libvirt: `virsh -c qemu:///system domstate win-test`), SSH alias `wintest`, user
   `tester`, key auth. Auto-logon: yes (console session 1). Shared with: another project's agent — check first.
-  Work folder: `%USERPROFILE%\ttyak-test`. No sound card, no camera.
+  Work folder: `%USERPROFILE%\ttyak-test\<unit>`, one subfolder per unit of a milestone (outside a milestone, per
+  task): see [live-testing.md](live-testing.md#live-checks-in-a-milestone). No sound card, no camera.
 - The claim tool for the test machines: its clone at `<path to the claim tool's clone>`, its README there has the
   commands; the box names it uses: `<windows box name>`, `<mac box name>`.
 - The tools that drive its desktop (interactive scheduled task, injected keys/clicks, desktop captures):
-  `tools/vm/` in this repository, copied to `%USERPROFILE%\ttyak-test\vm` there.
+  `tools/vm/` in this repository, copied to `%USERPROFILE%\ttyak-test\<unit>\vm` there.
 - **Bases**: <the folder the claim tool keeps its VM bases in>. VM instances (Hyprland, Windows clones) start from
   them; they are built with the claim tool's `instance base build`. The shared Windows VM above is claimed only for
   what needs that VM itself.
 - Mac: SSH alias `mactest` (`mactest.local`, user `tester`), Apple Silicon, macOS 26, Rust via rustup, Homebrew.
+  Work folder: `~/ttyak-test/<unit>` (`src` and `build` inside it), one per unit, as for Windows.
   Real speakers, microphone, camera: ask first.
 
 ## Private lists

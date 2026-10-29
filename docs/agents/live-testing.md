@@ -8,6 +8,40 @@ live work: ask the maintainer.
 The helpers assume Linux with Hyprland, kitty and PipeWire, as on the maintainer's machine; `AGENTS.local.md` says what
 this machine has; on any other desktop see [Other desktops](#other-desktops).
 
+## Live checks in a milestone
+
+In a milestone, several implementers work at once and run their own live checks
+([workflow.md](workflow.md#running-a-milestone)). Everything on this page holds for them; three places have rules of
+their own, and every milestone brief quotes this section.
+
+- **Instances** (the Linux containers, the Hyprland VM, the Windows clones, the macOS VMs) are throwaway. Live checks
+  run there by default. An implementer makes its own instance and removes it, by name.
+- **Shared boxes** (the Mac itself, the shared Windows VM) are someone else's machine, never throwaway. An implementer
+  uses one only under a box claim and only through a recipe. A recipe is a step-by-step command list on this page; on
+  a shared box an implementer runs only those, and anything else goes back to the controller. It works only in its own
+  folder, removes exactly what it made, checks that it is gone, and leaves the box as it found it. It never installs
+  anything, changes a setting, starts, stops, restarts or reverts a VM.
+- **The maintainer's desktop**: for implementers, instances only. No test window on the hidden workspace of
+  [Test windows](#test-windows). `ttyak ctl` in a fake home with a claimed account and no window stays allowed: it
+  shows nothing. What an instance cannot do and needs the hidden workspace is the controller's, as is anything with the
+  maintainer present.
+
+Also in a milestone:
+
+- **One folder per unit on a shared box.** The recipes work in `~/ttyak-test/<unit>` on the Mac and
+  `%USERPROFILE%\ttyak-test\<unit>` on the shared Windows VM, `<unit>` being the unit's name (outside a milestone, the
+  agent's task name). An agent that dies before it cleans up then leaves a folder with a name, which no other agent
+  reuses or removes. The folders of a dead agent are the controller's to remove, at the end of the milestone, under
+  its own box claim and with the same cleanup recipe, only for this milestone's units: it lists the folder first and
+  touches no other.
+- **Claims do the queuing**: accounts, boxes and RAM slots, as everywhere on this page. Waiting for a claim or a slot
+  is not a live observation.
+- **Evidence.** The implementer saves what shows the check in the unit's scratch folder
+  (`.superpowers/sdd/<plan>/`): `ctl` output, the instance's own screenshot, log lines; never a capture of the
+  maintainer's screen, and nothing private in it. Its report says where. The reviewer reads the evidence before
+  anything counts as LIVE.
+- **The controller keeps** the checks with the maintainer and one live smoke check of the merged milestone branch.
+
 ## Before every live check
 
 1. `cargo build` (a `cargo test` alone leaves a stale `target/debug/ttyak`).
@@ -360,8 +394,9 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   `push`, `pull` and `shell` renew while they work; `renew` for anything else); exit 4 means the box is withdrawn.
   Waiting for a claim is not a live observation, so the 10-minute cap does not apply: wait as long as needed
   (`--wait forever` is the default); run the `claim` in the background, or use `--report-every 5m` and re-run its
-  `resume:` line, so your shell is not blocked. Release when done. Work only in your own folder (`ttyak-test` in the
-  user's home). The tool never starts or stops a VM: a stopped VM is started first (from the desktop), then claimed.
+  `resume:` line, so your shell is not blocked. Release when done. Work only in your own folder (`ttyak-test/<unit>`
+  in the user's home, `<unit>` as in [Live checks in a milestone](#live-checks-in-a-milestone)). The tool never
+  starts or stops a VM: a stopped VM is started first (from the desktop), then claimed.
   Before claiming, still check whether the box is running and whether someone is on it (its state, logged-in users,
   others' processes), and never shut down, restart or revert it while someone else uses it.
 - **Sessions for a box** come from `accounts.py install` into a local fake home under your account claim, then
@@ -378,7 +413,10 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
 - **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, run a command with
   `<tool> run BOX ID -- "<command>"` (the arguments are joined and run by the box's shell, cmd.exe; for PowerShell:
   `<tool> run BOX ID -- "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed
-  over, not through nested quotes. A `run` executes in a services session (no desktop, no notifications, no screen
+  over, not through nested quotes. Everything you push goes into `%USERPROFILE%\ttyak-test\<unit>`; when done, remove
+  that one folder with `<tool> run BOX ID -- "rmdir /s /q %USERPROFILE%\ttyak-test\<unit>"` (the literal path, never
+  built from a variable) and check it with `<tool> run BOX ID -- "if exist %USERPROFILE%\ttyak-test\<unit> echo left"`.
+  A `run` executes in a services session (no desktop, no notifications, no screen
   capture): to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on
   user; inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys,
   `mouse_event`, `keybd_event`; the screen capture of that desktop, never the maintainer's):
@@ -394,8 +432,9 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   and for what needs the real machine: the maintainer's own setup, real speakers, microphone, camera or screen (ask
   the maintainer first), and their prompts and clicks. The rest of this bullet is the Mac itself.
 - **macOS, the Mac itself**: copy the source with
-  `git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test"` (`run` passes stdin
-  through); a non-interactive shell there lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake
+  `git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"`
+  (`run` passes stdin through; `<unit>` as in [Live checks in a milestone](#live-checks-in-a-milestone)); a
+  non-interactive shell there lacks `/opt/homebrew/bin` (`export PATH=/opt/homebrew/bin:$PATH`; cmake
   comes from Homebrew). ttyak's folder there is `~/Library/Application Support/ttyak/<profile>` (a space: pipe files
   in through `<tool> run BOX ID -- "cat > …"`, and bring files back with `<tool> pull`). ttyak's notifications appear
   as Terminal's (or the host terminal's): that app's notifications must be allowed in System Settings; screen sharing
@@ -472,12 +511,13 @@ set -euo pipefail
 REPO=<the clone>; FAKE=<scratch>/home              # as in "A fake home"; A claimed and installed there
 ACC_ID=<the ID from its "claimed A id=ID" line>
 # 1. build ttyak on the Mac under a box claim (BOX and ID: [Test machines](#test-machines)); keep only the binary
-git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/src && tar -x -C ~/ttyak-test/src"
-<tool> run BOX ID -- "export PATH=/opt/homebrew/bin:\$HOME/.cargo/bin:\$PATH; cd ~/ttyak-test/src && cargo build \
-    && mkdir -p ~/ttyak-test/build && cp target/debug/ttyak ~/ttyak-test/build/"
+#    <unit> is your unit's name (outside a milestone, your task name): your folder is ~/ttyak-test/<unit>
+git archive HEAD | <tool> run BOX ID -- "mkdir -p ~/ttyak-test/<unit>/src && tar -x -C ~/ttyak-test/<unit>/src"
+<tool> run BOX ID -- "export PATH=/opt/homebrew/bin:\$HOME/.cargo/bin:\$PATH; cd ~/ttyak-test/<unit>/src \
+    && cargo build && mkdir -p ~/ttyak-test/<unit>/build && cp target/debug/ttyak ~/ttyak-test/<unit>/build/"
 <tool> release BOX ID                              # the VM needs no box claim; the Mac is free for others again
 # 2. the VM: the build folder is snapshotted read-only; SRC is the Mac's absolute path (its user is in AGENTS.local.md)
-<tool> instance new --desktop macos --purpose "ttyak: <what>" --mount <the Mac's home>/ttyak-test/build:ttyak
+<tool> instance new --desktop macos --purpose "ttyak: <what>" --mount <the Mac's home>/ttyak-test/<unit>/build:ttyak
 # it prints `instance NAME id=ID slot=N`: ID is the slot id, not `$ACC_ID`; the binary is at
 # '/Volumes/My Shared Files/ttyak/ttyak' in the guest
 SUPPORT='Library/Application Support/ttyak'        # ttyak's macOS folder, from the guest user's home
@@ -528,10 +568,13 @@ python3 "$REPO/tools/accounts/accounts.py" release A "$ACC_ID"          # after 
 - **Software Update and Rosetta.** Software Update is off in the VM (Apple's update servers are blocked), so an update
   prompt cannot appear and a Rosetta install would fail: build for the Mac's own architecture (Apple Silicon) only.
 - **Cleanup.** Pull the log before `rm`; the VM and the pushed session vanish with it. Release the accounts after
-  ttyak is gone, then delete the fake home. The build folder and source copy sit in `~/ttyak-test` on the Mac: delete
-  them under a new box claim, with the command run on the Mac through the box's `run`, the two paths written
-  literally (`<tool> run BOX ID -- "rm -rf ~/ttyak-test/src ~/ttyak-test/build"`), then check each is gone (one path
-  per check), and release. `<tool> instance ls` must show none of yours.
+  ttyak is gone, then delete the fake home. The build folder and source copy of your unit sit in
+  `~/ttyak-test/<unit>` on the Mac: delete them under a new box claim, with the command run on the Mac through the
+  box's `run`, the two paths written literally
+  (`<tool> run BOX ID -- "rm -rf ~/ttyak-test/<unit>/src ~/ttyak-test/<unit>/build"`), then the empty unit folder
+  (`<tool> run BOX ID -- "rmdir ~/ttyak-test/<unit>"`, which refuses a folder that is not empty), check each of the
+  three is gone (one path per check), and release. `<tool> instance ls` must show none of yours. Other folders in
+  `~/ttyak-test` are not yours: leave them, whatever they hold.
 - **LIVE** (2026-10-29): ttyak built on the Mac in 64 s under a box claim. The VM was ready 53 s after `new`, from the
   desktop through the relay. ttyak, run with `exec --desktop --timeout 25m` in the background, signed in as A, with
   Finder in front. B's DM showed in `notifications` as `com.apple.Terminal` `presented`, and `shot` showed the banner
