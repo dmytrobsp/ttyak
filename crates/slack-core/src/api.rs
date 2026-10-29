@@ -204,6 +204,46 @@ pub struct Client {
 
 pub type Params<'a> = Vec<(&'a str, String)>;
 
+/// What to do with a redirect: see [`redirect_decision`].
+#[derive(Debug, PartialEq, Eq)]
+enum Redirect {
+    Follow,
+    /// A 307/308 that would re-send the request body to a host that is not Slack's.
+    Refuse,
+    TooMany,
+}
+
+/// The redirect policy of the clients that talk to Slack. A 307 or 308 makes the client send the request again with
+/// its body (Slack's form bodies carry the token), so it is followed only to Slack's own hosts, and otherwise fails
+/// the call with an error naming the reason (a bare 3xx answer would only surface as unparsable JSON). A 301, 302 or
+/// 303 is followed anywhere, as reqwest does by default (the request becomes a GET without a body): avatars, files
+/// and gravatar may redirect to other hosts. The hop limit is reqwest's default.
+pub fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| match redirect_decision(attempt.status(), attempt.url(), attempt.previous().len()) {
+        Redirect::Follow => attempt.follow(),
+        Redirect::Refuse => attempt.error("redirect refused: it would send the request body to a host that is not Slack's"),
+        Redirect::TooMany => attempt.error("too many redirects"),
+    })
+}
+
+/// Whether to follow a redirect with `status` to `target` after `hops` earlier ones. Slack's own hosts are `slack.com`
+/// and `slack-gov.com` and their subdomains (API, workspaces, files); the CDN domains (`slack-edge.com`) only serve
+/// GETs and are not listed.
+fn redirect_decision(status: reqwest::StatusCode, target: &reqwest::Url, hops: usize) -> Redirect {
+    if hops >= 10 {
+        return Redirect::TooMany;
+    }
+    if status != reqwest::StatusCode::TEMPORARY_REDIRECT && status != reqwest::StatusCode::PERMANENT_REDIRECT {
+        return Redirect::Follow;
+    }
+    let slack = target.scheme() == "https"
+        && target.host_str().is_some_and(|h| {
+            let h = h.to_ascii_lowercase();
+            ["slack.com", "slack-gov.com"].iter().any(|d| h == *d || h.strip_suffix(d).is_some_and(|p| p.ends_with('.')))
+        });
+    if slack { Redirect::Follow } else { Redirect::Refuse }
+}
+
 /// An HTTP client checking certificates against the system's store or — where the system has
 /// none (a minimal container without ca-certificates) — against Mozilla's roots bundled in ttyak.
 pub fn http_client(builder: impl Fn() -> reqwest::ClientBuilder) -> Result<reqwest::Client> {
@@ -219,7 +259,7 @@ pub fn http_client(builder: impl Fn() -> reqwest::ClientBuilder) -> Result<reqwe
 
 impl Client {
     pub fn new(session: WorkspaceSession) -> Result<Self> {
-        let http = http_client(|| reqwest::Client::builder().user_agent(USER_AGENT).connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(120)))?;
+        let http = http_client(|| reqwest::Client::builder().user_agent(USER_AGENT).redirect(redirect_policy()).connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(120)))?;
         Ok(Client { http, session, signed_out: SignedOutFlag::default(), flannel: FlannelUrl::default() })
     }
 
@@ -867,7 +907,85 @@ fn read_chunks(file: tokio::fs::File, offset: u64, total: u64, progress: std::sy
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use futures_util::StreamExt;
+
+    fn decide(status: u16, url: &str, hops: usize) -> super::Redirect {
+        super::redirect_decision(reqwest::StatusCode::from_u16(status).unwrap(), &url.parse().unwrap(), hops)
+    }
+
+    #[test]
+    fn a_307_or_308_is_followed_only_to_slacks_own_hosts() {
+        use super::Redirect::*;
+        for status in [307, 308] {
+            for ok in ["https://slack.com/x", "https://acme.slack.com/api/x", "https://a.b.enterprise.slack.com/", "https://slack-gov.com/", "https://acme.slack-gov.com/x", "https://SLACK.com/"] {
+                assert_eq!(decide(status, ok, 0), Follow, "{status} {ok}");
+            }
+            for bad in ["https://example.com/", "http://acme.slack.com/", "https://slack.com.evil.example/", "https://evilslack.com/", "https://slack.com@evil.example/", "https://notslack-gov.com/", "https://slack-edge.com/", "ftp://slack.com/"] {
+                assert_eq!(decide(status, bad, 0), Refuse, "{status} {bad}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_301_302_or_303_is_followed_anywhere() {
+        for status in [301, 302, 303] {
+            for url in ["https://example.com/a.png", "http://example.com/", "https://secure.gravatar.com/avatar/x", "https://acme.slack.com/"] {
+                assert_eq!(decide(status, url, 0), super::Redirect::Follow, "{status} {url}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_hop_limit_is_ten() {
+        assert_eq!(decide(302, "https://example.com/", 9), super::Redirect::Follow);
+        assert_eq!(decide(302, "https://example.com/", 10), super::Redirect::TooMany);
+        assert_eq!(decide(307, "https://slack.com/", 10), super::Redirect::TooMany);
+    }
+
+    /// A one-shot local server: answers its first request with `reply` and sends what it read down the channel.
+    async fn serve_once(reply: String) -> (String, tokio::sync::oneshot::Receiver<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            let _ = sock.write_all(reply.as_bytes()).await;
+        });
+        (base, rx)
+    }
+
+    async fn post_through_redirect(status: &str) -> (Result<reqwest::StatusCode, String>, Option<String>) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (target, seen) = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()).await;
+        let (first, first_seen) = serve_once(format!("HTTP/1.1 {status}\r\nLocation: {target}/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")).await;
+        let http = super::http_client(|| reqwest::Client::builder().redirect(super::redirect_policy()).timeout(Duration::from_secs(5))).unwrap();
+        let res = http.post(format!("{first}/api/x")).form(&[("token", "xoxc-secret")]).send().await;
+        let first_got = first_seen.await.unwrap();
+        assert!(first_got.contains("xoxc-secret"), "{first_got}");
+        let reached = tokio::time::timeout(Duration::from_millis(300), seen).await.ok().and_then(|r| r.ok());
+        (res.map(|r| r.status()).map_err(|e| format!("{e:#}")), reached)
+    }
+
+    #[tokio::test]
+    async fn a_307_to_another_host_does_not_get_the_body() {
+        let (res, reached) = post_through_redirect("307 Temporary Redirect").await;
+        assert!(res.is_err(), "{res:?}");
+        assert!(reached.is_none(), "the second server got: {reached:?}");
+    }
+
+    #[tokio::test]
+    async fn a_302_still_goes_on_without_a_body() {
+        let (res, reached) = post_through_redirect("302 Found").await;
+        assert_eq!(res, Ok(reqwest::StatusCode::OK));
+        let got = reached.expect("the second server was reached");
+        assert!(got.starts_with("GET /next") && !got.contains("xoxc-secret"), "{got}");
+    }
 
     #[test]
     fn a_search_asks_for_the_newest_first() {
