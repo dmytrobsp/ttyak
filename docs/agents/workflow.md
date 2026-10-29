@@ -334,7 +334,9 @@ copy command. In patterns (paths as each machine has them):
    checkout, `git push origin --delete milestone/NAME m/NAME/<unit> …` (an always-asked rule: one prompt), then
    locally with `git branch -d` (which refuses a branch not merged) and `git fetch --prune origin`; and, under its own
    claim, the folders a dead agent left on a shared box. Only the merged milestone's own branches: any other branch
-   on GitHub stays the maintainer's word. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
+   on GitHub stays the maintainer's word. Then it closes the GitHub milestone once it shows no open issue or pull
+   request (`gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -f state=closed`); anything still open in it
+   goes to the maintainer first. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
 
 ### Judging a trial milestone
 
