@@ -61,6 +61,7 @@ pub fn translatable() -> Vec<String> {
     out.extend(TITLES.iter().map(|t| t.to_string()));
     out.extend(super::menu::OPENER_HEADINGS.iter().map(|h| h.to_string()));
     out.extend(super::event_loop::LINK_NOTES.iter().map(|n| n.to_string()));
+    out.extend(super::messages::WORDS.iter().map(|w| w.to_string()));
     out.push(super::state::IN_A_HUDDLE.to_string());
     out.extend(super::feed::WORDS.iter().map(|w| w.to_string()));
     out.extend(super::activity::WORDS.iter().map(|w| w.to_string()));
