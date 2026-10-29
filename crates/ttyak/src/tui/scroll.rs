@@ -73,6 +73,7 @@ mod tests {
         (0..12).map(|y| buf[(2, y)].symbol().to_string()).collect()
     }
 
+    // dry run of the milestone workflow (#29)
     #[test]
     fn thumb_shows_the_visible_part() {
         assert_eq!(column(0, 10, 10), "┐││││││││││┘", "everything fits: just the border");
