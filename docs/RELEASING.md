@@ -24,12 +24,16 @@ A tag is pushed only with the maintainer's word.
 - The whole `cargo test`, then one commit `release: X.Y.Z — <one line>` with those four files, pushed to master.
 - Wait for CI on it (one waiter: `gh run watch <id> --exit-status`).
 
-## 3. Dry run
+## 3. Dry run (usually skipped)
 
 - `gh workflow run release.yml -R dmytrobsp/ttyak --ref master -f sign=false`: the same optimised builds for all five
-  platforms plus the packaging and winget's dry run; it publishes nothing.
-- Worth it whenever the release changes dependencies, platform code or the workflow itself: release builds differ
-  from CI's (fat LTO, the Windows build is optimised), and a failure after the tag fails mid-publish.
+  platforms plus the packaging and winget's dry run; it publishes nothing. It costs about 15 minutes, and the tag's run
+  builds everything again (its zips must be built from the tag for their attestations, and signed).
+- **Skip it by default** (the maintainer, 2026-10-29: a dry run for a small release "added 15 minutes of CI"). Run
+  it only when the release changes what the release build depends on: dependencies (`Cargo.lock` beyond the version
+  bump), `release.yml` or the packaging recipes, the Rust toolchain, or the build setup (`Cargo.toml` profiles,
+  `build.rs`, linker settings). Code changes, platform code included, are covered by CI's builds on every push.
+- When one is run, say so to the maintainer first, with its reason and the 15 minutes; when unsure, ask.
 - Look at the packaging step's output: the zips hold `ttyak` (`ttyak.exe`) and the two licences, no README (true from
   the release after 0.12.1; the first one that ships this is the check that `release.yml` really stopped adding it).
 - Typical times (0.12.1): Windows 4.6 min, aarch64 Linux 4.9, x86_64 Linux 8.0, x86_64 macOS 8.2, aarch64 macOS 9.5.
