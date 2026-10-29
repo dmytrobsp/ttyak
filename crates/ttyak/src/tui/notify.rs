@@ -2254,7 +2254,9 @@ mod tests {
         assert_eq!(toast::xml("<A&B>", "\"x\" 'y'\u{1}\tz\n2", false), toast("&lt;A&amp;B&gt;", "&quot;x&quot; &apos;y&apos;\tz\n2", r#"<audio silent="true"/>"#), "escaped; control characters XML forbids left out");
     }
 
-    /// The toast carries its tag and group, and its XML loads; withdrawing one that isn't there is no error.
+    /// The toast carries its tag and group, and its XML loads; withdrawing one that isn't there is no error. The setting
+    /// reads exactly when Windows keeps one for the app id: it does only once the app id has shown a toast (the key below
+    /// appears then), so on a machine that never showed one the read fails, and ttyak hands its toasts over regardless.
     #[cfg(windows)]
     #[test]
     fn a_toast_is_named_by_its_tag() {
@@ -2264,8 +2266,11 @@ mod tests {
         let untagged = toast::build("t", "b", true, None, "ttyak-b").unwrap();
         assert_eq!(untagged.Tag().unwrap().to_string(), "");
         toast::withdraw(None, Some("w0-ttyak-test-none"), "ttyak-b").unwrap();
-        println!("Windows' notification setting for PowerShell's app id: {:?}", toast::setting());
-        assert!(toast::setting().is_some());
+        let setting = toast::setting();
+        let key = format!(r"HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{}", toast::APP_ID);
+        let kept = std::process::Command::new("reg").args(["query", &key]).output().unwrap().status.success();
+        println!("Windows' notification setting for PowerShell's app id: {setting:?} (Windows keeps one: {kept})");
+        assert_eq!(setting.is_some(), kept, "the setting reads exactly when Windows keeps one");
     }
 
     /// A toast reaches the notification center under its tag, and withdrawing takes it out by it. Shown without its popup,
