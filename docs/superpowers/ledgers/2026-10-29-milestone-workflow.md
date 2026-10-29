@@ -99,3 +99,61 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
 - Task 5: refused — the controller's write to `.claude/settings.local.json` was refused by auto mode as
   self-modification. Nothing written (checked); the merged file was put in the scratch folder and the maintainer was
   given the copy command. workflow.md says so: settings changes are installed by the maintainer.
+- Task 5: the maintainer installed the file (`cp` from the scratch folder); 53 allow, 13 ask rules in place.
+  Task 5: complete (d413c03).
+- Task 6: `start dryrun`, `milestone/dryrun` pushed, `add dryrun probe`; the probe implementer dispatched (sonnet) with
+  a real brief: a comment, the whole `cargo test`, a Linux instance with A and `ctl status`, a Mac build and cleanup.
+- CI 40907292284 (d413c03, the .gitignore line): green.
+- Task 6, probe: 1ec2790 (a comment; the whole `cargo test` green in the worktree). LIVE: a Linux instance with A
+  installed, `ctl status` run in it ("ttyak is not running": no TUI was started), removed, A released, fake home
+  deleted; the Mac build (40 s) in `~/ttyak-test/probe/` under a box claim.
+- Task 6, refusal 1: the bash-guard hook refused the probe's Mac cleanup — one call held `rm -rf` of the two literal
+  paths and `$T`/`$ID` variables without `set -euo pipefail`. Not retried. The controller removed the folder under its
+  own claim by the recipe (separate literal commands, each checked; gone), as the design gives a dead or stopped
+  agent's folder to the controller. Fix: the recipes say one command per call with the literal tool path and claim id.
+- Task 6, observation: `git -C <worktree> push -u origin m/dryrun/probe` ran without a prompt although
+  `Bash(git -C * push*)` is an ask rule — the settings may not reload in a running session, or the pattern does not
+  match as expected. To check with the maintainer.
+- Task 6: m/dryrun/probe pushed; pull request #64 into milestone/dryrun; review dispatched (sonnet).
+- Task 6, probe review (sonnet): the diff and the PR text fine; needs fixes in the report — the refused command not
+  quoted exactly, five claims without an evidence file, `ctl status` overstated, the build's exit status, the
+  separate release after a refused call. Sent to the probe implementer (report only; nothing re-created after the
+  fact). For the docs: the evidence rule names what to save (claims, releases, removals, `git status`); a refusal is
+  quoted verbatim; after a refused cleanup the implementer stops and leaves the cleanup, release included, to the
+  controller.
+- Task 6, refusal 2: the bash-guard hook refused the probe implementer's python heredoc that rewrote its report — it
+  scans heredoc bodies, and the report quotes the refused `rm` command. Not retried in Bash; the file was written with
+  the Write tool.
+- Ruling: writing a file with the Write tool after a hook refused a heredoc that wrote the same file is not a way
+  around the refusal — the hook guards recursive deletes, and no delete was ever intended; file writes belong in the
+  Write/Edit tools — costs a missed hook-bypass pattern if wrong. For the docs: agents write files with the Write and
+  Edit tools, never through a heredoc in Bash.
+- Task 6, probe: report fix round 1/5 (5 addressed, 0 open); re-review approved. Dropped (nit): the report's line on
+  the controller's Mac cleanup has no evidence file — the controller's cleanup and its checks are in this ledger.
+- Task 6, gate: `gate dryrun probe` → 20dacbb (a `--no-ff` merge); the whole `cargo test` on it green (44 + 89 + 1024
+  passed, 0 failed); CI on #64 (run 40908766465) green on linux, macos, windows-cross; a plain push of
+  milestone/dryrun (d413c03..20dacbb); GitHub marked #64 merged. Then `rm dryrun probe --delete-branch`,
+  `end dryrun`, `git branch -D milestone/dryrun`: no worktree, branch, instance or claim left.
+- Task 6, observation 2: the gate's `git -C <gate> push origin milestone/dryrun` also ran without the ask prompt.
+- Task 6: the maintainer: "yes" to deleting the dry run's remote branches; milestone/dryrun and m/dryrun/probe deleted
+  on GitHub (none left; #64 stays as the record). On the ask rules not firing: "ok" — they are expected to apply from
+  the next session.
+- Task 6, docs: the dry run's lessons (command shape, files through Write/Edit, the evidence list, refusals quoted
+  verbatim and a refused cleanup left to the controller, small notes) in 39eaaf1; review dispatched.
+- Task 6, docs review: the lessons are in, but "one command per call" and the heredoc ban contradicted the recipes
+  (shared variables, single-call background steps, the fake home's settings heredoc); 3 minors (NOT backed for every
+  evidence item; the controller's cleanup blocked by the implementer's held claim; `pgrep -x` finds the maintainer's
+  ttyak). Sent to a fix round.
+- Ruling: the two rules are scoped to what the dry run showed (claim-tool calls against a shared box hold one literal
+  command; files quoting guarded commands go through Write/Edit), the recipes stay — costs a refusal the narrower rule
+  misses if wrong.
+- Ruling: after a refused cleanup the controller cleans up under the implementer's still-live box claim and releases
+  it — costs a claim held past its owner's report if wrong.
+- Task 6, docs: fix rounds 06ada50, f7d8896 (two long lines), 0bae4ba (the box lines of a block run alone; the
+  controller also renews and releases the implementer's account claims); re-reviews approved.
+- Dropped (nit): a short line left by a reflow in live-testing.md (cosmetic).
+- Task 6: complete (the dry run d413c03..20dacbb on the deleted branches, #64 merged into milestone/dryrun; the docs
+  39eaaf1..0bae4ba, review clean). LIVE: the whole unit path — helper, worktree, the whole `cargo test`, a Linux
+  instance with A, a Mac build, a pull request, a review with a fix round, the gate, a plain push, #64 marked merged,
+  cleanup. Refusals found: 2, both settled (the docs changed). NOT: two units at once, a gate conflict, a macOS VM or
+  Windows clone in a milestone, the ask rules (they apply from the next session).
