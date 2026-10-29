@@ -2478,8 +2478,9 @@ impl App {
     fn show_hit(&mut self, hit: super::search::Hit) {
         let behind = self.seek_back.as_ref().and_then(|l| l.behind.clone());
         let top = behind.or_else(|| hit.thread_ts.clone()).unwrap_or_else(|| hit.ts.clone());
-        // (It takes the place of a paging back to the unread part.)
-        (self.seeking, self.seek_unread) = (Some((hit.channel.clone(), top)), None);
+        // It takes the place of a paging back to the unread part, and of the jump to it: the view goes to the hit's
+        // message (the "new" line, or the note, still stands where it is).
+        (self.seeking, self.seek_unread, self.messages.jump_to_new) = (Some((hit.channel.clone(), top)), None, false);
         if self.seek_back.is_some() {
             // Selected at once; a message no longer there gives way to the nearest one once the seek is done.
             self.select_hit(hit);
@@ -13553,6 +13554,34 @@ mod tests {
         c1_page(&mut app, page(21, 70, true), true);
         assert!(app.seeking.is_none() && !app.ws.timelines["C1"].loading);
         new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn a_link_into_a_conversation_with_many_unread_lands_on_its_message() {
+        use super::super::search::Hit;
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(5));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // A notification of message 120, from C2.
+        app.open_hit_from(Hit { channel: "C1".into(), ts: top_ts(120), ..Default::default() }, true);
+        settle(&mut app, true);
+        assert_eq!(app.current.as_deref(), Some("C1"));
+        c1_page(&mut app, page(71, 120, true), false);
+        assert_eq!(app.messages.selected, Some(top_ts(120)));
+        let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
+        for _ in 0..2 {
+            let shown = drawn(&mut app);
+            assert!(shown.iter().any(|l| l.contains("message number 120")), "the hit on screen:\n{}", shown.join("\n"));
+        }
+        // The note still stands at the top of what is loaded.
+        app.messages.select(Some(top_ts(71)));
+        drawn(&mut app);
+        app.messages.scroll_up(5);
+        let shown = drawn(&mut app);
+        assert!(shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
     }
 
     #[tokio::test]
