@@ -93,7 +93,9 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 - **Implementers** never push, tag, publish the wiki, file or close issues, post outside the test workspace, edit files
   outside the repository, or dispatch subagents. They never quote real emails, names or ids in anything they write.
   Each one's live checks use its own window class and kitty socket, never the controller's or one the maintainer is
-  typing into.
+  typing into. In a milestone two things differ: the implementer's own worktree counts as the repository (nothing
+  outside it and the plan's scratch folder), and its live checks run in instances only
+  ([live-testing.md](live-testing.md#live-checks-in-a-milestone)).
 - **Reviews.** A review per task (the diff against the plan and the rules), fix rounds sent to the same implementer
   (resume it, it keeps its context), then a final whole-branch review. Reviewers find real things in most rounds; one
   implementer per batch of issues keeps that cheap.
@@ -172,7 +174,9 @@ refused, 3 a merge conflict.
   with 3 at once. Three leaves RAM and disk to spare; a fourth buys little. Another machine measures again before it
   changes the numbers.
 - **Disk**: a worktree goes as soon as its unit merges. The Windows cross-build (`target/x86_64-pc-windows-gnu`, over
-  10 GB) is not made in every unit: it runs at the gate's end checks and at the milestone's end.
+  10 GB) is not made in every unit. CI's `windows-cross` job runs on every unit pull request (CI fires on a pull
+  request with no branch filter), so the per-unit Windows compile happens there; the local cross-build and
+  `cargo test --no-run` for Windows run only at the milestone's end.
 - **Batching**: units in one wave touch separate files and modules as far as the controller can tell from reading the
   code; units that share files run one after the other; a unit that needs another one's change waits for its merge.
   A conflict at the gate means the batching missed something: it is noted in the ledger.
@@ -180,29 +184,32 @@ refused, 3 a merge conflict.
 ### A unit, from brief to merge
 
 1. **Brief.** The controller writes it to the plan's scratch folder (`.superpowers/sdd/<plan>/`), never in the same
-   chained command as the dispatch. It holds the plan's Global Constraints (the shell rules always), the issue and
-   the maintainer's answers for it, the files to read, the worktree, branch and build folder, the live-check rules of
-   [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do. Then it dispatches
-   the implementer in the background.
+   chained command as the dispatch. It holds the plan's Global Constraints (the shell rules always), the issue and the
+   maintainer's answers for it, the files to read, the worktree, branch and build folder, the absolute path of the
+   unit's evidence folder (the main checkout's `.superpowers/sdd/<plan>/<unit>/`), the live-check rules of
+   [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do. Then it dispatches the
+   implementer in the background.
 2. **Implementation.** TDD with the RED shown, commits on the unit branch, the whole `cargo test` in the worktree,
    live checks where the change needs them, and a short report with the paths of its evidence.
 3. **Pull request.** The controller runs the privacy check on what will become public (the diff and the
    description), pushes the unit branch and opens a pull request into the milestone branch, in public wording. CI
    runs on it.
-4. **Review.** A fresh reviewer reads the diff against the plan and the rules and checks the live evidence. Findings
-   go to the same implementer, and a scoped re-review follows each fix round. Every real finding is fixed; nits are
-   dropped with a reason in the ledger; out-of-scope items and the maintainer's decisions become issues. Review text
-   stays in the scratch folder; the pull request gets a short public summary (rounds, the kind of things fixed).
-   Security findings never go to a pull request: a private advisory.
+4. **Review.** A fresh reviewer (opus for security- or concurrency-heavy units) reads the diff against the plan and
+   the rules and checks the live evidence. Findings go to the same implementer, and the same reviewer, resumed, does a
+   scoped re-review after each fix round. Every real finding is fixed; nits are dropped with a reason in the ledger;
+   out-of-scope items and the maintainer's decisions become issues. Review text stays in the scratch folder; the pull
+   request gets a short public summary (rounds, the kind of things fixed). Security findings never go to a pull
+   request: a private advisory.
 5. **Merge gate**, one unit at a time, and no pushed branch is ever rewritten (no rebase, no force-push). The
    controller runs `milestone.py gate NAME UNIT`, which merges the unit branch into the milestone tip in the gate
    worktree (`--no-ff`); then it runs the whole `cargo test` on that merge result, and CI on the pull request must be
-   green (GitHub tests the pull request merged into its base). If both pass, the controller pushes the milestone
-   branch, a plain fast-forward push, and GitHub marks the pull request merged. A merge with conflicts (exit 3, the
-   files listed, the merge aborted) goes back to its implementer, who merges the milestone tip into its own branch
-   and resolves them; the author resolves its own conflicts. The controller pushes that, and the gate starts again.
-   Afterwards the unit's worktree and build folder are removed with `rm`. Units still in flight take the new tip
-   only at their own gate.
+   green (GitHub tests the pull request merged into its base). If both pass, the controller pushes
+   the milestone branch, a plain fast-forward push, and GitHub marks the pull request merged. A merge with conflicts
+   (exit 3, the files listed, the merge aborted) goes back to its implementer, who merges the milestone tip into its
+   own branch and resolves them; the author resolves its own conflicts. The controller pushes that, and the gate
+   starts again. Afterwards the unit's worktree and build folder are removed with `rm`. Units still in flight take the
+   new tip only at their own gate. A docs-only unit's pull request gets no CI run (`ci.yml` ignores docs): it passes
+   the gate on the whole `cargo test` alone.
 6. **The ledger** gets an entry at each step
    ([A milestone's ledger](../superpowers/ledgers/README.md#a-milestones-ledger)).
 

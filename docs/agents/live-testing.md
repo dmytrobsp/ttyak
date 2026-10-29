@@ -36,10 +36,10 @@ Also in a milestone:
   touches no other.
 - **Claims do the queuing**: accounts, boxes and RAM slots, as everywhere on this page. Waiting for a claim or a slot
   is not a live observation.
-- **Evidence.** The implementer saves what shows the check in the unit's scratch folder
-  (`.superpowers/sdd/<plan>/`): `ctl` output, the instance's own screenshot, log lines; never a capture of the
-  maintainer's screen, and nothing private in it. Its report says where. The reviewer reads the evidence before
-  anything counts as LIVE.
+- **Evidence.** The implementer saves what shows the check in the unit's scratch folder (the main checkout's
+  `.superpowers/sdd/<plan>/<unit>/`, given in the brief as an absolute path): `ctl` output, the instance's own
+  screenshot, log lines; never a capture of the maintainer's screen, and nothing private in it. Its report says where.
+  The reviewer reads the evidence before anything counts as LIVE.
 - **The controller keeps** the checks with the maintainer and one live smoke check of the merged milestone branch.
 
 ## Before every live check
@@ -410,20 +410,22 @@ A Windows machine and a Mac are used for platform checks; their host aliases, us
   ([Windows in a clone](#windows-in-a-clone)), not on the shared Windows VM. The shared VM is claimed only for what
   needs that VM itself (the maintainer's work machine, its real setup); `AGENTS.local.md` names it. The rest of this
   bullet is that shared VM.
-- **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, run a command with
-  `<tool> run BOX ID -- "<command>"` (the arguments are joined and run by the box's shell, cmd.exe; for PowerShell:
-  `<tool> run BOX ID -- "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed
-  over, not through nested quotes. Everything you push goes into `%USERPROFILE%\ttyak-test\<unit>`; when done, remove
-  that one folder with `<tool> run BOX ID -- "rmdir /s /q %USERPROFILE%\ttyak-test\<unit>"` (the literal path, never
-  built from a variable) and check it with `<tool> run BOX ID -- "if exist %USERPROFILE%\ttyak-test\<unit> echo left"`.
-  A `run` executes in a services session (no desktop, no notifications, no screen
-  capture): to run something on the desktop, register a scheduled task with `-LogonType Interactive` for the logged-on
-  user; inject keys and clicks and capture **the machine's own desktop** with PowerShell helpers (SendKeys,
-  `mouse_event`, `keybd_event`; the screen capture of that desktop, never the maintainer's):
-  [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the maintainer to sit at the
-  console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI test, in
-  a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the box
-  name; the session there is the claimed copy `install` put on the box, not a profile in the user's real folder).
+- **Windows, the shared VM**: copy a file with `<tool> push BOX ID …`, run a command with `<tool> run BOX ID --
+  "<command>"` (the arguments are joined and run by the box's shell, cmd.exe; for PowerShell: `<tool> run BOX ID --
+  "powershell -NoProfile -File <script>"`). Run anything multi-step from a `.ps1` file pushed over, not through nested
+  quotes. Everything you push goes into `C:\Users\<user>\ttyak-test\<unit>` (`<user>` from `AGENTS.local.md`; `<unit>`
+  is never empty). When done, remove that one folder with `<tool> run BOX ID -- "rmdir /s /q
+  C:\Users\<user>\ttyak-test\<unit>"`, the whole path written out with the unit's name in it, never built from a
+  variable, and check it with `<tool> run BOX ID -- "if exist C:\Users\<user>\ttyak-test\<unit> echo left"`. The
+  `tools/vm` scripts are copied into `<unit>\vm` there, and `cleanup.ps1` is always called with `-Dir` set to that
+  literal unit folder ([tools/vm/](../../tools/vm/README.md)). A `run` executes in a services session (no desktop, no
+  notifications, no screen capture): to run something on the desktop, register a scheduled task with `-LogonType
+  Interactive` for the logged-on user; inject keys and clicks and capture **the machine's own desktop** with
+  PowerShell helpers (SendKeys, `mouse_event`, `keybd_event`; the screen capture of that desktop, never the
+  maintainer's): [tools/vm/](../../tools/vm/README.md). Run Windows checks this way, without asking the maintainer to
+  sit at the console. ttyak's folders there: `%APPDATA%\ttyak\config\<profile>`, `%LOCALAPPDATA%\ttyak\cache\…`. A TUI
+  test, in a kitty window: `<tool> run --tty BOX ID -- "<folder>\ttyak.exe --profile <B>"` (the flag goes before the
+  box name; the session there is the claimed copy `install` put on the box, not a profile in the user's real folder).
   **Never switch an app's notifications off through the registry**: Windows copies the setting into its notification
   database and never reads the registry back; undoing it needs the notification service stopped and the database
   edited.

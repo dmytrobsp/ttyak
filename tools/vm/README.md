@@ -36,7 +36,8 @@ folder come from `AGENTS.local.md`; nothing here names them.
   - `SIZE w,h` (the front window restored and sized), `CLOSE` (WM_CLOSE to the front window);
   - `SHOT name.png` (a capture now), `WINS name.txt` (the program's top-level windows).
 - `cleanup.ps1 [-Dir <folder>]` stops the ttyak processes started from the work folder (default
-  `%USERPROFILE%\ttyak-test`) and stuck `keys.ps1` runs of this copy; other people's programs are left alone.
+  `%USERPROFILE%\ttyak-test`, which holds every unit's folder: always pass `-Dir <the literal unit folder>`, or it
+  stops another unit's ttyak) and stuck `keys.ps1` runs of this copy; other people's programs are left alone.
 - `test_vm_scripts.py` (run here, not there): every script is plain ASCII and parses with PowerShell's parser.
 
 ## Using them
@@ -46,19 +47,21 @@ there; relative `scp` paths start in the user's home folder):
 
 ```sh
 set -euo pipefail
-W='%USERPROFILE%\ttyak-test\vm'
+# <unit> is your unit's folder under ttyak-test (outside a milestone, your task name); <user> is in AGENTS.local.md
+W='C:\Users\<user>\ttyak-test\<unit>\vm'
 ssh -T -o BatchMode=yes <host> "if not exist $W mkdir $W" < /dev/null
-scp -q -o BatchMode=yes tools/vm/*.ps1 '<host>:ttyak-test/vm/'
+scp -q -o BatchMode=yes tools/vm/*.ps1 '<host>:ttyak-test/<unit>/vm/'
 # a capture of the machine's desktop, copied back into the scratch folder
-RUN='powershell -NoProfile -ExecutionPolicy Bypass -File %USERPROFILE%\ttyak-test\vm'
+RUN='powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\<user>\ttyak-test\<unit>\vm'
 ssh -T -o BatchMode=yes <host> "$RUN\\capture.ps1 -Name desk.png" < /dev/null
-scp -q -o BatchMode=yes '<host>:ttyak-test/vm/shots/desk.png' <scratch>/desk.png
+scp -q -o BatchMode=yes '<host>:ttyak-test/<unit>/vm/shots/desk.png' <scratch>/desk.png
 ```
 
 - Always close ssh's standard input (`< /dev/null`) and use `-T -o BatchMode=yes`: otherwise ssh can hang.
 - The machine's default ssh shell is cmd; anything with several steps goes into a `.ps1` file that is copied over and
   run with `-File`, not through nested quotes.
 - Look at every capture before relying on it; it shows the Windows machine's desktop only.
+- Call `cleanup.ps1` with `-Dir C:\Users\<user>\ttyak-test\<unit>` (the literal unit folder) at the end.
 - Remove the `vm` folder, the `shots` in it and anything else copied over when done (live-testing's "Restore it as
   found").
 

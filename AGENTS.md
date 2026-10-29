@@ -105,7 +105,7 @@ Full text: [docs/agents/workflow.md](docs/agents/workflow.md).
    → a builder's read → the maintainer's approval → a plan in `docs/superpowers/plans/` → subagent-driven execution
    with a committed ledger, a review per task and a final review; review findings in scope are fixed, not filed (only
    out-of-scope items and the maintainer's decisions become issues). Before big work the maintainer may ask for a
-   handoff to a fresh session. A milestone of small issues runs with several implementers at once, one pull request
+   handoff to a fresh session. A milestone runs with several implementers at once, one pull request
    per issue into a milestone branch: [workflow.md](docs/agents/workflow.md#running-a-milestone).
 4. **Build in small verified steps**, one commit each: TDD with the failing test shown first, the whole `cargo test`
    before a Rust commit, never commit on red, Windows compiles.

@@ -265,7 +265,8 @@ with:
   exists after every start: notifications, windows and captures happen only there.
 - **Windows PowerShell 5.1** (built in); PowerShell 7 (`pwsh`) as well for `test_install_ps1.py`'s second half.
   Optional: ffmpeg (through scoop) for camera and video checks. No sound card or camera is needed.
-- A work folder of the agent's own, `%USERPROFILE%\ttyak-test`.
+- A work folder, `%USERPROFILE%\ttyak-test`; each agent works in a subfolder of its own below it (`<unit>`, the unit's
+  or task's name: [live-testing.md](live-testing.md#live-checks-in-a-milestone)).
 
 `tools/install/test_install_ps1.py` reaches the machine as the ssh alias `windows` and serves its fixtures from
 `192.168.122.1`, libvirt's default host address: name the alias so, or that test skips.
@@ -276,7 +277,7 @@ one-off scheduled task (`-LogonType Interactive`), keys and clicks injected ther
 
 ```sh
 cargo build --target x86_64-pc-windows-gnu
-scp -q -o BatchMode=yes target/x86_64-pc-windows-gnu/debug/ttyak.exe '<host>:ttyak-test/'
+scp -q -o BatchMode=yes target/x86_64-pc-windows-gnu/debug/ttyak.exe '<host>:ttyak-test/<unit>/'
 ```
 
 *Checked here*: `virsh` 10.0.0 is installed; the VM and the tools are described from the local notes and the tools'
@@ -291,8 +292,9 @@ An Apple Silicon Mac on the local network with:
   (`ssh -o BatchMode=yes <host> true`).
 - Xcode's command-line tools, Homebrew, `brew install cmake`, rustup's stable toolchain. A non-interactive ssh shell
   lacks `/opt/homebrew/bin`: `export PATH=/opt/homebrew/bin:$PATH` in every command.
-- A work folder, `~/ttyak-test`; the source goes there with
-  `git archive HEAD | ssh <host> 'mkdir -p ~/ttyak-test && tar -x -C ~/ttyak-test'`, then `cargo build` there.
+- A work folder, `~/ttyak-test`, with a subfolder per unit; the source goes into `~/ttyak-test/<unit>/src` with
+  `git archive HEAD | ssh <host> 'mkdir -p ~/ttyak-test/<unit>/src &&
+  tar -x -C ~/ttyak-test/<unit>/src'`, then `cargo build` there.
 
 **The GUI session.** An ssh session on macOS is not the logged-in user's GUI session: notifications, the Keychain and
 `osascript` to Terminal behave differently there. To run something inside the GUI session, load a one-off launchd job

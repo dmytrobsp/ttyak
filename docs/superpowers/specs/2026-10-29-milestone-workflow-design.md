@@ -43,7 +43,7 @@ same quality.
 3. **The quality bar of today, per unit**: TDD with the RED shown, the whole `cargo test`, a review per unit with fix
    rounds by the same implementer, every real finding fixed (only nits dropped, with a reason), then a final
    whole-milestone review and one fix wave.
-4. **A merge gate** that keeps the milestone branch green: units merge one at a time, each rebased onto the current
+4. **A merge gate** that keeps the milestone branch green: units merge one at a time, each merged into the current
    milestone tip and tested there first ("not rocket science" rule, below).
 5. **Implementers run their own live checks**, under claims, with evidence the reviewer checks.
 6. **Measured capacity**: how many implementers this machine carries at once, measured before the trial and written
@@ -107,7 +107,7 @@ same quality.
   the final review and fix wave, the final live check and the report. It is the only agent that talks to the
   maintainer, pushes, or files issues. It keeps its own context lean: short reports, details in scratch files.
 - **Implementers**: one per unit, in the background, each in its own worktree. They are resumed for fix rounds and
-  for rebases with conflicts.
+  for merges with conflicts.
 - **Reviewers**: a fresh one per unit (opus for security- or concurrency-heavy code, as today), resumed for scoped
   re-reviews; a fresh one for the final whole-milestone review.
 
@@ -268,7 +268,7 @@ Three places, three rules:
 
 One ledger per milestone, committed on `master`, in the shape of
 [ledgers/README.md](../ledgers/README.md) plus: per unit, its branch, pull request, dispatch and merge times, review
-rounds, gate results (rebase conflicts, red runs); the batching and why; the maintainer's answers from the start
+rounds, gate results (merge conflicts, red runs); the batching and why; the maintainer's answers from the start
 sitting. After a lost session, the ledger, `git log`, the open pull requests and the worktrees on disk are how the
 controller resumes; implementers' transcripts survive and can be resumed.
 
