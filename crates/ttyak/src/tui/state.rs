@@ -169,6 +169,12 @@ pub struct Workspace {
     /// was asked for), and the channel each change was in, by its number (since the oldest list still asked for).
     pub huddle_seq: u64,
     pub(super) huddle_touched: HashMap<String, u64>,
+    /// `huddle_seq` of the last `huddle_start`: the live list asked for after it (its `since` reaches this) is the
+    /// one that may bring that huddle in before its `sh_room_join`.
+    pub start_since: Option<u64>,
+    /// Huddles (channel, room) a live list brought in on a `huddle_start`'s heels: their `sh_room_join` still says
+    /// "started a huddle", once.
+    pub unannounced: HashMap<String, String>,
     /// When (`huddle_seq`) the live list taken last was asked for.
     pub(super) live_taken: u64,
     /// A channel we are not in, shown in the sidebar while it is being looked at.
@@ -1135,8 +1141,16 @@ impl Workspace {
         self.live_taken = since;
         let changed: std::collections::HashSet<String> = self.huddle_touched.iter().filter(|(_, n)| **n > since).map(|(c, _)| c.clone()).collect();
         let mut old = std::mem::take(&mut self.huddles);
+        // (The list asked for after a `huddle_start`: what it brings in new, the join is yet to announce.)
+        let after_start = self.start_since.is_some_and(|s| since >= s);
+        if after_start {
+            self.start_since = None;
+        }
         for h in live.into_iter().filter(|h| !changed.contains(&h.channel)) {
             let known = old.get(&h.channel).filter(|o| o.room == h.call_id);
+            if after_start && known.is_none() {
+                self.unannounced.insert(h.channel.clone(), h.call_id.clone());
+            }
             let thread = h.thread_ts.or_else(|| known.and_then(|o| o.thread.clone()));
             let start = if h.start > 0 { h.start } else { known.map_or(0, |o| o.start) };
             self.huddles.insert(h.channel, Huddle { room: h.call_id, participants: h.members, thread, start });
@@ -1148,6 +1162,8 @@ impl Workspace {
         }
         // (No list asked for before this one is taken any more.)
         self.huddle_touched.retain(|_, n| *n > since);
+        let live_now = &self.huddles;
+        self.unannounced.retain(|c, r| live_now.get(c).is_some_and(|h| h.room == *r));
         let mut over: Vec<String> = old.into_keys().filter(|c| !self.huddles.contains_key(c)).collect();
         over.sort();
         over
