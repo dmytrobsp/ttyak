@@ -21,6 +21,14 @@ live-test helpers assume Linux with Hyprland, kitty and PipeWire.
   (puts the account's session into a fake home under your live claim; `release` removes it; desktop only, and
   `install` writes the Linux layout `.config/ttyak/<profile>`). Claim an account before
   any live check: `docs/agents/live-testing.md`.
+- `milestone/milestone.py` — the git part of a milestone with several implementers (`--repo PATH` picks the
+  repository). The root is `$TTYAK_WORKTREES`, else `<repository>-worktrees` next to the repository. `start NAME`:
+  branch `milestone/NAME` from `master` and the gate worktree `<root>/NAME/_gate`; `add NAME UNIT [--floor-gb N]`:
+  branch `m/NAME/UNIT` and worktree `<root>/NAME/UNIT` from the milestone tip (refuses below the free-disk floor);
+  `rm NAME UNIT [--delete-branch]`: removes that worktree with its `target/` (only an exact registered worktree of
+  this repository; `git branch -d` for the branch); `end NAME`: removes the gate when no unit is left; `ls [NAME]`:
+  worktrees with sizes and free GB; `gate NAME UNIT`: `merge --no-ff` of the unit into the clean gate (conflict:
+  aborted, files listed). Never pushes or runs tests. Exit codes: 0 done, 2 refused, 3 merge conflict.
 - `vm/` — PowerShell helpers that drive the Windows test machine's desktop from ssh (a program in the desktop
   session, keys and clicks, captures): see `vm/README.md`.
 
