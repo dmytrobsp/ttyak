@@ -5837,8 +5837,9 @@ fn handle_dialog(app: &mut App, ev: &Event) -> bool {
             }
         }
         // The reaction picker: a click on an emoji reacts with it, a click outside closes it.
-        // The side buttons are no clicks: over the picker, the menu or the save dialog they do nothing.
-        Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Back | MouseButton::Forward)) && (app.picker.is_some() || app.menu.is_some() || app.save.is_some()) => {}
+        // The side buttons (and buttons 10 and 11) are no clicks: over the picker, the menu or the save dialog they do
+        // nothing.
+        Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(MouseButton::Back | MouseButton::Forward | MouseButton::Button10 | MouseButton::Button11)) && (app.picker.is_some() || app.menu.is_some() || app.save.is_some()) => {}
         Event::Mouse(m) if app.picker.is_some() && app.update_view.is_none() && matches!(m.kind, MouseEventKind::Down(_)) => {
             let Some((picker, _, _)) = app.picker.as_mut() else { return true };
             let len = picker.candidates(&app.ws.custom_emoji).len();
@@ -11409,7 +11410,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_mouses_side_buttons_leave_the_picker_and_the_menu_open() {
+    async fn the_mouses_side_buttons_and_buttons_10_and_11_leave_the_popups_open() {
         use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
         let (mut app, _net) = with_channels(&["C1", "C2"]);
         app.jump_to("C2");
@@ -11418,18 +11419,26 @@ mod tests {
             super::handle_event(app, Event::Mouse(MouseEvent { kind: MouseEventKind::Down(b), column: 70, row: 20, modifiers: KeyModifiers::NONE }));
             settle(app, true);
         };
+        let buttons = [MouseButton::Back, MouseButton::Forward, MouseButton::Button10, MouseButton::Button11];
         let none = super::super::menu::Offers { own: false, open: false, save: false, text: false, reply: false };
         app.menu = Some(super::super::menu::Menu::new(super::super::menu::Target::Conversation, (70, 20), &app.keys, none, true, false, false));
-        for b in [MouseButton::Back, MouseButton::Forward] {
+        for b in buttons {
             side(&mut app, b);
-            assert!(app.menu.is_some(), "the menu stays");
+            assert!(app.menu.is_some(), "the menu stays after {b:?}");
             assert_eq!(app.current.as_deref(), Some("C2"));
         }
         app.menu = None;
         app.picker = Some((super::super::picker::EmojiPicker::default(), "C2".into(), "1.0".into()));
-        for b in [MouseButton::Back, MouseButton::Forward] {
+        for b in buttons {
             side(&mut app, b);
-            assert!(app.picker.is_some(), "the picker stays");
+            assert!(app.picker.is_some(), "the picker stays after {b:?}");
+            assert_eq!(app.current.as_deref(), Some("C2"));
+        }
+        app.picker = None;
+        app.save = Some(super::super::save::SaveDialog::new(vec![slack_core::types::File { id: "F1".into(), name: "a.txt".into(), ..Default::default() }], std::path::Path::new("/tmp/x")));
+        for b in buttons {
+            side(&mut app, b);
+            assert!(app.save.is_some(), "the save dialog stays after {b:?}");
             assert_eq!(app.current.as_deref(), Some("C2"));
         }
     }
