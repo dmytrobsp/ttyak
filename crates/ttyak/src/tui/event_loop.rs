@@ -2538,7 +2538,8 @@ impl App {
         }
         // Paging back to the unread part: given up once you scroll or pick a message (the view stays yours; the pane
         // says if more new messages are above).
-        if self.seek_unread.is_some() && !self.messages.untouched() {
+        let newest = super::messages::shown_messages(tl, false).last().map(|m| m.ts.clone());
+        if self.seek_unread.is_some() && !self.messages.untouched(newest.as_deref()) {
             (self.seeking, self.seek_unread) = (None, None);
             self.messages.jump_to_new = false;
             self.clear_seek_note();
@@ -13296,6 +13297,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_conversation_reopened_at_start_pages_back_to_its_unread_too() {
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // As the boot does with the conversation open last time: in NORMAL on its messages.
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        drawn(&mut app);
+        assert!(app.ws.timelines["C1"].loading, "the page before asked for");
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(!app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
+        // (And it stays there.)
+        new_line_above(&drawn(&mut app), 41);
+    }
+
+    #[tokio::test]
+    async fn the_landing_selection_never_undoes_the_jump_to_new() {
+        // Reopened at start, the read mark in the newest page: the line stays in view (the selection goes with it).
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 0);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(72));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| slack_core::types::HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        app.start = Some(("C1".into(), None));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        assert!(!app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 73);
+        new_line_above(&drawn(&mut app), 73);
+        assert_eq!(app.messages.selected, Some(top_ts(73)), "the first new message selected");
+    }
+
+    #[tokio::test]
     async fn unread_beyond_the_pages_paged_back_is_said_at_the_top() {
         let (mut app, _net, page) = unread_c1(400, 5);
         c1_page(&mut app, page(351, 400, true), false);
@@ -13360,8 +13404,11 @@ mod tests {
         c1_page(&mut app, page(71, 120, true), false);
         drawn(&mut app);
         app.focus = super::Focus::Messages;
+        // (The first `k` lands on the newest, as landing on the messages does; the second moves.)
+        go(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
         go(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
         let picked = app.messages.selected.clone();
+        assert_ne!(picked, Some(top_ts(120)));
         assert!(picked.is_some());
         c1_page(&mut app, page(21, 70, true), true);
         assert!(!app.ws.timelines["C1"].loading, "given up: no further page");

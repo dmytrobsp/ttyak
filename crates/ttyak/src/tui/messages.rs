@@ -248,9 +248,10 @@ impl MessagePane {
         (self.anchor, self.scroll, self.down, self.put, self.newest) = (None, 0, 0, false, true);
     }
 
-    /// Still as opened: following the newest, not scrolled, nothing selected.
-    pub fn untouched(&self) -> bool {
-        self.anchor.is_none() && self.scroll == 0 && self.selected.is_none()
+    /// Still as opened: following the newest, not scrolled, nothing selected but the `newest` message (as landing on a
+    /// conversation's messages selects it).
+    pub fn untouched(&self, newest: Option<&str>) -> bool {
+        self.anchor.is_none() && self.scroll == 0 && self.selected.as_deref().is_none_or(|s| Some(s) == newest)
     }
 
     /// True once the top of the loaded history is on screen.
@@ -511,6 +512,13 @@ impl MessagePane {
             let start = total.saturating_sub(self.scroll).saturating_sub(height);
             if at < start {
                 self.scroll = total.saturating_sub(at + height);
+                // A selection standing on the newest (landing on the messages puts it there) goes along to the first
+                // message under the line, or it would bring the view back down.
+                if self.selected.is_some() && self.selected.as_deref() == order.last().copied() {
+                    if let Some(below) = owners[at + 1..].iter().flatten().next() {
+                        (self.selected, self.shown) = (Some(below.clone()), Some(below.clone()));
+                    }
+                }
             }
             self.jump_to_new = false;
         }
