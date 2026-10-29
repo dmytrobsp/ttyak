@@ -240,7 +240,22 @@ them, and the few that remain reach the maintainer at once.
 
 #### Allowlist
 
-Added with the maintainer's approval in a later step of this plan.
+The rules live in the git-ignored `.claude/settings.local.json` (they name the claim tool's path); the maintainer
+approved them on 2026-10-29 and installs changes to that file themselves: an agent's write to its own settings is
+refused as self-modification, so the controller writes the new file to its scratch folder and gives the maintainer the
+copy command. In patterns (paths as each machine has them):
+
+- **Allowed without a check**: `cargo build`, `cargo test`; the Python tool tests and the name, link and privacy
+  checks; `tools/milestone/milestone.py` and `tools/accounts/accounts.py`; `git` status, diff, log, show, rev-parse,
+  add, commit, merge (also with `-C` into a milestone worktree); `git push` of `master`, `m/*` and `milestone/*`;
+  `gh pr` create, view, checks, list, diff, comment; `gh run` list, view, watch; `gh issue` view, list;
+  `<tool>` status, claim, renew, release, instance, run, push, pull.
+- **Always asked**, even in auto mode (each needs the maintainer's word anyway): any force-push (`--force`, `-f`,
+  a `+` refspec), deleting by push (`--delete`, `:`), `git -C … push`, `git -C … branch -D`,
+  `git -C … reset --hard`, `gh api` DELETE, `gh repo delete`, `gh release`, `git tag`.
+- **Not listed**, so auto mode checks them as usual: `rm`, `git branch -D`, `gh pr merge`, `<tool> shell`.
+- `<tool> run` lets any command reach a shared box without a check: the box claim and the recipes are the guard
+  there ([live-testing.md](live-testing.md#live-checks-in-a-milestone)).
 
 ### The end of a milestone
 

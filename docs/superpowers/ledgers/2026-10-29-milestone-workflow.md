@@ -92,3 +92,10 @@ implementers, 5 the allowlist (controller, with the maintainer), 6 the dry run (
 - Task 4: complete (commits 96dbe2b..4ca3c9a, with fixes in f943589, 51151a2; review clean).
 - Task 3: complete (commits 4ca3c9a..9a41990, with fixes in f943589, 51151a2; review clean). NOT: exercised — the
   dry run (Task 6) is the first use. Checks rerun by the controller: links, names, privacy on copies, no tool name.
+- Task 5: the maintainer read the list, asked that force-pushes stay possible ("`push --force` can be useful when
+  rewriting git history") and then: "move them all to ask" — every refusal rule became an `ask` rule. The controller
+  closed a hole on the way (`git -C <worktree> *` would have allowed any git command, a force-push included): six
+  specific `-C` rules and three `-C` ask rules instead.
+- Task 5: refused — the controller's write to `.claude/settings.local.json` was refused by auto mode as
+  self-modification. Nothing written (checked); the merged file was put in the scratch folder and the maintainer was
+  given the copy command. workflow.md says so: settings changes are installed by the maintainer.

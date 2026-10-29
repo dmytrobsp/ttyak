@@ -9,3 +9,5 @@ __pycache__/
 /.superpowers/
 # The test accounts: ledger, session masters and claims (private; never committed).
 /.accounts/
+# This machine's Claude Code permissions (the milestone allowlist; names private paths; never committed).
+/.claude/settings.local.json
