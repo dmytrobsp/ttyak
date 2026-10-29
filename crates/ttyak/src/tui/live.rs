@@ -236,7 +236,7 @@ pub fn apply(ws: &mut Workspace, ev: &Value, current: Option<&str>, reading: boo
         // (The list asked for after it may hold the huddle before its join is handled: see `Workspace::unannounced`.)
         "huddle_start" => {
             ws.huddle_seq += 1;
-            ws.start_since = Some(ws.huddle_seq);
+            ws.starts.push((ws.huddle_seq, ev["channel_id"].as_str().unwrap_or_default().to_string()));
             fx.refetch_live_huddles = true;
         }
         "pin_added" | "pin_removed" => {
@@ -817,6 +817,37 @@ mod tests {
         w.set_live_huddles(Vec::new(), before);
         w.set_live_huddles(vec![live("C1", "R1")], since);
         assert!(apply(&mut w, &join("U2", "R1"), None, true).huddle_started.is_some(), "the later list counts");
+    }
+
+    #[test]
+    fn a_start_marks_only_its_own_channel_and_is_given_up_when_its_list_fails() {
+        let live = |c: &str, room: &str| slack_core::types::LiveHuddle { channel: c.into(), call_id: room.into(), members: vec!["U2".into()], start: 100, thread_ts: None };
+        let join = |c: &str, user: &str, room: &str| json!({"type":"sh_room_join","user":user,"room":{"id":room,"channels":[c],"participants":["U2"],"has_ended":false,"thread_root_ts":"0000000000.000000"}});
+        let start = |c: &str| json!({"type":"huddle_start","channel_id":c});
+        // The list after C1's start also holds an older huddle of C2: its next join is no start.
+        let mut w = ws();
+        apply(&mut w, &start("C1"), None, true);
+        let since = w.huddle_seq;
+        w.set_live_huddles(vec![live("C1", "R1"), live("C2", "R2")], since);
+        assert!(apply(&mut w, &join("C2", "U3", "R2"), None, true).huddle_started.is_none(), "an older huddle of another channel");
+        assert!(apply(&mut w, &join("C1", "U2", "R1"), None, true).huddle_started.is_some(), "the one that started");
+        // The list asked for after a start fails; a reconnect's list later brings in a huddle live before.
+        let mut w = ws();
+        apply(&mut w, &start("C1"), None, true);
+        let failed = w.huddle_seq;
+        w.live_huddles_failed(failed);
+        w.set_live_huddles(vec![live("C1", "R1")], w.huddle_seq);
+        assert!(apply(&mut w, &join("C1", "U3", "R1"), None, true).huddle_started.is_none(), "live before");
+        // Two starts in quick succession: the list asked after the first still counts for it.
+        let mut w = ws();
+        apply(&mut w, &start("C1"), None, true);
+        let first = w.huddle_seq;
+        apply(&mut w, &start("C2"), None, true);
+        let second = w.huddle_seq;
+        w.set_live_huddles(vec![live("C1", "R1")], first);
+        w.set_live_huddles(vec![live("C1", "R1"), live("C2", "R2")], second);
+        assert!(apply(&mut w, &join("C1", "U2", "R1"), None, true).huddle_started.is_some(), "the first start");
+        assert!(apply(&mut w, &join("C2", "U2", "R2"), None, true).huddle_started.is_some(), "the second start");
     }
 
     #[test]

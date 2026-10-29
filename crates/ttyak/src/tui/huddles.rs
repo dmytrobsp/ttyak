@@ -429,7 +429,6 @@ fn place_of(ws: &Workspace, channel: &str) -> String {
     }
 }
 
-
 /// How long, `secs` seconds: "40 s", "12 min", "1 h 5 min".
 fn length(secs: i64) -> String {
     let secs = secs.max(0);
@@ -538,8 +537,8 @@ mod tests {
         let mut shown = h.channels_shown();
         shown.sort();
         assert_eq!(shown, ["C1", "C7", "C9"], "each once");
-        assert_eq!(w.ask_place_names(h.channels_shown()).len(), 2, "the unknown ones only");
-        assert!(w.ask_place_names(h.channels_shown()).is_empty(), "and once, redrawn or not");
+        assert_eq!(w.ask_place_names(h.channels_shown(), std::time::Instant::now()).len(), 2, "the unknown ones only");
+        assert!(w.ask_place_names(h.channels_shown(), std::time::Instant::now()).is_empty(), "and once, redrawn or not");
     }
 
     #[test]
