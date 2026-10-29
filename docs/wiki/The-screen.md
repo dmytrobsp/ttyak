@@ -34,9 +34,10 @@ The selected message is highlighted across the whole width of its pane, every ro
 (so is the selected message of the Threads feed and the selected item of the Activity view).
 
 A conversation opened with unread messages has a red "new" line above the first of them. When they start further back
-than the newest page, ttyak loads older pages until the first of them is in (up to five more pages; scrolling or
-picking a message meanwhile stops it); beyond that, "— more new messages above —" stands at the top until scrolling up
-loads them. While you read further up, the bottom border counts the newer messages below ("↓ 3 newer").
+than the newest page, ttyak loads older pages until the first of them is in (up to five more pages). Scrolling,
+picking a message, sending, opening a thread, switching conversation or Esc meanwhile stops it; beyond that,
+"— more new messages above —" stands at the top until scrolling up loads them. While you read further up, the bottom
+border counts the newer messages below ("↓ 3 newer").
 
 The open conversation and thread (and the Threads feed, by its timer) are marked read only while the terminal window
 has focus. What comes while it does not stays unread until you are back. This needs a terminal that reports focus
