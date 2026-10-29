@@ -41,19 +41,22 @@ Also in a milestone:
   release (accounts and boxes), the instance's `new` and `rm` output and `instance ls --here`, `ctl` output, the
   instance's own screenshot, log lines, the build's last lines with its exit status, each removal with its gone-check,
   and `git status` after any refusal. Never a capture of the maintainer's screen, and nothing private in it. Its
-  report says where. The reviewer reads the evidence before anything counts as LIVE. A claim without a file is
-  reported NOT backed, and is never re-created after the fact.
-- **Command shape.** One command per tool call. Write the claim tool with its literal path and the claim id
-  literally, never as `$T` or `$ID` variables, above all in a call that carries a recursive delete: the safety hook
-  reads the quoted remote command too, and refuses a recursive delete next to variables without `set -euo pipefail`.
-  Write files (reports, scripts) with the Write and Edit tools, never through a heredoc or `python3 - <<EOF` in
-  Bash: the hook scans heredoc bodies, so a report that quotes an `rm` line is refused.
+  report says where. The reviewer reads the evidence before anything counts as LIVE. Anything on this list
+  without its file is reported NOT backed, and is never re-created after the fact.
+- **Command shape.** A call that runs the claim tool against a shared box, above all one that carries a recursive
+  delete, holds only that one command, with the claim tool's path and the box claim id written out literally, not as
+  variables: the safety hook reads the quoted remote command too, and refuses a recursive delete next to variables
+  without `set -euo pipefail`. The recipe blocks on this page keep their variables and their single-call background
+  steps, and `$ACC_ID` in accounts commands is fine. A file whose text quotes a recursive delete or another guarded
+  command (a report, a brief, a script) is written with the Write or Edit tool, never through a Bash heredoc or
+  `python3 - <<EOF`: the hook scans heredoc bodies. The `settings.toml` heredoc of [A fake home](#a-fake-home) stays.
 - **A refusal**: quote the refused command exactly as sent and the refusal text verbatim. After a refused cleanup on a
-  shared box, stop and leave the whole cleanup, the release included, to the controller (do not release the claim
-  separately); the controller then cleans up under its own claim by the recipe.
+  shared box, the implementer stops and keeps its box claim held (it releases nothing). Its report gives its box and
+  account claim ids. The controller does the whole cleanup under that still-live box claim, renewing it, by the
+  recipe, then releases it.
 - **Small notes.** `ctl status` says "ttyak is not running" unless a ttyak runs in that instance: start the TUI first
   for a meaningful status. `pgrep -af <path>` also matches the agent's own shell: find a process by the PID you
-  started, or with `pgrep -x`. `instance new` prints the matching `instance rm` command: use it.
+  started (a match by name could be the maintainer's own ttyak). `instance new` prints the matching `instance rm` command: use it.
 - **The controller keeps** the checks with the maintainer and one live smoke check of the merged milestone branch.
 
 ## Before every live check
