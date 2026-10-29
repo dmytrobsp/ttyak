@@ -418,6 +418,10 @@ crate's `test result` line (`cargo test -p ttyak 2>&1 | grep 'test result'`), no
 - Evidence before claims: run the command, read the output, then say it passed. Quote real numbers (CI timings from
   the run, not from memory).
 - README, wiki pages and release notes never state something untried as tried.
+- A failing test is never put down to "the machine" or "the VM": find the cause, then fix the code or the test so it
+  passes wherever it should. The maintainer (2026-10-29): "we have a test suite so it can pass. whats the point of it
+  if we're allowing it to fail". (0.12.3: a Windows test failed on a fresh install because Windows keeps an app's
+  notification setting only after its first toast; the test now checks for that.)
 
 ## Commits and pushes
 
