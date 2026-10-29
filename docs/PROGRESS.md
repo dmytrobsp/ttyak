@@ -15,8 +15,8 @@ Last rewritten: 2026-10-29 (0.12.3 released).
   redirects followed only to Slack's own hosts; mouse buttons 10 and 11 read and ignored; timeouts in pages.yml.
 - Before it: 0.12.2 (2026-10-26, Windows hardening, VIPs as in Slack, notification fixes), 0.12.1 and 0.12.0
   (2026-10-25, attention: notifications, the bell, the tab title, clicks).
-- The wiki: published at the v0.12.2 tag; publishing it at v0.12.3 waits for the maintainer's word. The README is
-  the short front door, the [wiki](https://github.com/dmytrobsp/ttyak/wiki) is the manual.
+- The wiki was published at the v0.12.3 tag; the README is the short front door, the
+  [wiki](https://github.com/dmytrobsp/ttyak/wiki) is the manual.
 - The whole `cargo test` passed at 0.12.3: in CI on Linux and macOS, and on Windows in throwaway Windows 11 clones
   (CI does not run the Windows tests: #61; the recipe in
   [live-testing.md](agents/live-testing.md#the-whole-cargo-test-in-a-clone)).
@@ -71,7 +71,6 @@ a milestone to the maintainer (a few related issues, and why they go together), 
 
 The maintainer's next topics, about how the work gets done (`process`, `needs-user`):
 
-- Publishing the wiki at v0.12.3 (`tools/wiki/publish.sh --push`), on the maintainer's word.
 - The next milestone, proposed to the maintainer and run by
   [Running a milestone](agents/workflow.md#running-a-milestone).
 - [#39](https://github.com/dmytrobsp/ttyak/issues/39) — maintenance: watch dependencies and Slack for changes,
