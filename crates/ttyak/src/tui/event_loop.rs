@@ -1789,14 +1789,15 @@ impl App {
         let Some(channel) = self.current.clone() else { return };
         let Some(m) = self.ws.find_message(&channel, ts) else { return };
         let parent = if m.is_reply() { m.thread_ts.clone().unwrap_or_default() } else { m.ts.clone() };
+        // You open it: the paging back to the unread ends (its jump would move the view behind the thread). Not when a
+        // thread reopens by itself at start, nor for a link (its seek already took the unread one's place).
+        self.give_up_unread_seek();
         self.open_thread_at(channel, parent);
     }
 
     /// Open the thread whose parent is `parent` in `channel`.
     fn open_thread_at(&mut self, channel: String, parent: String) {
         self.note_place();
-        // (The main pane's jump would move the view behind it.)
-        self.give_up_unread_seek();
         let key = super::state::thread_key(&channel, &parent);
         self.seen.insert(key.clone(), opened_now());
         if self.thread.as_ref().is_none_or(|(c, t)| super::state::thread_key(c, t) != key) {
@@ -13428,6 +13429,32 @@ mod tests {
         let note = super::super::i18n::tr(super::super::messages::MORE_NEW_ABOVE).into_owned();
         assert!(!shown.iter().any(|l| l.contains(&note)), "{}", shown.join("\n"));
         new_line_above(&shown, 1);
+    }
+
+    #[tokio::test]
+    async fn the_thread_reopened_at_start_leaves_the_paging_back_to_the_unread_running() {
+        use slack_core::types::HistoryPage;
+        let (mut app, _net) = with_channels(&["C2", "C1"]);
+        long_c1(&mut app, 120, 3);
+        let all = app.ws.timelines.remove("C1").unwrap().messages;
+        let replies = app.ws.threads.remove(&super::super::state::thread_key("C1", &top_ts(1))).unwrap().messages;
+        app.ws.conversations.get_mut("C1").unwrap().last_read = Some(top_ts(40));
+        app.ws.unread.insert("C1".into(), super::super::state::Unread { has_unreads: true, mentions: 0 });
+        let page = |from: usize, to: usize, has_more: bool| HistoryPage { messages: all[from - 1..to].iter().rev().cloned().collect(), has_more, ..Default::default() };
+        // As the boot does with the conversation and its thread open last time.
+        app.start = Some(("C1".into(), Some(top_ts(1))));
+        app.jump_to("C1");
+        app.focus = super::Focus::Messages;
+        settle(&mut app, false);
+        c1_page(&mut app, page(71, 120, true), false);
+        // Its thread comes back (opened by itself, not by you) while the page before is on its way.
+        super::handle_net(&mut app, super::Net::ThreadBack { channel: "C1".into(), ts: top_ts(1), page: Some(HistoryPage { messages: replies, ..Default::default() }) });
+        settle(&mut app, false);
+        assert!(app.thread.is_some(), "the thread reopened");
+        assert!(app.seeking.is_some(), "still paging back");
+        c1_page(&mut app, page(21, 70, true), true);
+        assert!(app.seeking.is_none() && !app.ws.timelines["C1"].loading);
+        new_line_above(&drawn(&mut app), 41);
     }
 
     #[tokio::test]
