@@ -97,7 +97,7 @@ class MilestoneTest(unittest.TestCase):
         self.assertFalse((self.root / "trial" / "fix-1").exists())
 
     def test_bad_names_refused(self):
-        bad = ["a/b", "..", "a b", "-x", "Fix", "", "a" * 42]
+        bad = ["a/b", "..", "a b", "-x", "Fix", "", "a" * 42, "a.lock", "b."]
         for name in bad:
             for argv in (["start", name], ["add", "trial", name, "--floor-gb", "0"], ["rm", name, "u"],
                          ["end", name], ["gate", "trial", name]):
@@ -252,6 +252,111 @@ class MilestoneTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(gate.exists())
         self.assertIn("milestone/trial", self.branches())
+
+    def test_delete_branch_after_gate(self):
+        self.start()
+        wt = self.add("fix-1")
+        commit_file(wt, "u.txt", "u\n")
+        self.assertEqual(self.run_cli("gate", "trial", "fix-1")[0], 0)
+        code, _, _ = self.run_cli("rm", "trial", "fix-1", "--delete-branch")
+        self.assertEqual(code, 0)
+        self.assertNotIn("m/trial/fix-1", self.branches())
+        wt = self.add("fix-2")
+        commit_file(wt, "v.txt", "v\n")
+        code, _, err = self.run_cli("rm", "trial", "fix-2", "--delete-branch")
+        self.assertEqual(code, 2)
+        self.assertIn("m/trial/fix-2 is not merged into milestone/trial; branch kept", err)
+        self.assertIn("m/trial/fix-2", self.branches())
+
+    def test_root_must_be_absolute_and_outside_repo(self):
+        with mock.patch.dict(os.environ, {"TTYAK_WORKTREES": "rel/wt"}):
+            with self.assertRaises(milestone.Refused):
+                milestone.root()
+            self.assertEqual(self.run_cli("start", "trial")[0], 2)
+        inside = self.repo / "wt"
+        with mock.patch.dict(os.environ, {"TTYAK_WORKTREES": str(inside)}):
+            with self.assertRaises(milestone.Refused):
+                milestone.root(self.repo)
+            self.assertEqual(self.run_cli("start", "trial")[0], 2)
+        self.assertFalse(inside.exists())
+        self.assertNotIn("milestone/trial", self.branches())
+
+    def test_rm_refuses_untracked_and_staged(self):
+        self.start()
+        wt = self.add("fix-1")
+        (wt / "new.txt").write_text("n")
+        code, _, err = self.run_cli("rm", "trial", "fix-1")
+        self.assertEqual(code, 2)
+        self.assertIn("new.txt", err)
+        self.assertTrue((wt / "new.txt").is_file())
+        git(wt, "add", "new.txt")
+        self.assertEqual(self.run_cli("rm", "trial", "fix-1")[0], 2)
+        self.assertTrue((wt / "new.txt").is_file())
+        git(wt, "reset", "-q", "new.txt")
+        (wt / "new.txt").unlink()
+        (wt / "target").mkdir()
+        (wt / "target" / "x").write_text("x")
+        self.assertEqual(self.run_cli("rm", "trial", "fix-1")[0], 0)
+        self.assertFalse(wt.exists())
+
+    def test_gate_refuses_wrong_branch(self):
+        gate = self.start()
+        wt = self.add("fix-1")
+        commit_file(wt, "u.txt", "u\n")
+        git(gate, "checkout", "-q", "-b", "other")
+        code, _, err = self.run_cli("gate", "trial", "fix-1")
+        self.assertEqual(code, 2)
+        self.assertIn("milestone/trial", err)
+        self.assertEqual(git(gate, "rev-parse", "HEAD"), git(self.repo, "rev-parse", "master"))
+
+    def test_gate_reports_failed_abort(self):
+        gate = self.start()
+        wt = self.add("fix-1")
+        commit_file(wt, "f.txt", "unit\n")
+        commit_file(gate, "f.txt", "milestone\n")
+        orig = milestone.git
+
+        def fake(repo, *args, **kw):
+            if args[:2] == ("merge", "--abort"):
+                return subprocess.CompletedProcess(args, 1, "", "boom")
+            return orig(repo, *args, **kw)
+
+        with mock.patch.object(milestone, "git", fake):
+            code, _, err = self.run_cli("gate", "trial", "fix-1")
+        self.assertEqual(code, 2)
+        self.assertIn("needs a hand", err)
+
+    def test_rm_nothing_there_says_so(self):
+        self.start()
+        code, _, err = self.run_cli("rm", "trial", "typo")
+        self.assertEqual(code, 0)
+        self.assertIn(f"nothing at {self.root / 'trial' / 'typo'}; pruned", err)
+
+    def test_repo_option_accepts_a_worktree(self):
+        gate = self.start()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = milestone.main(["--repo", str(gate), "add", "trial", "fix-1", "--floor-gb", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(Path(out.getvalue().strip()), self.root / "trial" / "fix-1")
+        self.assertIn("m/trial/fix-1", self.branches())
+
+    def test_rm_refuses_symlinked_name_folder(self):
+        self.start()
+        real = self.tmp / "real"
+        real.mkdir()
+        git(self.repo, "worktree", "add", "-q", "-b", "m/trial/fix-1", str(real / "fix-1"), "milestone/trial")
+        (self.root / "other").mkdir()
+        (self.root / "link").symlink_to(real)
+        code, _, _ = self.run_cli("rm", "link", "fix-1")
+        self.assertEqual(code, 2)
+        self.assertTrue((real / "fix-1" / "f.txt").is_file())
+
+    def test_start_refuses_existing_folder_without_branch(self):
+        (self.root / "trial" / "_gate").mkdir(parents=True)
+        code, _, _ = self.run_cli("start", "trial")
+        self.assertEqual(code, 2)
+        self.assertNotIn("milestone/trial", self.branches())
 
     def test_check_name_and_root(self):
         self.assertEqual(milestone.check_name("a.b-1"), "a.b-1")

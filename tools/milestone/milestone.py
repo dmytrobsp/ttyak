@@ -36,8 +36,9 @@ class Refused(Exception):
 
 def check_name(s: str) -> str:
     """A milestone or unit name: lower-case letters, digits, dots and dashes, 1 to 41 characters, no `..`."""
-    if not NAME_RE.fullmatch(s) or ".." in s:
-        raise Refused(f"bad name {s!r}: use a-z, 0-9, . and -, start with a letter or digit, at most 41 characters")
+    if not NAME_RE.fullmatch(s) or ".." in s or s.endswith((".", ".lock")):
+        raise Refused(f"bad name {s!r}: use a-z, 0-9, . and -, start with a letter or digit, at most 41 characters, "
+                      "not ending in . or .lock")
     return s
 
 
@@ -65,9 +66,15 @@ def root(repo: Optional[Path] = None) -> Path:
     """$TTYAK_WORKTREES if set, else <parent of the repository>/<repository folder name>-worktrees."""
     env = os.environ.get("TTYAK_WORKTREES")
     if env:
-        return Path(env)
-    repo = repo or find_repo(Path(__file__).resolve().parent)
-    return repo.parent / f"{repo.name}-worktrees"
+        rt = Path(env).expanduser()
+        if not rt.is_absolute():
+            raise Refused(f"TTYAK_WORKTREES must be an absolute path, got {env!r}")
+    else:
+        repo = repo or find_repo(Path(__file__).resolve().parent)
+        rt = repo.parent / f"{repo.name}-worktrees"
+    if repo is not None and (rt.resolve() == repo.resolve() or repo.resolve() in rt.resolve().parents):
+        raise Refused(f"the worktrees folder {rt} lies inside the repository {repo}")
+    return rt
 
 
 def worktrees(repo: Path) -> list[dict]:
@@ -87,8 +94,9 @@ def unit_path(rt: Path, name: str, unit: str) -> Path:
     return rt / name / unit
 
 
-def check_worktree(repo: Path, rt: Path, name: str, unit: str) -> Path:
-    """The path `<root>/NAME/UNIT` if it is exactly a registered worktree of `repo`, else Refused."""
+def check_worktree(repo: Path, rt: Path, name: str, unit: str) -> dict:
+    """The `worktrees()` entry for `<root>/NAME/UNIT` if that is exactly a registered worktree of `repo`, else
+    Refused. Callers hand git the entry's own path (`raw`), not the path they computed."""
     p = unit_path(rt, name, unit)
     if p.is_symlink():
         raise Refused(f"{p} is a symlink; not touching it")
@@ -96,9 +104,10 @@ def check_worktree(repo: Path, rt: Path, name: str, unit: str) -> Path:
         raise Refused(f"{p} is not a folder")
     if p.resolve() != rt.resolve() / name / unit:
         raise Refused(f"{p} does not resolve to the expected path under {rt}")
-    if not any(w["path"] == p.resolve() for w in worktrees(repo)):
-        raise Refused(f"{p} is not a registered worktree of this repository; not touching it")
-    return p
+    for w in worktrees(repo):
+        if w["path"] == p.resolve():
+            return w
+    raise Refused(f"{p} is not a registered worktree of this repository; not touching it")
 
 
 def free_gb(rt: Path) -> float:
@@ -158,11 +167,14 @@ def remove_worktree(repo: Path, rt: Path, name: str, unit: str) -> None:
     p = unit_path(rt, name, unit)
     if not os.path.lexists(p):
         git(repo, "worktree", "prune")
+        print(f"nothing at {p}; pruned", file=sys.stderr)
         return
-    p = check_worktree(repo, rt, name, unit)
-    if git(p, "status", "--porcelain", "--untracked-files=no").stdout.strip():
-        raise Refused(f"{p} has changes to tracked files; commit or discard them first")
-    git(repo, "worktree", "remove", "--force", str(p))
+    w = check_worktree(repo, rt, name, unit)
+    dirty = git(Path(w["raw"]), "status", "--porcelain").stdout.rstrip()
+    if dirty:
+        raise Refused(f"{p} has uncommitted work (ignored build output is fine); commit or discard it first:\n{dirty}")
+    w = check_worktree(repo, rt, name, unit)  # again, right before the removal
+    git(repo, "worktree", "remove", "--force", w["raw"])
     # the same checked path again, if ignored build output survived
     if os.path.lexists(p) and not p.is_symlink() and p.resolve() == rt.resolve() / name / unit:
         shutil.rmtree(p)
@@ -172,11 +184,15 @@ def remove_worktree(repo: Path, rt: Path, name: str, unit: str) -> None:
 def cmd_rm(repo: Path, rt: Path, a) -> int:
     remove_worktree(repo, rt, a.name, a.unit)
     if a.delete_branch:
-        r = git(repo, "branch", "-d", f"m/{a.name}/{a.unit}", check=False)
-        if r.returncode != 0:
-            print((r.stderr.strip() or r.stdout.strip()), file=sys.stderr)
-            print(f"branch m/{a.name}/{a.unit} kept", file=sys.stderr)
+        branch, base = f"m/{a.name}/{a.unit}", f"milestone/{a.name}"
+        if not branch_exists(repo, branch):
+            print(f"branch {branch} does not exist", file=sys.stderr)
             return 2
+        # merged means into the milestone branch (`git branch -d` would compare with master)
+        if git(repo, "merge-base", "--is-ancestor", branch, base, check=False).returncode != 0:
+            print(f"{branch} is not merged into {base}; branch kept", file=sys.stderr)
+            return 2
+        git(repo, "branch", "-D", branch)
     return 0
 
 
@@ -209,15 +225,23 @@ def cmd_ls(repo: Path, rt: Path, a) -> int:
 
 
 def cmd_gate(repo: Path, rt: Path, a) -> int:
-    gate, branch = check_worktree(repo, rt, a.name, GATE), f"m/{a.name}/{a.unit}"
+    w, branch = check_worktree(repo, rt, a.name, GATE), f"m/{a.name}/{a.unit}"
+    gate = Path(w["raw"])
+    if w["branch"] != f"milestone/{a.name}":
+        raise Refused(f"the gate worktree {gate} is on {w['branch'] or 'no branch'}, not milestone/{a.name}")
     if not branch_exists(repo, branch):
         raise Refused(f"branch {branch} does not exist")
     if git(gate, "status", "--porcelain").stdout.strip():
         raise Refused(f"the gate worktree {gate} is not clean")
+    old = git(gate, "rev-parse", "HEAD").stdout.strip()
     r = git(gate, "merge", "--no-ff", "--no-edit", branch, check=False)
     if r.returncode != 0:
         files = git(gate, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
-        git(gate, "merge", "--abort", check=False)
+        aborted = git(gate, "merge", "--abort", check=False)
+        if (aborted.returncode != 0 or git(gate, "rev-parse", "HEAD").stdout.strip() != old
+                or git(gate, "status", "--porcelain").stdout.strip()):
+            raise Refused(f"the merge failed and the gate {gate} is not back at {old[:10]} and clean: "
+                          f"it needs a hand ({aborted.stderr.strip()})")
         if not files:
             raise Refused(r.stderr.strip() or r.stdout.strip() or "merge failed")
         print("conflict in:")
