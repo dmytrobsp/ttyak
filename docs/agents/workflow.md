@@ -107,6 +107,157 @@ A controller agent runs the plan; it dispatches one implementer per task and rev
 - **Cleanup.** Reviewers' scratch copies and target directories fill the disk quickly (tens of GB): remove them, by
   literal path, when the plan ends.
 
+## Running a milestone
+
+A milestone of small fixes and improvements runs faster with several implementers at once. One controller session
+drives it, and the maintainer answers questions in one sitting at the start and looks again at the end. The design is
+[2026-10-29-milestone-workflow-design.md](../superpowers/specs/2026-10-29-milestone-workflow-design.md). A lone fix,
+or a plan outside a milestone, runs as in the sections above.
+
+- **A milestone** is some known bugs and some improvements. **A unit** is one issue, or a small group of related
+  issues (the controller groups them): its own branch, its own worktree with its own build folder, its own
+  implementer and its own pull request into the milestone branch. A big new feature is a milestone of its own with
+  nothing else in it.
+- **The controller** is the only agent that talks to the maintainer, pushes, opens pull requests or files issues. It
+  plans the units and their order, writes the briefs, dispatches implementers and reviewers, runs the merge gate, the
+  final review, the live smoke check and the report. It keeps its own context lean: short reports, details in scratch
+  files. Implementers and reviewers keep the limits of
+  [Executing a plan with subagents](#executing-a-plan-with-subagents).
+
+### The start sitting
+
+1. Agree on the milestone's issues, as in [The queue](#the-queue-github-issues): proposed by the controller when none
+   is open, decided by the maintainer.
+2. The controller reads every issue, its history and the code it touches. It brings, in one message or one short
+   back-and-forth, every question the milestone needs answered (behaviour, naming, `needs-user` items) and its
+   batching: which units run at once because they touch separate code, which wait for another to merge first, and
+   why. Questions asked later cost the maintainer's focus, so ask them all here.
+3. A `size:l` issue in a mixed milestone is raised in the sitting: it moves to a milestone of its own, or it gets its
+   design first. A mixed milestone holds `size:s` and `size:m` units.
+4. The answers and the batching go into the milestone's plan (`docs/superpowers/plans/<date>-milestone-<name>.md`)
+   and its ledger, committed on `master` before the first dispatch. Then the controller runs without the
+   maintainer.
+
+**A big-feature milestone** goes through [Planning](#planning) in full first (brainstorm, written design, a builder's
+read, the maintainer's approval, a plan). Its plan's tasks are the units, run at once where their dependencies allow,
+with the same pull requests, reviews, gate and report.
+
+### Branches and worktrees
+
+The git part is done by `tools/milestone/milestone.py` ([tools/README.md](../../tools/README.md)); exit 0 is done, 2
+refused, 3 a merge conflict.
+
+- **`python3 tools/milestone/milestone.py start NAME`** makes the milestone branch `milestone/NAME` from `master` and
+  the gate worktree `<root>/NAME/_gate`. The controller pushes the branch.
+- **`add NAME UNIT`** makes the unit branch `m/NAME/UNIT` from the milestone tip, in the worktree `<root>/NAME/UNIT`
+  with its own `target/`. It refuses below the free-disk floor. `rm NAME UNIT` removes the worktree and its `target/`
+  once the unit has merged; it refuses any uncommitted work and keeps the branch (`--delete-branch` deletes it only
+  when it is merged into `milestone/NAME`, and deleting branches on GitHub is the maintainer's word). A unit name is
+  used once per milestone. `end NAME` removes the gate when no unit is left; `ls [NAME]` shows the worktrees with
+  their sizes and the free space.
+- **The root** is `$TTYAK_WORKTREES` (an absolute path outside the repository) or, by default, the folder
+  `<repository folder>-worktrees` next to the repository. It is not the scratch folder, which a reboot wipes.
+- **The main checkout stays on `master`**, where the ledger is committed (docs-only commits, no CI). Merging into
+  the milestone branch happens in the gate worktree only.
+- **An urgent fix during a milestone** goes to `master` as usual; the controller merges `master` into the milestone
+  branch at the next gate.
+
+### How many at once
+
+- **Three implementers at once** (`CAP`), and the controller does not dispatch while free space is below 40 GB
+  (`FLOOR_GB`, the helper's default).
+- **Measured on 2026-10-29** on the maintainer's desktop (32 threads, 60 GB RAM): `cargo test --no-run` from fresh
+  worktrees took 37 s with 1 at once, 65 s with 3 and 78 s with 4; the lowest available RAM was 36.4, 29.6 and 25.3
+  GB. Each worktree's `target/` is 4.6 GiB, 4.9 GiB after a full `cargo test`. Warm, the whole `cargo test` took 13 s
+  with 3 at once. Three leaves RAM and disk to spare; a fourth buys little. Another machine measures again before it
+  changes the numbers.
+- **Disk**: a worktree goes as soon as its unit merges. The Windows cross-build (`target/x86_64-pc-windows-gnu`, over
+  10 GB) is not made in every unit: it runs at the gate's end checks and at the milestone's end.
+- **Batching**: units in one wave touch separate files and modules as far as the controller can tell from reading the
+  code; units that share files run one after the other; a unit that needs another one's change waits for its merge.
+  A conflict at the gate means the batching missed something: it is noted in the ledger.
+
+### A unit, from brief to merge
+
+1. **Brief.** The controller writes it to the plan's scratch folder (`.superpowers/sdd/<plan>/`), never in the same
+   chained command as the dispatch. It holds the plan's Global Constraints (the shell rules always), the issue and
+   the maintainer's answers for it, the files to read, the worktree, branch and build folder, the live-check rules of
+   [Live checks in a milestone](live-testing.md#live-checks-in-a-milestone), and what not to do. Then it dispatches
+   the implementer in the background.
+2. **Implementation.** TDD with the RED shown, commits on the unit branch, the whole `cargo test` in the worktree,
+   live checks where the change needs them, and a short report with the paths of its evidence.
+3. **Pull request.** The controller runs the privacy check on what will become public (the diff and the
+   description), pushes the unit branch and opens a pull request into the milestone branch, in public wording. CI
+   runs on it.
+4. **Review.** A fresh reviewer reads the diff against the plan and the rules and checks the live evidence. Findings
+   go to the same implementer, and a scoped re-review follows each fix round. Every real finding is fixed; nits are
+   dropped with a reason in the ledger; out-of-scope items and the maintainer's decisions become issues. Review text
+   stays in the scratch folder; the pull request gets a short public summary (rounds, the kind of things fixed).
+   Security findings never go to a pull request: a private advisory.
+5. **Merge gate**, one unit at a time, and no pushed branch is ever rewritten (no rebase, no force-push). The
+   controller runs `milestone.py gate NAME UNIT`, which merges the unit branch into the milestone tip in the gate
+   worktree (`--no-ff`); then it runs the whole `cargo test` on that merge result, and CI on the pull request must be
+   green (GitHub tests the pull request merged into its base). If both pass, the controller pushes the milestone
+   branch, a plain fast-forward push, and GitHub marks the pull request merged. A merge with conflicts (exit 3, the
+   files listed, the merge aborted) goes back to its implementer, who merges the milestone tip into its own branch
+   and resolves them; the author resolves its own conflicts. The controller pushes that, and the gate starts again.
+   Afterwards the unit's worktree and build folder are removed with `rm`. Units still in flight take the new tip
+   only at their own gate.
+6. **The ledger** gets an entry at each step
+   ([A milestone's ledger](../superpowers/ledgers/README.md#a-milestones-ledger)).
+
+### Questions mid-milestone
+
+Implementers never ask the maintainer: a question goes back to the controller in the implementer's report. The
+controller answers it itself when it can (a ruling in the ledger, with what it costs if wrong) and asks the
+maintainer only when the answer would change the implementation significantly. The other units keep running.
+
+### Permission refusals
+
+The maintainer runs sessions in auto mode, and a refusal must not hold a milestone up. So the work is in preventing
+them, and the few that remain reach the maintainer at once.
+
+- **Fewer refusals.** A project allowlist of the commands the workflow needs, written as narrowly as works; the
+  maintainer approves it before it goes in. Briefs and recipes use plain, separate commands with literal paths (or
+  `${VAR:?}`), never a scripted edit chained with a commit and never a computed command name. A dry run before the
+  first milestone (one implementer, one throwaway unit, every recipe the workflow uses) finds the refusals that are
+  left, and each is fixed in the allowlist or the recipes.
+- **A refusal that still happens** stops only the step that hit it, as the hard rule says: never reworded, split or
+  retried. The implementer reports it with the exact command; the controller checks the worktree for partial writes
+  (`git status`), parks that unit and keeps the others running.
+- **The controller tells the maintainer at once**: the exact command, why it was needed, what waits on it, and the
+  allowlist line that would prevent it next time. Refusals that arrive together go in one message. When the
+  maintainer has run or allowed it, the parked unit goes on.
+- **Every refusal goes into the ledger.** The retro after a milestone turns recurring ones into allowlist or recipe
+  changes.
+
+#### Allowlist
+
+Added with the maintainer's approval in a later step of this plan.
+
+### The end of a milestone
+
+1. All units merged, then a final whole-milestone review (the milestone branch against `master`) and one fix wave,
+   its fixes going through the same review and gate. Then the checks: the whole `cargo test`, the Windows
+   cross-build and `cargo test --no-run` for Windows, CI on the milestone pull request, and the controller's live
+   smoke check of the milestone branch.
+2. **The milestone pull request** (milestone branch into `master`) carries the report, made from
+   [milestone-report.md](milestone-report.md). The privacy check runs on it before it is posted.
+3. On the maintainer's word ("merge") the controller merges with a merge commit, not squashed, so `master` keeps each
+   unit's commits and `Fixes #N` closes the issues. The report asks, in the same line, for leave to delete the
+   milestone's branches on GitHub; deleting is the maintainer's word, never assumed. The controller removes the
+   gate worktree (`end`) and any worktree left, and, under its own claim, the folders a dead agent left on a shared
+   box. A release follows [RELEASING.md](../RELEASING.md), on the maintainer's word.
+
+### Judging a trial milestone
+
+- **Time** is the maintainer's impression, not a measurement; the ledger keeps each unit's dispatch, approval and
+  merge times and the milestone's start and end as a rough record to talk over.
+- **Quality**: the final review's real findings per unit and red runs on the milestone branch, against the final
+  reviews in the committed ledgers since 2026-10-27, and what the maintainer finds after the merge.
+- **Cost**: usage limits hit, if any, are noted, not a gate.
+- **Adjustment**: a short retro in the ledger, and the changes to this page and to live-testing.md it calls for.
+
 ## Making a change
 
 - **Small verified steps**: one focused change, verified, committed; then the next. Run autonomously through an agreed

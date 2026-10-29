@@ -38,6 +38,22 @@ entry per event, in order, short lines:
 Nothing private: no workspace, account, machine or person names, no emails or ids (`AGENTS.local.md` holds those).
 Wording is public, as in commits and issues.
 
+## A milestone's ledger
+
+A milestone run with parallel implementers ([workflow.md](../../agents/workflow.md#running-a-milestone)) has one
+ledger, committed on `master` like any other (not on the milestone branch), with these lines besides:
+
+- **The start sitting**: the maintainer's answers, with the date, and the batching (which units run at once, which
+  wait, and why).
+- **Per unit**: its branch (`m/<milestone>/<unit>`), pull request, dispatch time, approval time and merge time, the
+  review rounds, and the gate results (merge conflicts, red runs, and what they say about the batching).
+- **Every refused action**: the command, what it was needed for, how it was settled, and the allowlist or recipe
+  change it led to.
+- **At the end**: the final review's outcome, the checks, and the retro.
+
+After a lost session, this ledger, `git log`, the open pull requests and the worktrees on disk
+(`python3 tools/milestone/milestone.py ls`) are how the controller resumes.
+
 ## Example
 
 ```markdown
