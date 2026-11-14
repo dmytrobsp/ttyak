@@ -37,7 +37,9 @@ if [ ! -d "$fake" ] || [ ! -f "$fake/.config/ttyak/$profile/session.json" ]; the
     exit 2
 fi
 
-hyprctl dispatch closewindow class:ttyak-test >/dev/null
+# Old dispatcher syntax first (Hyprland < 0.57); 0.57+ rejects it with a non-zero exit and takes a Lua expression.
+hyprctl dispatch closewindow class:ttyak-test >/dev/null 2>&1 ||
+    hyprctl dispatch 'hl.dsp.window.close({ window = "class:ttyak-test" })' >/dev/null
 timeout 10 sh -c 'while hyprctl clients -j | jq -e ".[] | select(.class==\"ttyak-test\")" >/dev/null; do
     sleep 0.3
 done'

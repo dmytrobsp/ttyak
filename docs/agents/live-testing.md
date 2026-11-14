@@ -270,7 +270,9 @@ REPO=<the clone>; WT=<the tree you built>; FAKE=<scratch>/<unit>-home   # as abo
 - **A notification click** is `<tool> instance exec NAME ID -- makoctl invoke`. LIVE: ttyak ran in kitty and B's DM
   reached `notifications`; the click opened the message, but with Hyprland's default `misc:focus_on_activate = false`
   the window was not raised (ttyak issue #63). After `<tool> instance exec NAME ID -- hyprctl keyword
-  misc:focus_on_activate true` (the maintainer's own setting) a click raised it. The base keeps Hyprland's default, so
+  misc:focus_on_activate true` (the maintainer's own setting) a click raised it. That is the base's Hyprland
+  (0.56); on 0.57+, where `hyprctl keyword` is gone ("unknown request", exit 0), it is
+  `hyprctl eval 'hl.config({ misc = { focus_on_activate = true } })'`. The base keeps Hyprland's default, so
   set it only for a check of the raise, and say so in the record.
 - A VM holds its memory (about 2.5 GB with overhead), so it queues for a slot like any instance; `rm` it when done.
 
@@ -290,9 +292,15 @@ instance cannot do (the maintainer's own desktop). Test windows never appear on 
 them on a hidden special workspace with a class and a kitty socket of your own:
 
 ```sh
-hyprctl dispatch exec "[workspace special:<name> silent] kitty --class <class> -o allow_remote_control=yes \
-  --listen-on unix:@<socket> -o window_alert_on_bell=no sh -c '<command>; exec sleep 600'"
+hyprctl dispatch 'hl.dsp.exec_cmd([[kitty --class <class> -o allow_remote_control=yes --listen-on unix:@<socket>
+  -o window_alert_on_bell=no sh -c "<command>; exec sleep 600"]], { workspace = "special:<name> silent" })'
 ```
+
+The maintainer's desktop runs Hyprland 0.57+, where `hyprctl dispatch` takes a Lua dispatcher expression (the old
+`hyprctl dispatch exec "[workspace … silent] …"` form fails with exit 7). The `[[…]]` Lua string keeps the double
+quotes of `sh -c` literal; a `<command>` that needs single quotes does not fit inside the shell's single quotes, so
+put it in a script. Close a test window with
+`hyprctl dispatch 'hl.dsp.window.close({ window = "class:<class>" })'`.
 
 - Drive it with `kitty @ --to unix:@<socket> send-key …` / `send-text …`; read it with
   `kitty @ --to unix:@<socket> get-text --extent screen` (`--ansi | cat -v` shows colours and bold — a screenshot can
@@ -389,7 +397,7 @@ window alive when testing what happens after quit.
   explicit name. One feeder at a time: a second fails with `VIDIOC_G_FMT`.
 - **Screen sharing** captures the real screen: only with the maintainer at the picker, told just before, choosing a
   single harmless window; recordings deleted right after. If they are not at the picker, cancel it
-  (`hyprctl dispatch closewindow class:hyprland-share-picker`); never choose for them.
+  (`hyprctl dispatch 'hl.dsp.window.close({ window = "class:hyprland-share-picker" })'`); never choose for them.
 - **The real Slack web client** (as the other person): a separate Chrome profile with fake devices, driven by
   `tools/cdp.mjs` ([tools/README.md](../../tools/README.md)); check that only fake devices exist before joining. Never
   press its screen-share button (the fake UI flag would pick the real screen). Delete the profile folder after.
